@@ -1,0 +1,39 @@
+[package]
+name = "dongdong"
+version = "0.1.0"
+description = "Local-first coding agent with node-based conversation visualization"
+authors = ["dongdong"]
+edition = "2021"
+rust-version = "1.77.2"
+
+# Rust 라이브러리 이름 (모바일 타깃 호환을 위해 _lib 접미사)
+[lib]
+name = "dongdong_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+# LLM 공급자 호출용. 웹뷰 fetch 는 CORS 에 막히므로 Rust 를 경유한다.
+tauri-plugin-http = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# bundled: 시스템에 SQLite 가 없어도 되도록 소스 동봉 빌드
+rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting", "macros"] }
+thiserror = "2"
+
+[features]
+# 기본 릴리스 빌드에서 devtools 비활성화
+default = []
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

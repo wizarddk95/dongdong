@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: "JetBrains Mono", "D2Coding", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-zinc-950);
+  color: var(--color-zinc-100);
+  font-family: ui-sans-serif, system-ui, "Pretendard", "Malgun Gothic", sans-serif;
+  overflow: hidden;
+}
+
+/* 얇은 스크롤바 — 패널이 많아 기본 스크롤바는 시각적으로 무겁다 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-zinc-700) transparent;
+}

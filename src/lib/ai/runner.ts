@@ -1,0 +1,333 @@
+/**
+ * LLM 한 턴 실행. Vercel AI SDK Core 의 `streamText` 를 직접 호출한다.
+ *
+ * 여기서는 DB 를 건드리지 않는다 — 저장은 `store/chat.ts` 가 맡는다.
+ * 도구가 붙으면 한 턴이 여러 스텝(= LLM 호출)으로 늘어나므로,
+ * 스텝이 끝날 때마다 `onStepFinish` 로 알려 주고 트리에 노드를 남기게 한다.
+ */
+import { streamText, stepCountIs } from "ai";
+import type { ModelMessage, ToolResultPart, ToolSet } from "@ai-sdk/provider-utils";
+
+import {
+  providerOptionsFor,
+  resolveModel,
+  type Effort,
+  type ProviderCredentials,
+} from "@/lib/ai/providers";
+import type { Message } from "@/types/ipc";
+
+/** LLM 으로 실제 전송되는 페이로드. Context Inspector 가 그대로 렌더링한다. */
+export interface TurnContext {
+  modelId: string;
+  system: string;
+  messages: ModelMessage[];
+  effort: Effort;
+  maxSteps: number;
+  /** 이 턴에 노출된 도구 이름들 */
+  toolNames: string[];
+  createdAt: string;
+}
+
+/** 대화 트리 노드에 저장되는 도구 호출 기록. assistant 노드의 `toolCalls`. */
+export interface StoredToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+}
+
+/** tool 노드의 `toolResults`. 실행이 실패했으면 `errorText` 가 채워진다. */
+export interface StoredToolResult {
+  toolCallId: string;
+  toolName: string;
+  output?: unknown;
+  errorText?: string;
+}
+
+/** 스텝 하나(LLM 호출 한 번)의 결과. */
+export interface StepRecord {
+  index: number;
+  text: string;
+  reasoning: string;
+  toolCalls: StoredToolCall[];
+  toolResults: StoredToolResult[];
+}
+
+export interface RunTurnOptions {
+  context: TurnContext;
+  credentials: ProviderCredentials;
+  tools?: ToolSet;
+  abortSignal?: AbortSignal;
+  onTextDelta: (delta: string) => void;
+  onReasoningDelta?: (delta: string) => void;
+  /** 도구 호출이 확정된 순간 (실행 결과는 아직 없음) */
+  onToolCall?: (call: StoredToolCall) => void;
+  /** 스텝 종료. 도구를 썼다면 여기서 tool 노드를 만든다. */
+  onStepFinish?: (step: StepRecord) => void | Promise<void>;
+}
+
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number;
+}
+
+export interface RunTurnResult {
+  /** 마지막 스텝의 텍스트 (= 최종 assistant 노드에 남을 내용) */
+  text: string;
+  reasoning: string;
+  usage: TokenUsage | null;
+  finishReason: string | null;
+  aborted: boolean;
+  steps: number;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** 노드에 저장된 tool_calls JSON 을 복원한다. (assistant 노드는 없을 수도 있다) */
+export function readToolCalls(value: unknown): StoredToolCall[] {
+  return asArray(value).filter(
+    (item): item is StoredToolCall =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as StoredToolCall).toolCallId === "string" &&
+      typeof (item as StoredToolCall).toolName === "string",
+  );
+}
+
+/**
+ * 노드에 저장된 tool_results JSON 을 복원한다.
+ * assistant 노드는 이 자리에 `{ reasoning }` 같은 객체를 쓰므로 배열이 아니면 무시한다.
+ */
+export function readToolResults(value: unknown): StoredToolResult[] {
+  return asArray(value).filter(
+    (item): item is StoredToolResult =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as StoredToolResult).toolCallId === "string" &&
+      typeof (item as StoredToolResult).toolName === "string",
+  );
+}
+
+/**
+ * DB 의 대화 노드 체인을 LLM 이 받는 메시지 배열로 변환한다.
+ *
+ * assistant 노드의 도구 호출은 `tool-call` 파트로, tool 노드는 `role:"tool"` 메시지로
+ * 복원한다. 짝이 맞지 않는 호출/결과(예: 도구 노드 직전에서 분기한 경우)는
+ * 공급자가 거부하므로 여기서 걸러낸다.
+ */
+export function toModelMessages(chain: Message[]): ModelMessage[] {
+  const calls = new Map<string, StoredToolCall>();
+  const resolved = new Set<string>();
+
+  for (const node of chain) {
+    if (node.role === "assistant") {
+      for (const call of readToolCalls(node.toolCalls)) calls.set(call.toolCallId, call);
+    } else if (node.role === "tool") {
+      for (const result of readToolResults(node.toolResults)) resolved.add(result.toolCallId);
+    }
+  }
+
+  const out: ModelMessage[] = [];
+
+  for (const node of chain) {
+    // 시스템 프롬프트는 별도 인자로 넘기므로 체인에서는 건너뛴다.
+    if (node.role === "system") continue;
+    // 아직 스트리밍 중이거나 실패한 노드는 컨텍스트에 넣지 않는다.
+    if (node.status === "streaming" || node.status === "error") continue;
+
+    if (node.role === "user") {
+      if (node.content.trim()) out.push({ role: "user", content: node.content });
+      continue;
+    }
+
+    if (node.role === "assistant") {
+      // 결과 노드가 없는 호출은 그대로 보내면 공급자가 에러를 낸다.
+      const calls = readToolCalls(node.toolCalls).filter((call) =>
+        resolved.has(call.toolCallId),
+      );
+
+      // 도구를 안 쓴 평범한 응답은 문자열 하나로 두는 편이 가볍다.
+      if (calls.length === 0) {
+        if (node.content.trim()) out.push({ role: "assistant", content: node.content });
+        continue;
+      }
+
+      const parts: Extract<ModelMessage, { role: "assistant" }>["content"] = [];
+      if (node.content.trim()) parts.push({ type: "text", text: node.content });
+      for (const call of calls) {
+        parts.push({
+          type: "tool-call",
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          input: call.input,
+        });
+      }
+      out.push({ role: "assistant", content: parts });
+      continue;
+    }
+
+    // role === "tool"
+    const results = readToolResults(node.toolResults).filter((result) =>
+      calls.has(result.toolCallId),
+    );
+    if (results.length === 0) continue;
+
+    out.push({
+      role: "tool",
+      content: results.map((result): ToolResultPart => {
+        const output =
+          result.errorText != null
+            ? { type: "error-text" as const, value: result.errorText }
+            : { type: "json" as const, value: result.output ?? null };
+        return {
+          type: "tool-result",
+          toolCallId: result.toolCallId,
+          toolName: result.toolName,
+          // 저장된 값은 JSON 으로 왕복한 것이라 구조적으로 JSON 이 보장된다.
+          output: output as ToolResultPart["output"],
+        };
+      }),
+    });
+  }
+
+  return out;
+}
+
+export function buildTurnContext(options: {
+  modelId: string;
+  system: string;
+  chain: Message[];
+  effort: Effort;
+  maxSteps: number;
+  toolNames?: string[];
+}): TurnContext {
+  return {
+    modelId: options.modelId,
+    system: options.system,
+    messages: toModelMessages(options.chain),
+    effort: options.effort,
+    maxSteps: options.maxSteps,
+    toolNames: options.toolNames ?? [],
+    createdAt: new Date().toISOString(),
+  };
+}
+
+export async function runTurn({
+  context,
+  credentials,
+  tools,
+  abortSignal,
+  onTextDelta,
+  onReasoningDelta,
+  onToolCall,
+  onStepFinish,
+}: RunTurnOptions): Promise<RunTurnResult> {
+  const model = resolveModel(context.modelId, credentials);
+
+  const result = streamText({
+    model,
+    system: context.system,
+    messages: context.messages,
+    ...(tools && Object.keys(tools).length > 0 ? { tools } : {}),
+    stopWhen: stepCountIs(context.maxSteps),
+    providerOptions: providerOptionsFor(context.modelId, context.effort),
+    abortSignal,
+  });
+
+  // 텍스트/사고 과정은 스텝 단위로 모은다. 트리에서도 스텝이 곧 노드다.
+  let stepText = "";
+  let stepReasoning = "";
+  let stepCalls: StoredToolCall[] = [];
+  let stepResults: StoredToolResult[] = [];
+  let steps = 0;
+
+  let usage: TokenUsage | null = null;
+  let finishReason: string | null = null;
+  let aborted = false;
+  let streamError: unknown = null;
+
+  for await (const part of result.fullStream) {
+    switch (part.type) {
+      case "start-step":
+        stepText = "";
+        stepReasoning = "";
+        stepCalls = [];
+        stepResults = [];
+        break;
+      case "text-delta":
+        stepText += part.text;
+        onTextDelta(part.text);
+        break;
+      case "reasoning-delta":
+        stepReasoning += part.text;
+        onReasoningDelta?.(part.text);
+        break;
+      case "tool-call": {
+        const call: StoredToolCall = {
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input,
+        };
+        stepCalls.push(call);
+        onToolCall?.(call);
+        break;
+      }
+      case "tool-result":
+        stepResults.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: part.output,
+        });
+        break;
+      case "tool-error":
+        stepResults.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          errorText: part.error instanceof Error ? part.error.message : String(part.error),
+        });
+        break;
+      case "finish-step":
+        // 도구를 쓴 스텝이면 여기서 노드가 갈라진다. DB 쓰기는 이 경계에서만 일어난다.
+        await onStepFinish?.({
+          index: steps,
+          text: stepText,
+          reasoning: stepReasoning,
+          toolCalls: stepCalls,
+          toolResults: stepResults,
+        });
+        steps += 1;
+        // 도구 스텝의 텍스트는 콜백이 이미 저장했다. 여기서 비워 두지 않으면
+        // 턴이 곧바로 끝났을 때(최대 스텝 도달) 다음 노드에 같은 내용이 또 들어간다.
+        if (stepCalls.length > 0) {
+          stepText = "";
+          stepReasoning = "";
+        }
+        break;
+      case "finish":
+        finishReason = part.finishReason;
+        usage = part.totalUsage as TokenUsage;
+        break;
+      case "abort":
+        aborted = true;
+        break;
+      case "error":
+        // 스트림 안의 에러는 던지지 않고 모아뒀다가 루프 종료 후 처리한다.
+        // (그래야 여기까지 받은 텍스트를 잃지 않는다)
+        streamError = part.error;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (streamError && !aborted) {
+    throw streamError instanceof Error ? streamError : new Error(String(streamError));
+  }
+
+  // 마지막 스텝의 내용이 곧 최종 assistant 노드의 내용이다.
+  return { text: stepText, reasoning: stepReasoning, usage, finishReason, aborted, steps };
+}
