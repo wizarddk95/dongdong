@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { Markdown } from "@/components/chat/Markdown";
 import { JsonTree } from "@/components/inspect/JsonTree";
 import { readToolCalls, readToolResults } from "@/lib/ai/runner";
 import { summarizeToolCall } from "@/lib/ai/skills";
@@ -130,20 +131,23 @@ export function MessageBubble({
             {showReasoning ? "▾" : "▸"} 사고 과정 {streaming ? "(진행 중)" : ""}
           </button>
           {showReasoning && (
-            <pre className="mt-1 whitespace-pre-wrap rounded bg-black/30 p-2 text-[11px] text-zinc-400">
-              {reasoning}
-            </pre>
+            <div className="mt-1 rounded bg-black/30 p-2">
+              <Markdown text={reasoning ?? ""} dim />
+            </div>
           )}
         </div>
       ) : null}
 
       {isTool ? (
         <ToolCallList message={message} />
-      ) : (
+      ) : message.role === "user" ? (
+        // 사용자가 친 글자는 마크다운으로 해석하지 않고 그대로 보여준다.
         <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-100">
           {body}
-          {streaming && <span className="ml-0.5 animate-pulse text-emerald-400">▌</span>}
         </p>
+      ) : (
+        // 스트리밍 커서는 본문 끝에 붙여 마지막 블록 안에서 흐르게 한다.
+        <Markdown text={streaming ? `${body}▌` : body} />
       )}
 
       {errorText && (

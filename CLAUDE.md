@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 84 / cargo 29. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 102 / cargo 29. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -51,6 +51,7 @@ src/
   types/ipc.ts          Rust ↔ TS 타입 (serde camelCase 와 1:1)
   lib/ipc.ts            invoke 얇은 래퍼 — 유일한 IPC 통로
   lib/tree.ts           parent_id → 트리 복원, pathTo(), 좌표 계산
+  lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음)
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입
   lib/ai/runner.ts      streamText 한 턴 (DB 안 건드림) + tool 파트 변환
   lib/ai/skills.ts      IPC → AI SDK 도구 (zod 스키마 · 토글 · delegate_task)

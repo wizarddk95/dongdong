@@ -45,20 +45,53 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## 실행
 
+### 처음 띄우기
+
 ```bash
 pnpm install
-pnpm tauri:dev     # Tauri 개발 모드 (Rust 필요)
-pnpm dev           # 프론트엔드만 (IPC 는 동작하지 않음)
-pnpm build         # 타입체크 + 프론트엔드 번들
-pnpm test          # 프론트엔드 단위 테스트 (vitest)
-pnpm tauri:build   # 배포 바이너리
-
-cd src-tauri && cargo test   # 백엔드 단위 테스트
+pnpm tauri:dev
 ```
 
-첫 실행 후 **[설정]** 에서 Anthropic 또는 OpenAI API 키를 넣어야 대화가 됩니다.
-키는 프로젝트가 아니라 OS 앱 설정 디렉터리의 `settings.json` 에 저장됩니다
-(Windows: `%APPDATA%/dev.dongdong.agent/settings.json`).
+`pnpm tauri:dev` 가 Vite 개발 서버(`http://localhost:1420`)와 Rust 백엔드를 함께 띄우고 앱 창을 연다.
+첫 실행은 Rust 의존성을 전부 컴파일하므로 몇 분 걸린다 (이후에는 증분 빌드).
+
+창이 뜨면 순서대로:
+
+1. 상단 **[폴더 열기]** — 작업할 프로젝트 루트를 고른다.
+   그 폴더에 `.agent_workspace/local.db` 가 생기고, 세션이 없으면 "새 대화"가 자동으로 만들어진다.
+2. 상단 **[설정]** — Anthropic 또는 OpenAI **API 키**를 넣고 모델을 고른다. 키가 없으면 대화가 되지 않는다.
+   같은 화면에서 스킬(도구) 토글과 MCP 서버도 정한다.
+3. 채팅창에 입력하면 시작. 좌측 사이드바의 **[+]** 로 세션을 더 만든다.
+
+앱은 마지막에 연 프로젝트를 기억하지 않는다. 실행할 때마다 **[폴더 열기]** 로 다시 연다.
+
+API 키와 MCP 서버 목록은 프로젝트 DB 가 아니라 OS 앱 설정 디렉터리의 `settings.json` 에 저장된다.
+
+| OS | 경로 |
+| --- | --- |
+| Windows | `%APPDATA%\dev.dongdong.agent\settings.json` |
+| macOS | `~/Library/Application Support/dev.dongdong.agent/settings.json` |
+| Linux | `~/.config/dev.dongdong.agent/settings.json` |
+
+### 명령어
+
+```bash
+pnpm tauri:dev     # 개발 모드 (Rust 필요) — 실제 구동 확인은 이것으로
+pnpm dev           # 프론트엔드만. 브라우저에서 localhost:1420 (IPC 는 동작하지 않음)
+pnpm typecheck     # tsc --noEmit
+pnpm test          # 프론트엔드 단위 테스트 (vitest)
+pnpm build         # 타입체크 + 프론트엔드 번들
+pnpm tauri:build   # 배포 바이너리 (src-tauri/target/release/bundle/)
+
+cd src-tauri && cargo test --lib   # 백엔드 단위 테스트
+```
+
+### 개발 중 자주 걸리는 것
+
+- `pnpm tauri:dev` 가 도는 중에 Rust 를 고치면 실행 파일 교체에 실패해(Windows: os error 5) 워처가 죽는다.
+  앱 창을 닫고 다시 띄운다.
+- 앱을 닫아도 포트 1420 을 잡은 Vite 프로세스가 남을 때가 있다. `strictPort` 라 다음 실행이 바로 실패하니 정리하고 다시 띄운다.
+- Rust 툴체인을 갓 설치했다면 셸을 새로 열어야 `cargo` 가 `PATH` 에 잡힌다.
 
 ---
 
@@ -69,6 +102,7 @@ src/                        프론트엔드 (React + TS + Tailwind v4)
   types/ipc.ts              Rust ↔ TS 타입 정의 (serde camelCase 와 1:1)
   lib/ipc.ts                invoke 래퍼 — 모든 IPC 는 이 모듈을 경유
   lib/tree.ts               parent_id → 트리 복원 + tidy tree 좌표 계산
+  lib/markdown.ts           채팅 본문용 경량 마크다운 파서 (외부 의존성 없음)
   lib/ai/providers.ts       다중 모델 라우팅 (`provider:modelId`) + Tauri fetch 주입
   lib/ai/runner.ts          streamText 한 턴 실행 (DB 는 건드리지 않음) + 도구 파트 변환
   lib/ai/skills.ts          IPC 를 AI SDK 도구로 노출 (zod 스키마 + 설정 토글)
@@ -80,7 +114,7 @@ src/                        프론트엔드 (React + TS + Tailwind v4)
   store/agents.ts           서브에이전트 인스턴스 (실행 + agent_runs 영속화)
   store/mcp.ts              MCP 서버 연결 상태 + 도구 병합
   store/settings.ts         API 키 · 모델 · 시스템 프롬프트 · 스킬 토글
-  components/chat/          ChatPanel / MessageBubble (tool 노드 렌더 포함)
+  components/chat/          ChatPanel / MessageBubble (tool 노드 렌더 포함) / Markdown 렌더러
   components/flow/          FlowCanvas / MessageNode (React Flow)
   components/inspect/       ContextModal / MemoryModal / JsonTree (투명성 UI)
   components/agents/        AgentDashboard (서브에이전트 칸반)
