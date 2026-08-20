@@ -8,7 +8,8 @@
 import type { ToolSet } from "@ai-sdk/provider-utils";
 
 import type { Effort, ProviderCredentials } from "@/lib/ai/providers";
-import { runTurn, type TokenUsage, type TurnContext } from "@/lib/ai/runner";
+import { runTurn, type TurnContext } from "@/lib/ai/runner";
+import type { Usage } from "@/lib/ai/usage";
 
 export const SUBAGENT_SYSTEM_PROMPT = `당신은 코딩 에이전트의 서브에이전트입니다. 하나의 작업만 끝까지 처리합니다.
 - 도구로 직접 확인하세요. 파일을 읽지 않고 내용을 추측하지 않습니다.
@@ -41,7 +42,7 @@ export interface SubagentResult {
   text: string;
   steps: number;
   toolCalls: number;
-  usage: TokenUsage | null;
+  usage: Usage | null;
   finishReason: string | null;
   aborted: boolean;
 }

@@ -9,6 +9,8 @@ import {
   type StoredToolResult,
 } from "@/lib/ai/runner";
 import { summarizeToolCall } from "@/lib/ai/skills";
+import { readNodeUsage } from "@/lib/ai/usage";
+import { UsageTag } from "@/components/UsageMeter";
 import type { Message } from "@/types/ipc";
 
 interface MessageBubbleProps {
@@ -48,17 +50,6 @@ const ROLE_STYLE: Record<string, { wrap: string; label: string; badge: string }>
   },
 };
 
-function usageSummary(usage: unknown): string | null {
-  if (!usage || typeof usage !== "object") return null;
-  const record = usage as Record<string, number | undefined>;
-  const parts: string[] = [];
-  if (record.inputTokens != null) parts.push(`in ${record.inputTokens}`);
-  if (record.outputTokens != null) parts.push(`out ${record.outputTokens}`);
-  if (record.reasoningTokens) parts.push(`think ${record.reasoningTokens}`);
-  if (record.cachedInputTokens) parts.push(`cached ${record.cachedInputTokens}`);
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
-
 export function MessageBubble({
   message,
   toolNode,
@@ -83,7 +74,8 @@ export function MessageBubble({
   const errorText = isTool
     ? undefined
     : (message.toolResults as { error?: string } | null)?.error;
-  const usage = usageSummary(message.tokenUsage);
+  // 사용량은 턴을 마무리한 assistant 노드에만 붙는다 (그 턴 전체의 합계).
+  const usage = readNodeUsage(message);
 
   // 도구 호출은 assistant 노드에, 결과는 그 아래 tool 노드에 나뉘어 저장된다.
   // 화면에서는 둘을 한 말풍선으로 합쳐 보여준다.
@@ -104,7 +96,14 @@ export function MessageBubble({
             분기 {siblingCount}개 중 하나
           </span>
         )}
-        {usage && <span className="text-zinc-600">{usage}</span>}
+        {usage && (
+          <UsageTag
+            usage={usage.usage}
+            cost={usage.cost}
+            modelId={usage.modelId}
+            className="text-[10px]"
+          />
+        )}
         {message.status === "aborted" && <span className="text-amber-400">중단됨</span>}
 
         <span className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">

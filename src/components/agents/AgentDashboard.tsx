@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/Panel";
-import { isRunActive, runDuration, runStatusStyle } from "@/lib/agentRuns";
+import { UsageTag } from "@/components/UsageMeter";
+import { isRunActive, runDuration, runStatusStyle, runUsage } from "@/lib/agentRuns";
 import { useAgents } from "@/store/agents";
 import { useWorkspace } from "@/store/workspace";
 import type { AgentRun } from "@/types/ipc";
@@ -96,6 +97,8 @@ function RunCard({ run }: { run: AgentRun }) {
   const status = runStatusStyle(run.status);
   const active = isRunActive(run);
   const elapsed = runDuration(run);
+  // 위임 실행은 대화 트리에 안 남으므로 쓴 토큰을 여기서만 볼 수 있다.
+  const usage = runUsage(run);
 
   return (
     <div className="group rounded border border-zinc-800 bg-zinc-900/60 p-2">
@@ -144,6 +147,15 @@ function RunCard({ run }: { run: AgentRun }) {
         >
           {expanded ? "접기" : run.result || run.error ? "결과 보기" : "전체 보기"}
         </button>
+        {usage && (
+          <UsageTag
+            usage={usage.usage}
+            cost={usage.cost}
+            modelId={usage.modelId}
+            variant="cost"
+            className="text-[10px]"
+          />
+        )}
         <span className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           {active && (
             <button

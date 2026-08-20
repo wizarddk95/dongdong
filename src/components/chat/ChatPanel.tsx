@@ -4,10 +4,19 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ContextModal } from "@/components/inspect/ContextModal";
 import { MemoryModal } from "@/components/inspect/MemoryModal";
 import { Button } from "@/components/Panel";
+import { ContextGauge, UsageBreakdown } from "@/components/UsageMeter";
 import { findModelOption } from "@/lib/ai/providers";
 import { summarizeToolCall } from "@/lib/ai/skills";
+import {
+  contextStatus,
+  formatCost,
+  lastCallUsage,
+  readChainUsage,
+  summarizeLiveUsage,
+} from "@/lib/ai/usage";
 import { buildIndex, pathTo, siblingsOf } from "@/lib/tree";
 import { toBubbles } from "@/lib/turns";
+import { useAgents } from "@/store/agents";
 import { useChat } from "@/store/chat";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
@@ -20,6 +29,7 @@ export function ChatPanel() {
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const project = useWorkspace((state) => state.project);
   const instructions = useWorkspace((state) => state.instructions);
+  const agentRuns = useAgents((state) => state.runs);
 
   const {
     running,
@@ -37,6 +47,7 @@ export function ChatPanel() {
   const useProjectInstructions = useSettings((state) => state.useProjectInstructions);
 
   const [draft, setDraft] = useState("");
+  const [usageOpen, setUsageOpen] = useState(false);
   // contextMessageId 가 null 이면 "다음 턴에 나갈 컨텍스트" 미리보기.
   const [contextOpen, setContextOpen] = useState(false);
   const [contextMessageId, setContextMessageId] = useState<string | null>(null);
@@ -53,6 +64,27 @@ export function ChatPanel() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [path.length, streamingText]);
+
+  /**
+   * 비용·컨텍스트는 DB 집계가 아니라 스토어의 노드에서 바로 센다 —
+   * 방금 끝난 턴이 곧바로 반영돼야 하기 때문이다.
+   *
+   *   - 컨텍스트: **활성 경로의 마지막 호출**이 기준. 다음 턴에 그대로 다시 실린다.
+   *   - 경로 비용: 지금 보고 있는 대화 줄기만.
+   *   - 세션 비용: 버려진 분기와 서브에이전트까지 포함한 이 세션의 실제 지출.
+   */
+  const { context, contextModelId, pathUsage, sessionUsage } = useMemo(() => {
+    const last = lastCallUsage(path, modelId);
+    // 창 크기는 **그 호출에 쓴 모델** 기준이다. 지금 설정된 모델과 다를 수 있다.
+    const contextModelId = last?.modelId ?? modelId;
+    return {
+      context: contextStatus(contextModelId, last?.usage ?? null),
+      contextModelId,
+      pathUsage: readChainUsage(path, modelId),
+      // 세션 합계는 활성 경로가 아니라 세션의 **모든** 노드를 센다.
+      sessionUsage: summarizeLiveUsage(messages, agentRuns, modelId),
+    };
+  }, [path, messages, agentRuns, modelId]);
 
   const modelLabel = findModelOption(modelId)?.label ?? modelId;
   const canSend = Boolean(project && activeSessionId) && !running;
@@ -118,6 +150,44 @@ export function ChatPanel() {
       )}
 
       <div className="shrink-0 border-t border-zinc-800 p-2">
+        <div className="mb-1.5 space-y-1">
+          <ContextGauge status={context} modelId={contextModelId} variant="full" />
+
+          <div className="flex items-center gap-2 text-[10px] text-zinc-500">
+            <span title="지금 보고 있는 대화 줄기(활성 경로)에 든 비용입니다.">
+              이 경로{" "}
+              <span className="text-zinc-300">
+                {formatCost(pathUsage.cost, pathUsage.modelId)}
+              </span>
+            </span>
+            <span title="버려진 분기와 서브에이전트까지 포함한 이 세션 전체의 비용입니다.">
+              세션{" "}
+              <span className="text-zinc-300">
+                {formatCost(sessionUsage.cost, sessionUsage.primaryModelId)}
+              </span>
+            </span>
+            {sessionUsage.calls > 0 && (
+              <span className="text-zinc-600">LLM 호출 {sessionUsage.calls}회</span>
+            )}
+            <button
+              className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-700"
+              title="세션 전체의 토큰을 항목별로 봅니다"
+              onClick={() => setUsageOpen(!usageOpen)}
+            >
+              {usageOpen ? "토큰 내역 닫기" : "토큰 내역"}
+            </button>
+          </div>
+
+          {usageOpen && (
+            <UsageBreakdown
+              usage={sessionUsage.usage}
+              cost={sessionUsage.cost}
+              modelId={sessionUsage.primaryModelId}
+              calls={sessionUsage.calls}
+            />
+          )}
+        </div>
+
         <div className="mb-1.5 flex items-center gap-2 text-[10px] text-zinc-500">
           <span>{modelLabel}</span>
           {activeParentId ? (

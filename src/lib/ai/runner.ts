@@ -15,6 +15,7 @@ import {
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
+import { readUsage, type Usage } from "@/lib/ai/usage";
 import type { Message } from "@/types/ipc";
 
 /** LLM 으로 실제 전송되는 페이로드. Context Inspector 가 그대로 렌더링한다. */
@@ -66,19 +67,12 @@ export interface RunTurnOptions {
   onStepFinish?: (step: StepRecord) => void | Promise<void>;
 }
 
-export interface TokenUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  reasoningTokens?: number;
-  cachedInputTokens?: number;
-}
-
 export interface RunTurnResult {
   /** 마지막 스텝의 텍스트 (= 최종 assistant 노드에 남을 내용) */
   text: string;
   reasoning: string;
-  usage: TokenUsage | null;
+  /** 턴 전체(모든 스텝)의 합계. 공급자별 모양 차이는 여기서 이미 접혀 있다 */
+  usage: Usage | null;
   finishReason: string | null;
   aborted: boolean;
   steps: number;
@@ -247,7 +241,7 @@ export async function runTurn({
   let stepResults: StoredToolResult[] = [];
   let steps = 0;
 
-  let usage: TokenUsage | null = null;
+  let usage: Usage | null = null;
   let finishReason: string | null = null;
   let aborted = false;
   let streamError: unknown = null;
@@ -311,7 +305,8 @@ export async function runTurn({
         break;
       case "finish":
         finishReason = part.finishReason;
-        usage = part.totalUsage as TokenUsage;
+        // 공급자·SDK 버전마다 모양이 다르므로 들어오는 자리에서 한 번만 접는다.
+        usage = readUsage(part.totalUsage);
         break;
       case "abort":
         aborted = true;

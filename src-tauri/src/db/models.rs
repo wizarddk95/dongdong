@@ -27,6 +27,25 @@ pub struct Session {
     pub archived_at: Option<String>,
 }
 
+/// 세션이 모델 하나에 쓴 토큰 합계.
+///
+/// 요금 계산은 여기서 하지 않는다 — 요율표(`lib/ai/providers.ts`)가 프론트에 있고,
+/// 같은 토큰이라도 모델마다 단가가 다르므로 **모델별로 나눠서** 올려 보낸다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionModelUsage {
+    /// `provider:modelId`. 옛 기록이라 모델을 알 수 없으면 None.
+    pub model_id: Option<String>,
+    /// 이 모델로 부른 LLM 호출 수 (메인 턴 + 위임 실행)
+    pub calls: i64,
+    /// 캐시 읽기·쓰기를 **포함한** 전체 입력 토큰
+    pub input_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+}
+
 /// 세션 목록 카드에 필요한 집계까지 얹은 형태.
 /// `session` 을 flatten 하므로 프론트에서는 `Session` 을 확장한 하나의 객체로 보인다.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +58,13 @@ pub struct SessionOverview {
     /// 첫 사용자 메시지 앞부분 (세션 맵 카드 미리보기)
     pub preview: Option<String>,
     pub agent_run_count: i64,
+    /// 누적 토큰 — 모델별로 나눠 담는다 (비용은 프론트가 요율표로 계산).
+    pub usage_by_model: Vec<SessionModelUsage>,
+    /// 이 세션의 **가장 최근** LLM 호출 usage 원문. 컨텍스트 잔량 추정에 쓴다.
+    /// (활성 경로가 아니라 seq 최댓값 기준 — 정확한 값은 채팅 화면이 경로에서 다시 센다)
+    pub last_usage: Option<serde_json::Value>,
+    /// `last_usage` 를 만든 모델. 컨텍스트 창 크기를 이걸로 찾는다.
+    pub last_usage_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +174,9 @@ pub struct AgentRun {
     pub current_skill: Option<String>,
     pub result: Option<String>,
     pub error: Option<String>,
+    /// 이 실행이 쓴 토큰 (`StoredUsage` JSON). 서브에이전트는 대화 트리에
+    /// 노드를 남기지 않으므로 여기 적지 않으면 비용 집계에서 통째로 빠진다.
+    pub token_usage: Option<serde_json::Value>,
     pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
@@ -176,4 +205,6 @@ pub struct AgentRunPatch {
     pub result: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub token_usage: Option<serde_json::Value>,
 }

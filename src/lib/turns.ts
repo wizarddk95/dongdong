@@ -6,6 +6,7 @@
  * 여기서 노드 체인을 되접어 턴으로 묶는다 — 스키마를 바꾸지 않는 순수 파생 계산이다.
  */
 import { readToolCalls, readToolResults } from "@/lib/ai/runner";
+import { readChainUsage, type Cost, type Usage } from "@/lib/ai/usage";
 import { buildIndex } from "@/lib/tree";
 import type { Message } from "@/types/ipc";
 
@@ -33,6 +34,12 @@ export interface Turn {
   toolUses: ToolUse[];
   /** 실패한 도구 결과 수 */
   toolErrorCount: number;
+  /** 이 턴의 노드들이 쓴 토큰 합계. LLM 호출이 없었으면 전부 0 */
+  usage: Usage;
+  /** 그 토큰의 추정 요금 */
+  cost: Cost;
+  /** 이 턴을 돌린 모델. 옛 기록이라 모를 수도 있다 */
+  modelId: string | null;
   status: TurnStatus;
   seq: number;
 }
@@ -128,6 +135,10 @@ export function buildTurns(messages: Message[]): TurnIndex {
 
     const parentId = anchor.parentId && index.byId.has(anchor.parentId) ? anchor.parentId : null;
 
+    // 사용량은 assistant 노드에만 붙는다(턴 전체 합이 마지막 노드에 한 번).
+    // 그래도 턴 안의 모든 노드를 훑는다 — 중간에 분기·재시도로 여러 개가 남을 수 있다.
+    const { usage, cost, modelId } = readChainUsage(nodes);
+
     const turn: Turn = {
       id: anchor.id,
       anchor,
@@ -139,6 +150,9 @@ export function buildTurns(messages: Message[]): TurnIndex {
       assistantText: lastAssistant?.content ?? "",
       toolUses: [...counts.entries()].map(([name, count]) => ({ name, count })),
       toolErrorCount,
+      usage,
+      cost,
+      modelId,
       status,
       seq: anchor.seq,
     };

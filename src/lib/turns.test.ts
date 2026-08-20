@@ -189,3 +189,39 @@ describe("toBubbles", () => {
     expect(toBubbles([])).toEqual([]);
   });
 });
+
+describe("buildTurns — 토큰과 요금", () => {
+  it("턴 안의 사용량을 모아 요금까지 낸다", () => {
+    const messages: Message[] = [
+      node("u1", null, 1, "user"),
+      node("a1", "u1", 2, "assistant", { toolCalls: [call("c1", "read_file")] }),
+      node("t1", "a1", 3, "tool", { toolCalls: [call("c1", "read_file")] }),
+      // 사용량은 턴을 마무리한 노드에만 붙는다 (그 턴 전체의 합).
+      node("a2", "t1", 4, "assistant", {
+        tokenUsage: {
+          inputTokens: 1_000_000,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          totalTokens: 1_000_000,
+          modelId: "anthropic:claude-opus-5",
+        },
+      }),
+    ];
+
+    const [turn] = buildTurns(messages).turns;
+
+    expect(turn.usage.inputTokens).toBe(1_000_000);
+    expect(turn.modelId).toBe("anthropic:claude-opus-5");
+    expect(turn.cost.total).toBeCloseTo(5); // 1M × $5/1M
+  });
+
+  it("LLM 호출이 없던 턴은 0 이고 요금도 없다", () => {
+    const [turn] = buildTurns([node("u1", null, 1, "user")]).turns;
+
+    expect(turn.usage.inputTokens).toBe(0);
+    expect(turn.cost.total).toBe(0);
+    expect(turn.modelId).toBeNull();
+  });
+});

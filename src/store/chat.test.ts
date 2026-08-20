@@ -105,7 +105,14 @@ beforeEach(() => {
 const finalResult: RunTurnResult = {
   text: "다 읽었습니다",
   reasoning: "",
-  usage: { inputTokens: 10, outputTokens: 5 },
+  usage: {
+    inputTokens: 10,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 5,
+    reasoningTokens: 0,
+    totalTokens: 15,
+  },
   finishReason: "stop",
   aborted: false,
   steps: 2,
@@ -240,7 +247,16 @@ describe("useChat.send — 도구 스텝", () => {
     const messages = useWorkspace.getState().messages;
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(messages[1].content).toBe("안녕하세요");
-    expect(messages[1].tokenUsage).toEqual({ inputTokens: 10, outputTokens: 5 });
+    // 사용량은 평평한 모양으로 접혀 저장되고, 어느 모델이었는지도 함께 남는다.
+    expect(messages[1].tokenUsage).toEqual({
+      inputTokens: 10,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 5,
+      reasoningTokens: 0,
+      totalTokens: 15,
+      modelId: "anthropic:claude-opus-5",
+    });
     // 첫 assistant 노드에는 그때 보낸 컨텍스트 원문이 남아 있어야 한다 (인스펙터용).
     expect(messages[1].contextSnapshot).toMatchObject({ toolNames: expect.any(Array) });
     expect(useChat.getState().error).toBeNull();

@@ -306,6 +306,52 @@ fn migrates_v1_memories_table_without_losing_rows() {
 }
 
 #[test]
+fn migrates_v2_agent_runs_by_adding_the_token_column() {
+    // 토큰 집계 이전(v2)까지 쓰던 DB 를 재현한 뒤 v3 로 올린다.
+    let project = TempProject::new("migrate-v3");
+    let db_path = paths::db_path(&project.0);
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    let mut conn = rusqlite::Connection::open(&db_path).unwrap();
+    super::schema::apply_pragmas(&conn).unwrap();
+
+    conn.execute_batch(super::schema::MIGRATIONS[0]).unwrap();
+    conn.execute_batch(super::schema::MIGRATIONS[1]).unwrap();
+    conn.pragma_update(None, "user_version", 2i64).unwrap();
+
+    let ts = queries::now();
+    conn.execute(
+        "INSERT INTO projects (id, root_path, name, settings, created_at, updated_at)
+         VALUES ('p1', 'C:/old', 'old', '{}', ?1, ?1)",
+        rusqlite::params![ts],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO sessions (id, project_id, title, metadata, created_at, updated_at)
+         VALUES ('s1', 'p1', '옛 세션', '{}', ?1, ?1)",
+        rusqlite::params![ts],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO agent_runs (id, session_id, name, task, status, progress, created_at)
+         VALUES ('r1', 's1', '옛 실행', '일', 'succeeded', 1, ?1)",
+        rusqlite::params![ts],
+    )
+    .unwrap();
+
+    let version = super::schema::migrate(&mut conn).unwrap();
+    assert_eq!(version, super::schema::MIGRATIONS.len() as i64);
+
+    // 기존 행은 그대로 남고, 새 컬럼은 비어 있다.
+    let run = queries::get_agent_run(&conn, "r1").unwrap().unwrap();
+    assert_eq!(run.name, "옛 실행");
+    assert!(run.token_usage.is_none());
+
+    // 토큰이 없는 옛 실행은 집계에도 잡히지 않아야 한다 (0 이 아니라 아예 없음).
+    let overviews = queries::list_session_overviews(&conn, "p1").unwrap();
+    assert!(overviews[0].usage_by_model.is_empty());
+}
+
+#[test]
 fn tracks_agent_run_lifecycle() {
     let project = TempProject::new("agent-run");
     let conn = open_workspace_db(&project.0).unwrap();
@@ -522,6 +568,120 @@ fn summarizes_sessions_with_counts_and_preview() {
         branch_row.session.branched_from_message_id.as_deref(),
         Some(second.id.as_str())
     );
+}
+
+/// 노드에 붙일 usage JSON. 프론트의 `StoredUsage` 와 같은 모양이다.
+fn usage(model_id: &str, input: i64, cache_read: i64, output: i64) -> serde_json::Value {
+    serde_json::json!({
+        "modelId": model_id,
+        "inputTokens": input,
+        "cacheReadTokens": cache_read,
+        "cacheWriteTokens": 0,
+        "outputTokens": output,
+        "reasoningTokens": 0,
+        "totalTokens": input + output,
+    })
+}
+
+#[test]
+fn aggregates_session_tokens_per_model() {
+    let project = TempProject::new("tokens");
+    let conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+
+    let record = queries::upsert_project(&conn, &root_path, "tokens").unwrap();
+    let session = queries::create_session(&conn, &record.id, "비용", None, None, None).unwrap();
+
+    let ask = queries::insert_message(&conn, &message(&session.id, None, "user", "질문")).unwrap();
+
+    let mut answer = message(&session.id, Some(&ask.id), "assistant", "답");
+    answer.token_usage = Some(usage("anthropic:claude-opus-5", 1_000, 400, 200));
+    let answer = queries::insert_message(&conn, &answer).unwrap();
+
+    // 같은 모델의 두 번째 호출은 한 줄로 합쳐져야 한다.
+    let mut again = message(&session.id, Some(&answer.id), "assistant", "또 답");
+    again.token_usage = Some(usage("anthropic:claude-opus-5", 500, 0, 100));
+    let again = queries::insert_message(&conn, &again).unwrap();
+
+    // 모델이 다르면 줄이 갈린다 (단가가 다르니 합치면 안 된다).
+    let mut cheap = message(&session.id, Some(&again.id), "assistant", "싼 모델");
+    cheap.token_usage = Some(usage("anthropic:claude-sonnet-5", 30, 0, 10));
+    queries::insert_message(&conn, &cheap).unwrap();
+
+    // 서브에이전트도 자기 몫을 낸다 — 대화 트리에는 노드가 없다.
+    let run = queries::create_agent_run(
+        &conn,
+        &NewAgentRun {
+            session_id: session.id.clone(),
+            parent_message_id: Some(answer.id.clone()),
+            name: "탐색".into(),
+            task: "훑어봐".into(),
+        },
+    )
+    .unwrap();
+    queries::update_agent_run(
+        &conn,
+        &run.id,
+        &AgentRunPatch {
+            status: Some("succeeded".into()),
+            token_usage: Some(usage("anthropic:claude-opus-5", 200, 0, 50)),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let overviews = queries::list_session_overviews(&conn, &record.id).unwrap();
+    let row = &overviews[0];
+
+    assert_eq!(row.usage_by_model.len(), 2, "모델별로 나뉜다");
+
+    let opus = &row.usage_by_model[0];
+    assert_eq!(opus.model_id.as_deref(), Some("anthropic:claude-opus-5"));
+    assert_eq!(opus.calls, 3, "메인 턴 2 + 위임 1");
+    assert_eq!(opus.input_tokens, 1_700);
+    assert_eq!(opus.cache_read_tokens, 400);
+    assert_eq!(opus.output_tokens, 350);
+
+    let sonnet = &row.usage_by_model[1];
+    assert_eq!(sonnet.model_id.as_deref(), Some("anthropic:claude-sonnet-5"));
+    assert_eq!(sonnet.calls, 1);
+    assert_eq!(sonnet.input_tokens, 30);
+
+    // 컨텍스트 잔량은 가장 최근 호출을 기준으로 잡는다.
+    assert_eq!(
+        row.last_usage_model.as_deref(),
+        Some("anthropic:claude-sonnet-5")
+    );
+    let last = row.last_usage.as_ref().expect("마지막 usage 가 있어야 한다");
+    assert_eq!(last["inputTokens"], 30);
+}
+
+#[test]
+fn falls_back_to_the_snapshot_model_for_older_nodes() {
+    let project = TempProject::new("tokens-legacy");
+    let conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+
+    let record = queries::upsert_project(&conn, &root_path, "tokens-legacy").unwrap();
+    let session = queries::create_session(&conn, &record.id, "옛 기록", None, None, None).unwrap();
+
+    // usage 에 modelId 를 안 박던 시절의 노드: 모델은 컨텍스트 스냅샷에만 남아 있고
+    // 캐시 읽기는 `cachedInputTokens` 라는 옛 이름을 쓴다.
+    let mut old = message(&session.id, None, "assistant", "옛 답");
+    old.context_snapshot = Some(serde_json::json!({ "modelId": "anthropic:claude-sonnet-5" }));
+    old.token_usage = Some(serde_json::json!({
+        "inputTokens": 900,
+        "cachedInputTokens": 300,
+        "outputTokens": 40,
+    }));
+    queries::insert_message(&conn, &old).unwrap();
+
+    let overviews = queries::list_session_overviews(&conn, &record.id).unwrap();
+    let usage = &overviews[0].usage_by_model[0];
+    assert_eq!(usage.model_id.as_deref(), Some("anthropic:claude-sonnet-5"));
+    assert_eq!(usage.input_tokens, 900);
+    assert_eq!(usage.cache_read_tokens, 300, "옛 이름도 읽어야 한다");
+    assert_eq!(usage.cache_write_tokens, 0);
 }
 
 #[test]

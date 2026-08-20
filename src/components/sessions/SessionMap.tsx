@@ -10,6 +10,8 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { Button } from "@/components/Panel";
+import { UsageTag } from "@/components/UsageMeter";
+import { summarizeProjectUsage } from "@/lib/ai/usage";
 import { SessionNode, SESSION_HEIGHT, SESSION_WIDTH } from "@/components/sessions/SessionNode";
 import { tidyLayout } from "@/lib/layout";
 import { buildSessionTree } from "@/lib/sessionTree";
@@ -97,6 +99,8 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
   }, [sessions, activeSessionId, selectedId]);
 
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
+  // 이 프로젝트가 지금까지 쓴 총량. 모델별로 요금을 매긴 뒤 더한 값이다.
+  const total = useMemo(() => summarizeProjectUsage(sessions), [sessions]);
 
   const onNodeClick: NodeMouseHandler = (_event, node) => {
     setSelectedId(node.id);
@@ -139,6 +143,18 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
         <span className="text-[11px] text-zinc-500">
           세션 {sessions.length}개 · 카드를 더블클릭하면 그 대화로 들어갑니다
         </span>
+        {total.calls > 0 && (
+          <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+            <span className="text-zinc-600">·</span>
+            <span>LLM 호출 {total.calls}회</span>
+            <UsageTag
+              usage={total.usage}
+              cost={total.cost}
+              modelId={total.primaryModelId}
+              className="text-[11px]"
+            />
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-1">
           {renameDraft !== null ? (

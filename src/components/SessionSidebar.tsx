@@ -1,4 +1,5 @@
 import { Button } from "@/components/Panel";
+import { formatCost, summarizeSessionUsage } from "@/lib/ai/usage";
 import { useWorkspace } from "@/store/workspace";
 
 interface SessionSidebarProps {
@@ -33,7 +34,9 @@ export function SessionSidebar({ onBackToMap }: SessionSidebarProps) {
       </div>
 
       <ul className="min-h-0 flex-1 overflow-auto">
-        {sessions.map((session) => (
+        {sessions.map((session) => {
+          const summary = summarizeSessionUsage(session);
+          return (
           <li
             key={session.id}
             className={`group flex items-center gap-1 border-b border-zinc-800/50 px-2.5 py-2 text-xs ${
@@ -50,6 +53,11 @@ export function SessionSidebar({ onBackToMap }: SessionSidebarProps) {
                   <span className="rounded bg-violet-950 px-1 text-violet-300">⑂ 분기</span>
                 )}
                 <span>노드 {session.messageCount}</span>
+                {summary.calls > 0 && (
+                  <span className="text-zinc-500">
+                    {formatCost(summary.cost, summary.primaryModelId)}
+                  </span>
+                )}
                 {new Date(session.updatedAt).toLocaleString("ko-KR", {
                   month: "2-digit",
                   day: "2-digit",
@@ -66,7 +74,8 @@ export function SessionSidebar({ onBackToMap }: SessionSidebarProps) {
               ✕
             </button>
           </li>
-        ))}
+          );
+        })}
 
         {sessions.length === 0 && (
           <li className="px-3 py-6 text-center text-[11px] text-zinc-600">

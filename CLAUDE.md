@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 156 / cargo 37. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 227 / cargo 40. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -77,6 +77,7 @@ src/
   lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음)
   lib/ai/abort.ts       도구 실행에 중단 붙이기 (ToolSet 래퍼)
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입 + 로컬 서버(OpenAI 호환) 탐색
+  lib/ai/usage.ts       토큰 사용량 정규화 + 요금 추정 + 컨텍스트 잔량 (순수 파생)
   lib/ai/runner.ts      streamText 한 턴 (DB 안 건드림) + tool 파트 변환
   lib/ai/skills.ts      IPC → AI SDK 도구 (zod 스키마 · 토글 · delegate_task)
   lib/ai/subagent.ts    서브에이전트 한 명의 격리된 실행
@@ -85,6 +86,7 @@ src/
   store/                workspace(트리) · chat(턴) · agents(서브) · mcp · settings
   components/           chat · flow(턴 그래프) · sessions(세션 맵) · agents · mcp · inspect
                         ErrorBoundary.tsx — 렌더 예외로 창이 새까매지는 것을 막는다
+                        UsageMeter.tsx — 토큰·요금·컨텍스트 게이지 (채팅/턴/세션 공용)
 src-tauri/src/
   lib.rs                command 등록 지점
   state.rs              프로젝트별 SQLite 커넥션 (with_conn)
@@ -101,6 +103,14 @@ src-tauri/src/
 - **세션 맵**: 프로젝트를 열면 먼저 뜨는 화면. `parent_session_id` 로 세션 분기를 그린다. 카드 집계는 `list_sessions` 가 `SessionOverview` 로 한 번에 내려준다(세션마다 메시지를 읽지 않는다).
 - **도구 실행**: 한 턴이 여러 스텝. 스텝마다 `assistant`(호출) → `tool`(결과) → `assistant` 노드가 쌓인다. 짝 없는 tool-call/result 는 `toModelMessages()` 가 걸러낸다(공급자가 400 을 낸다).
   저장은 이렇게 둘로 나뉘지만 **채팅 화면에서는 한 말풍선**이다 — `toBubbles()`(`lib/turns.ts`)가 tool 노드를 자기를 부른 assistant 말풍선으로 흡수하고, 도구 묶음은 기본 접힘이다.
+- **토큰·비용**: 턴이 끝나면 그 턴 전체의 사용량이 마지막 assistant 노드의 `token_usage` 에 남는다
+  (`{ inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, reasoningTokens, totalTokens, modelId }`).
+  **비용은 저장하지 않는다** — 언제나 `MODEL_CATALOG` 요율표로 다시 계산한다(저장하면 노드별 합과
+  세션 집계가 어긋난다). 서브에이전트는 노드를 안 남기므로 `agent_runs.token_usage` 에 따로 적는다.
+  세션 카드용 누적은 `list_sessions` 가 **모델별로 나눠서**(`usageByModel`) 내려준다 — 같은 토큰도
+  모델마다 단가가 다르므로 먼저 합치면 값이 틀어진다.
+- **컨텍스트 잔량**: 대화는 매 턴 전체가 다시 올라가므로 누적 합이 아니라 **마지막 호출의 입력+출력**이
+  다음 턴에 실릴 양이다. 그 값을 모델의 `contextWindow` 와 견줘 게이지로 보여준다.
 - **투명성이 이 툴의 경쟁력**: assistant 노드의 `context_snapshot` 에 그 시점 LLM 입력 원문을 남기고 인스펙터로 보여준다. 새 기능도 "무엇이 LLM 에 갔는지" 숨기지 않게 만든다.
 - **프로젝트 지침**: 연 프로젝트 루트의 `AGENTS.md` 를 매 턴 다시 읽어 시스템 프롬프트 맨 앞에 원문 그대로 싣는다(서브에이전트에도 전달).
 - **서브에이전트**: `delegate_task` → 컨텍스트가 격리된 별도 실행, 요약만 상위로. `parent_message_id` 가 가리키는 노드의 턴에서 위/아래로 분기해 그려진다(대시보드 탭과 병행). `onDelegate` 없이 ToolSet 을 만들면 도구가 노출되지 않아 재위임이 구조적으로 불가능하다. 상태는 `agent_runs`.

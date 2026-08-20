@@ -1,9 +1,12 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 
+import { ContextGauge, UsageTag } from "@/components/UsageMeter";
+import { sessionContextStatus, summarizeSessionUsage } from "@/lib/ai/usage";
 import type { SessionOverview } from "@/types/ipc";
 
 export const SESSION_WIDTH = 232;
-export const SESSION_HEIGHT = 104;
+/** 비용 줄 + 컨텍스트 게이지가 아래 두 줄을 더 쓴다. */
+export const SESSION_HEIGHT = 124;
 
 export interface SessionNodeData extends Record<string, unknown> {
   session: SessionOverview;
@@ -26,6 +29,9 @@ function shortTime(value: string | null): string {
 /** 세션 맵의 카드 한 장. 더블클릭하면 그 세션의 채팅으로 들어간다. */
 export function SessionNode({ data }: NodeProps<SessionFlowNode>) {
   const { session, isActive, isSelected } = data;
+
+  const summary = summarizeSessionUsage(session);
+  const context = sessionContextStatus(session);
 
   const ring = isSelected
     ? "ring-2 ring-violet-400"
@@ -59,7 +65,20 @@ export function SessionNode({ data }: NodeProps<SessionFlowNode>) {
         {session.agentRunCount > 0 && (
           <span className="text-fuchsia-400">🤝 {session.agentRunCount}</span>
         )}
+        <UsageTag
+          usage={summary.usage}
+          cost={summary.cost}
+          modelId={summary.primaryModelId}
+          className="ml-auto text-[9px]"
+        />
       </div>
+
+      {/* 이 세션을 이어서 쓸 수 있는지 — 카드에서 바로 보이게 한다. */}
+      <ContextGauge
+        status={context}
+        modelId={session.lastUsageModel ?? session.model}
+        className="shrink-0"
+      />
 
       <Handle type="source" position={Position.Right} className="!h-1.5 !w-1.5 !bg-zinc-500" />
     </div>

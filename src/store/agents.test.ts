@@ -51,6 +51,7 @@ beforeEach(() => {
       status: "pending",
       progress: 0,
       currentSkill: null,
+      tokenUsage: null,
       result: null,
       error: null,
       createdAt: "2026-01-01T00:00:00Z",
@@ -252,6 +253,53 @@ describe("useAgents.spawn", () => {
     expect(extra).toContain("# 프로젝트 지침 (AGENTS.md)");
   });
 
+  it("쓴 토큰을 실행 기록에 남긴다 — 위임은 대화 트리에 노드가 없다", async () => {
+    vi.mocked(runSubagent).mockResolvedValue({
+      ...finished,
+      usage: {
+        inputTokens: 1_200,
+        cacheReadTokens: 400,
+        cacheWriteTokens: 0,
+        outputTokens: 300,
+        reasoningTokens: 0,
+        totalTokens: 1_500,
+      },
+    });
+
+    await useAgents.getState().spawn({ name: "탐색", task: "구조 파악" });
+
+    const patch = mocked.updateAgentRun.mock.calls.at(-1)?.[1];
+    expect(patch?.tokenUsage).toMatchObject({
+      inputTokens: 1_200,
+      cacheReadTokens: 400,
+      outputTokens: 300,
+      // 서브에이전트 모델이 따로 설정돼 있지 않으면 메인 모델을 쓴다.
+      modelId: "anthropic:claude-opus-5",
+    });
+  });
+
+  it("중단된 실행도 이미 나간 토큰은 기록한다", async () => {
+    vi.mocked(runSubagent).mockResolvedValue({
+      ...finished,
+      aborted: true,
+      text: "",
+      usage: {
+        inputTokens: 800,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 20,
+        reasoningTokens: 0,
+        totalTokens: 820,
+      },
+    });
+
+    await useAgents.getState().spawn({ name: "러너", task: "일" });
+
+    const patch = mocked.updateAgentRun.mock.calls.at(-1)?.[1];
+    expect(patch).toMatchObject({ status: "cancelled" });
+    expect(patch?.tokenUsage).toMatchObject({ inputTokens: 800 });
+  });
+
   it("세션이 없으면 띄우지 않는다", async () => {
     useWorkspace.setState({ activeSessionId: null });
     await expect(useAgents.getState().spawn({ name: "러너", task: "일" })).rejects.toThrow(
@@ -272,6 +320,7 @@ describe("useAgents.refresh / 정리", () => {
       status: "failed",
       progress: 0.2,
       currentSkill: null,
+      tokenUsage: null,
       result: null,
       error: "앱이 종료되어 중단되었습니다",
       createdAt: "2026-01-01T00:00:00Z",

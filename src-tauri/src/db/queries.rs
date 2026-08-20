@@ -5,9 +5,11 @@ use serde_json::Value;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
+use std::collections::HashMap;
+
 use super::models::{
     AgentRun, AgentRunPatch, Memory, Message, MessagePatch, NewAgentRun, NewMemory, NewMessage,
-    Project, Session, SessionOverview,
+    Project, Session, SessionModelUsage, SessionOverview,
 };
 use crate::error::{AppError, AppResult};
 
@@ -145,11 +147,111 @@ fn map_session_overview(row: &Row<'_>) -> rusqlite::Result<SessionOverview> {
             trimmed.chars().take(PREVIEW_CHARS).collect::<String>()
         }),
         agent_run_count: row.get(13)?,
+        last_usage: from_text(row.get(14)?),
+        last_usage_model: row.get(15)?,
+        // 아래 집계 쿼리에서 채운다.
+        usage_by_model: Vec::new(),
     })
 }
 
-/// 세션 목록 + 카드에 필요한 집계(노드 수 · 마지막 활동 · 미리보기 · 위임 수)를 한 번에 읽는다.
-/// 세션마다 메시지를 따로 조회하면 세션 수만큼 왕복이 생긴다.
+/// 한 호출이 쓴 모델을 되찾는 SQL 식.
+///
+/// 새 기록은 usage JSON 안에 `modelId` 를 박아 둔다(모델을 바꿔도 옛 비용이 흔들리지 않게).
+/// 그게 없는 옛 노드는 컨텍스트 스냅샷에 남은 모델을, 그것도 없으면 세션 기본 모델을 쓴다.
+const MESSAGE_MODEL_EXPR: &str = "COALESCE(json_extract(m.token_usage, '$.modelId'),
+                 json_extract(m.context_snapshot, '$.modelId'), s.model)";
+
+/// usage JSON 의 한 필드를 정수로 꺼내 합한다. 값이 없으면 0.
+/// `fallback` 은 필드 이름이 바뀌기 전의 옛 이름.
+fn usage_sum(alias: &str, field: &str, fallback: Option<&str>) -> String {
+    match fallback {
+        Some(old) => format!(
+            "SUM(COALESCE(json_extract({alias}.token_usage, '$.{field}'),              json_extract({alias}.token_usage, '$.{old}'), 0))"
+        ),
+        None => format!("SUM(COALESCE(json_extract({alias}.token_usage, '$.{field}'), 0))"),
+    }
+}
+
+/// 토큰 합계 열 묶음. 메인 턴(messages)과 위임 실행(agent_runs)이 같은 모양을 쓴다.
+fn usage_columns(alias: &str) -> String {
+    format!(
+        "COUNT(*), {}, {}, {}, {}, {}",
+        usage_sum(alias, "inputTokens", None),
+        // 옛 기록은 캐시 읽기를 `cachedInputTokens` 라는 이름으로 남겼다.
+        usage_sum(alias, "cacheReadTokens", Some("cachedInputTokens")),
+        usage_sum(alias, "cacheWriteTokens", None),
+        usage_sum(alias, "outputTokens", None),
+        usage_sum(alias, "reasoningTokens", None),
+    )
+}
+
+/// 프로젝트의 모든 세션에 대해 `세션 → 모델별 토큰 합계` 를 한 번에 읽는다.
+///
+/// 서브에이전트는 대화 트리에 노드를 남기지 않으므로 `agent_runs` 를 UNION 으로 함께 센다.
+fn session_usage_map(
+    conn: &Connection,
+    project_id: &str,
+) -> AppResult<HashMap<String, Vec<SessionModelUsage>>> {
+    let sql = format!(
+        "SELECT s.id, {MESSAGE_MODEL_EXPR} AS model_id, {message_usage}
+           FROM sessions s JOIN messages m ON m.session_id = s.id
+          WHERE s.project_id = ?1 AND m.token_usage IS NOT NULL
+          GROUP BY s.id, model_id
+         UNION ALL
+         SELECT s.id,
+                COALESCE(json_extract(a.token_usage, '$.modelId'), s.model) AS model_id,
+                {agent_usage}
+           FROM sessions s JOIN agent_runs a ON a.session_id = s.id
+          WHERE s.project_id = ?1 AND a.token_usage IS NOT NULL
+          GROUP BY s.id, model_id",
+        message_usage = usage_columns("m"),
+        agent_usage = usage_columns("a"),
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![project_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            SessionModelUsage {
+                model_id: row.get(1)?,
+                calls: row.get(2)?,
+                input_tokens: row.get(3)?,
+                cache_read_tokens: row.get(4)?,
+                cache_write_tokens: row.get(5)?,
+                output_tokens: row.get(6)?,
+                reasoning_tokens: row.get(7)?,
+            },
+        ))
+    })?;
+
+    let mut map: HashMap<String, Vec<SessionModelUsage>> = HashMap::new();
+    for row in rows {
+        let (session_id, usage) = row?;
+        let bucket = map.entry(session_id).or_default();
+        // 같은 모델이 메시지 쪽과 위임 쪽 양쪽에서 오면 한 줄로 합친다.
+        match bucket.iter_mut().find(|item| item.model_id == usage.model_id) {
+            Some(existing) => {
+                existing.calls += usage.calls;
+                existing.input_tokens += usage.input_tokens;
+                existing.cache_read_tokens += usage.cache_read_tokens;
+                existing.cache_write_tokens += usage.cache_write_tokens;
+                existing.output_tokens += usage.output_tokens;
+                existing.reasoning_tokens += usage.reasoning_tokens;
+            }
+            None => bucket.push(usage),
+        }
+    }
+    // 많이 쓴 모델이 앞에 오게 — 카드에는 대표 모델 하나만 적는다.
+    for bucket in map.values_mut() {
+        bucket.sort_by(|a, b| {
+            (b.input_tokens + b.output_tokens).cmp(&(a.input_tokens + a.output_tokens))
+        });
+    }
+    Ok(map)
+}
+
+/// 세션 목록 + 카드에 필요한 집계(노드 수 · 마지막 활동 · 미리보기 · 위임 수 · 토큰)를
+/// 한 번에 읽는다. 세션마다 메시지를 따로 조회하면 세션 수만큼 왕복이 생긴다.
 pub fn list_session_overviews(
     conn: &Connection,
     project_id: &str,
@@ -161,14 +263,26 @@ pub fn list_session_overviews(
                   ORDER BY m.seq LIMIT 1),
                 (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
                 (SELECT MAX(m.created_at) FROM messages m WHERE m.session_id = s.id),
-                (SELECT COUNT(*) FROM agent_runs a WHERE a.session_id = s.id)
+                (SELECT COUNT(*) FROM agent_runs a WHERE a.session_id = s.id),
+                (SELECT m.token_usage FROM messages m
+                  WHERE m.session_id = s.id AND m.token_usage IS NOT NULL
+                  ORDER BY m.seq DESC LIMIT 1),
+                (SELECT {MESSAGE_MODEL_EXPR} FROM messages m
+                  WHERE m.session_id = s.id AND m.token_usage IS NOT NULL
+                  ORDER BY m.seq DESC LIMIT 1)
            FROM sessions s
           WHERE s.project_id = ?1 AND s.archived_at IS NULL
           ORDER BY s.updated_at DESC"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![project_id], map_session_overview)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut overviews = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut usage = session_usage_map(conn, project_id)?;
+    for overview in &mut overviews {
+        overview.usage_by_model = usage.remove(&overview.session.id).unwrap_or_default();
+    }
+    Ok(overviews)
 }
 
 pub fn rename_session(conn: &Connection, id: &str, title: &str) -> AppResult<()> {
@@ -517,7 +631,7 @@ pub fn delete_memory(conn: &Connection, id: &str) -> AppResult<bool> {
 
 // -------------------------------------------------------------- agent runs
 
-const AGENT_RUN_COLUMNS: &str = "id, session_id, parent_message_id, name, task, status, progress, current_skill, result, error, created_at, started_at, finished_at";
+const AGENT_RUN_COLUMNS: &str = "id, session_id, parent_message_id, name, task, status, progress, current_skill, result, error, token_usage, created_at, started_at, finished_at";
 const AGENT_STATUSES: [&str; 5] = ["pending", "running", "succeeded", "failed", "cancelled"];
 /// 실행이 끝난 상태들 — 여기 들어오면 finished_at 을 찍는다.
 const AGENT_TERMINAL: [&str; 3] = ["succeeded", "failed", "cancelled"];
@@ -534,9 +648,10 @@ fn map_agent_run(row: &Row<'_>) -> rusqlite::Result<AgentRun> {
         current_skill: row.get(7)?,
         result: row.get(8)?,
         error: row.get(9)?,
-        created_at: row.get(10)?,
-        started_at: row.get(11)?,
-        finished_at: row.get(12)?,
+        token_usage: from_text(row.get(10)?),
+        created_at: row.get(11)?,
+        started_at: row.get(12)?,
+        finished_at: row.get(13)?,
     })
 }
 
@@ -596,6 +711,7 @@ pub fn update_agent_run(conn: &Connection, id: &str, patch: &AgentRunPatch) -> A
     let current_skill = patch.current_skill.clone().or(existing.current_skill);
     let result = patch.result.clone().or(existing.result);
     let error = patch.error.clone().or(existing.error);
+    let token_usage = to_text(&patch.token_usage.clone().or(existing.token_usage));
 
     let started_at = match existing.started_at {
         Some(value) => Some(value),
@@ -610,7 +726,7 @@ pub fn update_agent_run(conn: &Connection, id: &str, patch: &AgentRunPatch) -> A
 
     conn.execute(
         "UPDATE agent_runs SET status = ?2, progress = ?3, current_skill = ?4, result = ?5,
-             error = ?6, started_at = ?7, finished_at = ?8
+             error = ?6, token_usage = ?7, started_at = ?8, finished_at = ?9
          WHERE id = ?1",
         params![
             id,
@@ -619,6 +735,7 @@ pub fn update_agent_run(conn: &Connection, id: &str, patch: &AgentRunPatch) -> A
             current_skill,
             result,
             error,
+            token_usage,
             started_at,
             finished_at
         ],

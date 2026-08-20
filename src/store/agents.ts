@@ -13,6 +13,7 @@ import { instructionBlock } from "@/lib/ai/instructions";
 import { MissingApiKeyError } from "@/lib/ai/providers";
 import { buildSkills } from "@/lib/ai/skills";
 import { runSubagent } from "@/lib/ai/subagent";
+import { toStoredUsage } from "@/lib/ai/usage";
 import * as ipc from "@/lib/ipc";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
@@ -138,13 +139,17 @@ export const useAgents = create<AgentsState>((set, get) => {
         // 서브에이전트도 프로젝트 지침을 따라야 한다 (메인이 방금 읽어 둔 것을 쓴다).
         const instructions = useWorkspace.getState().instructions;
 
+        // 위임 실행은 대화 트리에 노드를 남기지 않는다 → 쓴 토큰을 실행 행에 직접 적어야
+        // 세션 비용에 잡힌다. 어느 모델이었는지도 함께 남긴다(메인과 다를 수 있다).
+        const modelId = settings.subagentModelId || settings.modelId;
+
         const result = await runSubagent({
           task,
           extraInstructions:
             settings.useProjectInstructions && instructions
               ? instructionBlock(instructions)
               : undefined,
-          modelId: settings.subagentModelId || settings.modelId,
+          modelId,
           credentials: settings.credentials(),
           tools,
           effort: settings.effort,
@@ -157,8 +162,11 @@ export const useAgents = create<AgentsState>((set, get) => {
             }),
         });
 
+        // 중단·실패한 실행도 토큰은 이미 나갔다. 빼놓으면 비용이 축소된다.
+        const tokenUsage = toStoredUsage(modelId, result.usage) ?? undefined;
+
         if (result.aborted || controller.signal.aborted) {
-          await persist(run.id, { status: "cancelled", error: CANCELLED_MESSAGE });
+          await persist(run.id, { status: "cancelled", error: CANCELLED_MESSAGE, tokenUsage });
           return { runId: run.id, name, status: "cancelled", error: CANCELLED_MESSAGE };
         }
 
@@ -166,7 +174,7 @@ export const useAgents = create<AgentsState>((set, get) => {
         if (!text) {
           // 스텝 예산을 다 쓰고 요약을 못 남긴 경우 — 성공으로 포장하지 않는다.
           const error = `요약 없이 스텝 예산(${settings.subagentMaxSteps})을 모두 사용했습니다.`;
-          await persist(run.id, { status: "failed", progress: 1, error });
+          await persist(run.id, { status: "failed", progress: 1, error, tokenUsage });
           return { runId: run.id, name, status: "failed", error };
         }
 
@@ -175,6 +183,7 @@ export const useAgents = create<AgentsState>((set, get) => {
           progress: 1,
           result: text,
           currentSkill: "",
+          tokenUsage,
         });
         return { runId: run.id, name, status: "succeeded", result: text };
       } catch (error) {

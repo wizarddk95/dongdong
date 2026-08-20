@@ -112,6 +112,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key
     ON memories(project_id, scope, COALESCE(session_id, ''), key);
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id, updated_at DESC);
 "#,
+    // v3 — 토큰/비용 집계: 서브에이전트도 자기가 쓴 토큰을 남긴다.
+    //   메인 턴은 messages.token_usage 에 남지만 위임 실행은 별도 컨텍스트라
+    //   대화 트리에 노드가 생기지 않는다 → 여기 안 적으면 세션 비용이 조용히 축소된다.
+    r#"
+ALTER TABLE agent_runs ADD COLUMN token_usage TEXT;
+"#,
 ];
 
 /// 커넥션에 공통 PRAGMA 를 적용한다.

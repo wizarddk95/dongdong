@@ -1,9 +1,12 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 
+import { UsageTag } from "@/components/UsageMeter";
+import { hasTokens } from "@/lib/ai/usage";
 import type { Turn } from "@/lib/turns";
 
 export const TURN_WIDTH = 268;
-export const TURN_HEIGHT = 128;
+/** 토큰·요금 한 줄이 아래 붙는다. 줄이면 도구 배지와 겹친다. */
+export const TURN_HEIGHT = 146;
 
 export interface TurnNodeData extends Record<string, unknown> {
   turn: Turn;
@@ -82,6 +85,15 @@ export function TurnNode({ data }: NodeProps<TurnFlowNode>) {
             <span className="text-red-400">실패 {turn.toolErrorCount}</span>
           )}
         </div>
+      )}
+
+      {hasTokens(turn.usage) && (
+        <UsageTag
+          usage={turn.usage}
+          cost={turn.cost}
+          modelId={turn.modelId}
+          className="shrink-0 text-[9px]"
+        />
       )}
 
       <Handle type="source" position={Position.Right} className="!h-1.5 !w-1.5 !bg-zinc-500" />

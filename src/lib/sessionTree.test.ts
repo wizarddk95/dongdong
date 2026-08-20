@@ -23,6 +23,9 @@ function session(
     messageCount: 0,
     lastMessageAt: null,
     preview: null,
+    usageByModel: [],
+    lastUsage: null,
+    lastUsageModel: null,
     agentRunCount: 0,
     ...extra,
   };

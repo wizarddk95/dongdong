@@ -17,6 +17,7 @@ import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { MissingApiKeyError } from "@/lib/ai/providers";
 import { buildTurnContext, runTurn, type StepRecord, type StoredToolCall } from "@/lib/ai/runner";
 import { buildSkills, summarizeToolCall } from "@/lib/ai/skills";
+import { toStoredUsage } from "@/lib/ai/usage";
 import * as ipc from "@/lib/ipc";
 import { useAgents } from "@/store/agents";
 import { useMcp } from "@/store/mcp";
@@ -220,7 +221,9 @@ export const useChat = create<ChatState>((set, get) => ({
         const saved = await ipc.updateMessage(assistantId, {
           content: result.text,
           status: result.aborted ? "aborted" : "complete",
-          tokenUsage: result.usage ?? undefined,
+          // 어떤 모델로 부른 턴인지 함께 남긴다 — 나중에 모델을 바꿔도
+          // 이 턴의 요금 추정이 흔들리지 않는다.
+          tokenUsage: toStoredUsage(context.modelId, result.usage) ?? undefined,
           ...(result.reasoning ? { toolResults: { reasoning: result.reasoning } } : {}),
         });
         useWorkspace.getState().replaceMessage(saved);

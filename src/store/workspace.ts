@@ -85,7 +85,16 @@ async function guard<T>(
 
 /** 방금 만든 세션은 집계가 없다. 목록을 다시 읽기 전까지 쓸 빈 값. */
 function emptyOverview(session: Session): SessionOverview {
-  return { ...session, messageCount: 0, lastMessageAt: null, preview: null, agentRunCount: 0 };
+  return {
+    ...session,
+    messageCount: 0,
+    lastMessageAt: null,
+    preview: null,
+    agentRunCount: 0,
+    usageByModel: [],
+    lastUsage: null,
+    lastUsageModel: null,
+  };
 }
 
 /**

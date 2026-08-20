@@ -28,6 +28,23 @@ export interface Session {
   archivedAt: string | null;
 }
 
+/**
+ * 세션이 모델 하나에 쓴 토큰 합계. 요금은 모델마다 단가가 달라서
+ * Rust 는 토큰만 모델별로 나눠 올려 보내고, 계산은 `lib/ai/usage.ts` 가 한다.
+ */
+export interface SessionModelUsage {
+  /** `provider:modelId`. 모델을 알 수 없는 옛 기록이면 null */
+  modelId: string | null;
+  /** 이 모델로 부른 LLM 호출 수 (메인 턴 + 위임 실행) */
+  calls: number;
+  /** 캐시 읽기·쓰기를 포함한 전체 입력 토큰 */
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
 /** 세션 목록/맵 카드용 — Session 에 집계를 얹은 형태 (Rust 는 serde flatten 으로 내려준다). */
 export interface SessionOverview extends Session {
   messageCount: number;
@@ -35,6 +52,12 @@ export interface SessionOverview extends Session {
   /** 첫 사용자 메시지 앞 120자 */
   preview: string | null;
   agentRunCount: number;
+  /** 누적 토큰 (서브에이전트 포함). 비용은 프론트가 요율표로 계산한다 */
+  usageByModel: SessionModelUsage[];
+  /** 가장 최근 LLM 호출의 usage 원문 — 컨텍스트 잔량 추정용 */
+  lastUsage: unknown | null;
+  /** `lastUsage` 를 만든 모델. 컨텍스트 창 크기를 이걸로 찾는다 */
+  lastUsageModel: string | null;
 }
 
 /** 대화 트리의 노드. React Flow 노드와 1:1 로 매핑된다. */
@@ -114,6 +137,8 @@ export interface AgentRun {
   currentSkill: string | null;
   result: string | null;
   error: string | null;
+  /** 이 실행이 쓴 토큰 (`StoredUsage` JSON). 서브에이전트는 노드를 남기지 않는다 */
+  tokenUsage: unknown | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -132,6 +157,7 @@ export interface AgentRunPatch {
   currentSkill?: string;
   result?: string;
   error?: string;
+  tokenUsage?: unknown;
 }
 
 /** MCP 서버 실행 설정. 앱 설정(settings.json)에 저장된다. */
