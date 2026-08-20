@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AgentDashboard } from "@/components/agents/AgentDashboard";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -9,6 +9,7 @@ import { SessionSidebar } from "@/components/SessionSidebar";
 import { SettingsModal } from "@/components/SettingsModal";
 import { ShellConsole } from "@/components/ShellConsole";
 import { TopBar } from "@/components/TopBar";
+import { clampRightWidth, defaultRightWidth } from "@/lib/panelSize";
 import { useAgents } from "@/store/agents";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
@@ -46,6 +47,48 @@ export default function App() {
   const [view, setView] = useState<View>("map");
   const [tab, setTab] = useState<RightTab>("tree");
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // 채팅 ↔ 우측 패널 분할. null 이면 아직 폭을 모른다는 뜻이라 기본 비율로 잡는다.
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const [rightWidth, setRightWidth] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  // 컨테이너가 생기거나 창 크기가 바뀌면 폭을 다시 범위 안으로 넣는다.
+  const fitToContainer = useCallback(() => {
+    const box = splitRef.current?.getBoundingClientRect();
+    if (!box || box.width === 0) return;
+    setRightWidth((current) =>
+      current === null ? defaultRightWidth(box.width) : clampRightWidth(current, box.width),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (view !== "chat") return;
+    fitToContainer();
+    window.addEventListener("resize", fitToContainer);
+    return () => window.removeEventListener("resize", fitToContainer);
+  }, [view, fitToContainer]);
+
+  // 드래그 중에는 커서가 패널 밖으로 나가도 따라오도록 window 에 건다.
+  useEffect(() => {
+    if (!dragging) return;
+
+    function onMove(event: PointerEvent) {
+      const box = splitRef.current?.getBoundingClientRect();
+      if (!box) return;
+      setRightWidth(clampRightWidth(box.right - event.clientX, box.width));
+    }
+    function onUp() {
+      setDragging(false);
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [dragging]);
 
   useEffect(() => {
     void bootstrap();
@@ -95,49 +138,78 @@ export default function App() {
           <>
             <SessionSidebar onBackToMap={() => setView("map")} />
 
-            {/* 좌: 챗봇 UI */}
-            <section className="flex min-w-0 flex-1 flex-col border-r border-zinc-800">
-              <ChatPanel />
-            </section>
+            <div
+              ref={splitRef}
+              className={`flex min-w-0 flex-1 ${dragging ? "cursor-col-resize select-none" : ""}`}
+            >
+              {/* 좌: 챗봇 UI — 남는 폭을 모두 가져간다 */}
+              <section className="flex min-w-0 flex-1 flex-col">
+                <ChatPanel />
+              </section>
 
-            {/* 우: 노드 트리 시각화 (+ Phase 1 도구들) */}
-            <section className="flex min-h-0 w-[46%] min-w-[380px] flex-col">
-              <nav className="flex shrink-0 gap-1 border-b border-zinc-800 px-2 py-1.5">
-                {TABS.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setTab(item.id)}
-                    className={`rounded px-2 py-1 text-[11px] transition-colors ${
-                      tab === item.id
-                        ? "bg-zinc-800 text-zinc-100"
-                        : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
-                    }`}
-                  >
-                    {item.label}
-                    {item.id === "agents" && activeAgents > 0 && (
-                      <span className="ml-1 rounded bg-emerald-900 px-1 text-[10px] text-emerald-200">
-                        {activeAgents}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </nav>
-
-              <div className="min-h-0 flex-1">
-                {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
-                {tab === "agents" && <AgentDashboard />}
-                {tab === "files" && (
-                  <div className="h-full overflow-auto p-2">
-                    <FileExplorer />
-                  </div>
-                )}
-                {tab === "shell" && (
-                  <div className="flex h-full flex-col p-2">
-                    <ShellConsole />
-                  </div>
-                )}
+              {/* 분할선 — 끌어서 채팅 폭을 넓힌다 */}
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                title="드래그해서 채팅 폭 조절 · 더블클릭하면 기본값"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  setDragging(true);
+                }}
+                onDoubleClick={() => {
+                  const box = splitRef.current?.getBoundingClientRect();
+                  if (box) setRightWidth(defaultRightWidth(box.width));
+                }}
+                className={`group relative w-1 shrink-0 cursor-col-resize border-r border-zinc-800 transition-colors ${
+                  dragging ? "bg-emerald-600" : "hover:bg-emerald-700/60"
+                }`}
+              >
+                {/* 1px 선은 집기 어려워 잡히는 영역만 좌우로 넓힌다 */}
+                <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
               </div>
-            </section>
+
+              {/* 우: 노드 트리 시각화 (+ Phase 1 도구들) */}
+              <section
+                className="flex min-h-0 shrink-0 flex-col"
+                style={{ width: rightWidth ?? "40%" }}
+              >
+                <nav className="flex shrink-0 gap-1 border-b border-zinc-800 px-2 py-1.5">
+                  {TABS.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setTab(item.id)}
+                      className={`rounded px-2 py-1 text-[11px] transition-colors ${
+                        tab === item.id
+                          ? "bg-zinc-800 text-zinc-100"
+                          : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
+                      }`}
+                    >
+                      {item.label}
+                      {item.id === "agents" && activeAgents > 0 && (
+                        <span className="ml-1 rounded bg-emerald-900 px-1 text-[10px] text-emerald-200">
+                          {activeAgents}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </nav>
+
+                <div className="min-h-0 flex-1">
+                  {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
+                  {tab === "agents" && <AgentDashboard />}
+                  {tab === "files" && (
+                    <div className="h-full overflow-auto p-2">
+                      <FileExplorer />
+                    </div>
+                  )}
+                  {tab === "shell" && (
+                    <div className="flex h-full flex-col p-2">
+                      <ShellConsole />
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
           </>
         )}
       </main>

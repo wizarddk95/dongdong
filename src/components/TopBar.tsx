@@ -21,15 +21,26 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
   const provider = parseModelId(modelId).provider;
 
   async function pickFolder() {
-    const selected = await open({ directory: true, multiple: false, title: "프로젝트 폴더 선택" });
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "프로젝트 폴더 선택",
+    });
     if (typeof selected === "string") await openProject(selected);
   }
 
   return (
     <header className="flex shrink-0 items-center gap-3 border-b border-zinc-800 bg-zinc-900/60 px-4 py-2">
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <span className="text-sm font-semibold text-emerald-400">dongdong</span>
-        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">Phase 4</span>
+        <Button variant="primary" onClick={pickFolder} disabled={loading}>
+          폴더 열기
+        </Button>
+        {project && (
+          <Button onClick={() => void closeProject()} disabled={loading}>
+            닫기
+          </Button>
+        )}
       </div>
 
       <div className="min-w-0 flex-1">
@@ -81,14 +92,6 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
       )}
 
       <Button onClick={onOpenSettings}>설정</Button>
-      <Button variant="primary" onClick={pickFolder} disabled={loading}>
-        폴더 열기
-      </Button>
-      {project && (
-        <Button onClick={() => void closeProject()} disabled={loading}>
-          닫기
-        </Button>
-      )}
     </header>
   );
 }

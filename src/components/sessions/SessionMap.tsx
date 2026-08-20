@@ -3,7 +3,6 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
   ReactFlow,
   type Edge,
   type NodeMouseHandler,
@@ -28,7 +27,7 @@ interface SessionMapProps {
  * 세션 맵 — 채팅에 들어가기 전 단계.
  *
  * 프로젝트의 세션들과 거기서 갈라져 나온 분기 세션을 왼→오른쪽 트리로 보여준다.
- * 카드를 더블클릭(또는 [열기])하면 그 세션의 채팅으로 들어간다.
+ * 카드를 더블클릭(또는 골라서 [열기])하면 그 세션의 채팅으로 들어간다.
  */
 export function SessionMap({ onOpenSession }: SessionMapProps) {
   const project = useWorkspace((state) => state.project);
@@ -196,6 +195,13 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
             nodeTypes={NODE_TYPES}
             onNodeClick={onNodeClick}
             onNodeDoubleClick={(_event, node) => onOpenSession(node.id)}
+            /*
+             * 더블클릭 확대를 끄지 않으면 카드 더블클릭이 먹지 않는다 —
+             * d3-zoom 의 dblclick 핸들러가 stopImmediatePropagation() 을 불러
+             * 이벤트가 React 루트까지 못 올라가고 onNodeDoubleClick 이 죽는다.
+             * 확대/축소는 좌측 하단 컨트롤과 휠로 충분하다.
+             */
+            zoomOnDoubleClick={false}
             onPaneClick={() => {
               setSelectedId(null);
               setRenameDraft(null);
@@ -209,7 +215,6 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
           >
             <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#3f3f46" />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable className="!bg-zinc-900" maskColor="rgba(0,0,0,0.6)" />
           </ReactFlow>
         )}
       </div>

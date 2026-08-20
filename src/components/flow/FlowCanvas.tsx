@@ -3,7 +3,6 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
   ReactFlow,
   type Edge,
   type Node,
@@ -276,7 +275,6 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
           >
             <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#3f3f46" />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable className="!bg-zinc-900" maskColor="rgba(0,0,0,0.6)" />
           </ReactFlow>
         )}
       </div>
