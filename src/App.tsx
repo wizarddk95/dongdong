@@ -198,7 +198,7 @@ export default function App() {
                   {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
                   {tab === "agents" && <AgentDashboard />}
                   {tab === "files" && (
-                    <div className="h-full overflow-auto p-2">
+                    <div className="h-full min-h-0 overflow-hidden p-2">
                       <FileExplorer />
                     </div>
                   )}

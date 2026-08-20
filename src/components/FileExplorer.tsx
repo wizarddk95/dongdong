@@ -66,11 +66,11 @@ export function FileExplorer() {
   const parent = cwd === "." ? null : cwd.split("/").slice(0, -1).join("/") || ".";
 
   return (
-    <div className="flex min-h-0 flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <Panel
         title="파일 탐색기"
         subtitle={project ? `/${cwd === "." ? "" : cwd}` : "프로젝트를 먼저 여세요"}
-        className="max-h-72"
+        className="max-h-64 shrink-0"
         actions={
           <>
             <Button onClick={() => setShowHidden((value) => !value)} disabled={!project}>
@@ -114,10 +114,11 @@ export function FileExplorer() {
         </ul>
       </Panel>
 
+      {/* 목록은 위쪽 일부만 쓰고, 남는 높이는 전부 뷰어가 가져간다 */}
       <Panel
         title="파일 뷰어"
         subtitle={file ? `${file.relativePath}${file.truncated ? " (일부만 표시)" : ""}` : "파일 선택 안 됨"}
-        className="flex-1"
+        className="min-h-0 flex-1"
         actions={
           <Button variant="primary" onClick={() => void save()} disabled={!file || !dirty}>
             {dirty ? "저장 *" : "저장"}
@@ -135,7 +136,7 @@ export function FileExplorer() {
                 setDirty(true);
               }}
               spellCheck={false}
-              className="h-full min-h-40 w-full resize-none bg-transparent p-3 font-mono text-xs text-zinc-200 outline-none"
+              className="h-full min-h-64 w-full resize-none bg-transparent p-3 font-mono text-xs text-zinc-200 outline-none"
             />
           )
         ) : (
