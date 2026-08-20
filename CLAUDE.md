@@ -42,7 +42,11 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - **Windows 에서 자식만 kill 하면 파이프가 안 닫힌다**. `cmd /C pnpm dev` 처럼 손자가 생기는 명령은 cmd 를 죽여도 손자가 stdout 을 물고 있어 리더 스레드의 `read` 가 EOF 를 못 본다 → `join()` 이 영구 대기하고 도구 호출이 영영 안 끝난다. `taskkill /T /F` 로 트리째 죽이고, 리더 조인에도 유예 시간을 둔다(`commands/shell.rs`).
 - Anthropic 4.6+ 는 `temperature` 를 거부한다 → adaptive thinking + `effort`(`providerOptionsFor()`).
 - `ModelMessage` / `ToolSet` / `tool` / `dynamicTool` / `jsonSchema` 는 `ai` 가 아니라 **`@ai-sdk/provider-utils`** 에서 import.
-- Windows `cmd` 출력은 CP949 로 깨진다 → `chcp 65001` 선행. `npx` 같은 `.cmd` 는 직접 spawn 되지 않아 `cmd /C` 경유.
+- **Windows 셸 출력은 `chcp 65001` 로 안 고쳐진다**. 출력이 파이프로 리다이렉트되면 `dir` 같은 cmd 내장 명령과
+  PowerShell 5 는 코드 페이지와 무관하게 OEM 코드 페이지(한국어면 CP949)로 쓴다 → 받는 쪽에서 되돌린다.
+  `commands/shell.rs` 의 `decode_text()` 가 **줄 단위로** UTF-8 을 시도하고 실패한 줄만 `MultiByteToWideChar(GetOEMCP())`
+  로 디코딩한다(한 스트림에 UTF-8 도구 출력과 CP949 가 섞여 나오기 때문). `chcp 65001` 선행은 그대로 두되 보조 수단일 뿐이다.
+- `npx` 같은 `.cmd` 는 직접 spawn 되지 않아 `cmd /C` 경유.
 - React Flow 노드의 `onNodeDoubleClick` 은 `zoomOnDoubleClick`(기본 `true`)과 함께 쓰면 **죽는다**. d3-zoom 의 dblclick 핸들러가 `stopImmediatePropagation()` 을 불러 이벤트가 React 루트(위임 지점)까지 못 올라간다 → 노드 더블클릭을 쓰려면 `zoomOnDoubleClick={false}`.
 - API 키·MCP 서버 목록은 프로젝트 DB 가 아니라 **OS 앱 설정 디렉터리의 `settings.json`**.
 - Bash 툴에서 cargo 를 쓰려면 `export PATH="$USERPROFILE/.cargo/bin:$PATH"`.

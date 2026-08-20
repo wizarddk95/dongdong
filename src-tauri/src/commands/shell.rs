@@ -175,6 +175,93 @@ fn resolve_shell(requested: Option<&str>) -> AppResult<(String, Vec<String>)> {
     Ok(resolved)
 }
 
+/// Windows 콘솔 프로그램의 출력은 UTF-8 이 아닐 수 있다.
+/// 리다이렉트된 파이프에 쓸 때 `cmd` 내장 명령(`dir` 등)과 PowerShell 5 는 `chcp` 와
+/// 무관하게 OEM 코드 페이지(한국어 Windows 면 CP949)로 쓰기 때문이다.
+/// 여기서 그 바이트열을 유니코드로 되돌린다.
+#[cfg(windows)]
+fn decode_oem(bytes: &[u8]) -> Option<String> {
+    extern "system" {
+        fn GetOEMCP() -> u32;
+        fn MultiByteToWideChar(
+            code_page: u32,
+            flags: u32,
+            multi_byte_str: *const u8,
+            multi_byte_len: i32,
+            wide_char_str: *mut u16,
+            wide_char_len: i32,
+        ) -> i32;
+    }
+
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+    if bytes.len() > i32::MAX as usize {
+        return None;
+    }
+
+    // SAFETY: 길이를 함께 넘기고, 커널이 채울 만큼만 버퍼를 잡아 두 번 호출한다.
+    unsafe {
+        let code_page = GetOEMCP();
+        let needed = MultiByteToWideChar(
+            code_page,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            std::ptr::null_mut(),
+            0,
+        );
+        if needed <= 0 {
+            return None;
+        }
+
+        let mut wide = vec![0_u16; needed as usize];
+        let written = MultiByteToWideChar(
+            code_page,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            wide.as_mut_ptr(),
+            needed,
+        );
+        if written <= 0 {
+            return None;
+        }
+        wide.truncate(written as usize);
+        String::from_utf16(&wide).ok()
+    }
+}
+
+#[cfg(not(windows))]
+fn decode_oem(_bytes: &[u8]) -> Option<String> {
+    None
+}
+
+/// 한 스트림 안에 인코딩이 섞여 나온다 — `dir` 은 CP949, node 계열 도구는 UTF-8.
+/// 그래서 줄 단위로 UTF-8 을 먼저 시도하고, 깨지는 줄만 OEM 코드 페이지로 되돌린다.
+/// (CP949 트레일 바이트도 UTF-8 연속 바이트도 `\n`(0x0A)을 포함하지 않아 줄 분리는 안전하다)
+fn decode_text(bytes: &[u8]) -> String {
+    if std::str::from_utf8(bytes).is_ok() {
+        // 흔한 경우 — 통째로 UTF-8 이면 줄을 쪼갤 것 없이 그대로 쓴다.
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+
+    let mut out = String::with_capacity(bytes.len());
+    for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        match std::str::from_utf8(line) {
+            Ok(text) => out.push_str(text),
+            Err(_) => match decode_oem(line) {
+                Some(text) => out.push_str(&text),
+                None => out.push_str(&String::from_utf8_lossy(line)),
+            },
+        }
+    }
+    out
+}
+
 fn decode(bytes: Vec<u8>) -> (String, bool) {
     let truncated = bytes.len() > MAX_OUTPUT_BYTES;
     let slice = if truncated {
@@ -182,7 +269,7 @@ fn decode(bytes: Vec<u8>) -> (String, bool) {
     } else {
         &bytes[..]
     };
-    (String::from_utf8_lossy(slice).into_owned(), truncated)
+    (decode_text(slice), truncated)
 }
 
 /// 파이프를 청크 단위로 공유 버퍼에 붓는다.
@@ -496,6 +583,60 @@ mod tests {
         assert!(
             !registry().lock().map(|m| m.contains_key(&token)).unwrap_or(true),
             "끝난 뒤 레지스트리에서 빠져야 한다"
+        );
+    }
+
+    /// UTF-8 로 온 출력은 한 글자도 건드리지 않는다.
+    #[test]
+    fn decodes_utf8_as_is() {
+        let text = "한글 · ascii · 絵文字\n두 번째 줄\n";
+        assert_eq!(decode_text(text.as_bytes()), text);
+    }
+
+    /// UTF-8 이 아닌 줄이 섞여 있어도 UTF-8 줄은 그대로 살아남는다.
+    #[test]
+    fn keeps_utf8_lines_when_mixed_with_legacy_bytes() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice("정상 줄\n".as_bytes());
+        // CP949 "지정" — UTF-8 로는 해석되지 않는 바이트열.
+        bytes.extend_from_slice(&[0xC1, 0xF6, 0xC1, 0xA4]);
+        bytes.push(b'\n');
+
+        let decoded = decode_text(&bytes);
+        let lines: Vec<&str> = decoded.split('\n').collect();
+
+        assert_eq!(lines[0], "정상 줄");
+        assert_eq!(lines[2], "");
+        // Windows 에서는 OEM 코드 페이지로 되돌아가므로 대체 문자(U+FFFD)가 남지 않는다.
+        #[cfg(windows)]
+        assert!(
+            !lines[1].contains('\u{FFFD}'),
+            "CP949 줄이 깨진 채로 남았다: {:?}",
+            lines[1]
+        );
+    }
+
+    /// `dir` 처럼 cmd 내장 명령의 한글 출력이 깨지지 않아야 한다.
+    #[cfg(windows)]
+    #[test]
+    fn windows_builtin_output_is_not_mojibake() {
+        let (program, pre_args) = shell_for_test();
+        let cwd = std::env::current_dir().expect("cwd");
+        let outcome = run(
+            &program,
+            &pre_args,
+            "chcp 65001>nul & dir",
+            &cwd,
+            None,
+            Duration::from_secs(30),
+            None,
+        )
+        .expect("실행 실패");
+
+        let (stdout, _) = decode(outcome.stdout);
+        assert!(
+            !stdout.contains('\u{FFFD}'),
+            "출력에 깨진 문자가 있다: {stdout}"
         );
     }
 
