@@ -174,6 +174,39 @@ export function buildTurns(messages: Message[]): TurnIndex {
   };
 }
 
+/** 채팅 말풍선 하나 — assistant 노드와 그 노드가 부른 도구의 결과를 한 덩어리로 본다. */
+export interface Bubble {
+  message: Message;
+  /** `message` 가 부른 도구들의 결과 노드. 없으면 null. */
+  toolNode: Message | null;
+}
+
+/**
+ * 활성 경로(선형 체인)를 말풍선 목록으로 접는다.
+ *
+ * tool 노드는 자기를 만든 assistant 말풍선 안으로 흡수된다 —
+ * "에이전트 말풍선 + 도구 말풍선" 두 겹으로 갈라져 대화가 늘어지는 걸 막는다.
+ * 부모를 잃은 tool 노드(체인이 꼬인 경우)는 예전처럼 홀로 남긴다.
+ */
+export function toBubbles(chain: Message[]): Bubble[] {
+  const bubbles: Bubble[] = [];
+
+  for (const message of chain) {
+    const previous = bubbles.at(-1);
+    const absorbable =
+      message.role === "tool" &&
+      previous != null &&
+      previous.toolNode === null &&
+      previous.message.role === "assistant" &&
+      previous.message.id === message.parentId;
+
+    if (absorbable) previous.toolNode = message;
+    else bubbles.push({ message, toolNode: null });
+  }
+
+  return bubbles;
+}
+
 /** 같은 부모 턴을 공유하는 형제들 — "이 지점에 분기가 N개" 표시에 쓴다. */
 export function siblingTurns(index: TurnIndex, turn: Turn): Turn[] {
   return index.childrenOf.get(turn.parentTurnId) ?? [];

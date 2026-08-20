@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTurns, siblingTurns, turnSubtree } from "@/lib/turns";
+import { buildTurns, siblingTurns, toBubbles, turnSubtree } from "@/lib/turns";
 import type { Message, MessageRole } from "@/types/ipc";
 
 function node(
@@ -146,5 +146,46 @@ describe("turnSubtree", () => {
   it("없는 턴 id 는 빈 결과", () => {
     const index = buildTurns(WITH_TOOL);
     expect(turnSubtree(index, "nope")).toEqual({ turnIds: [], messageIds: [] });
+  });
+});
+
+describe("toBubbles", () => {
+  it("tool 노드를 자기를 부른 assistant 말풍선으로 흡수한다", () => {
+    const bubbles = toBubbles(WITH_TOOL.slice(0, 4)); // u1 · a1 · t1 · a2
+
+    expect(bubbles.map((bubble) => bubble.message.id)).toEqual(["u1", "a1", "a2"]);
+    expect(bubbles[1].toolNode?.id).toBe("t1");
+    expect(bubbles[0].toolNode).toBeNull();
+    expect(bubbles[2].toolNode).toBeNull();
+  });
+
+  it("한 assistant 에 tool 노드는 하나만 붙는다", () => {
+    const chain: Message[] = [
+      node("a1", null, 1, "assistant", { toolCalls: [call("c1", "read_file")] }),
+      node("t1", "a1", 2, "tool", { toolCalls: [call("c1", "read_file")] }),
+      // 부모가 a1 인 두 번째 tool 노드(비정상) — 흡수하지 않고 따로 남긴다.
+      node("t2", "a1", 3, "tool", { toolCalls: [call("c2", "write_file")] }),
+    ];
+
+    const bubbles = toBubbles(chain);
+
+    expect(bubbles.map((bubble) => bubble.message.id)).toEqual(["a1", "t2"]);
+    expect(bubbles[0].toolNode?.id).toBe("t1");
+  });
+
+  it("부모가 앞에 없는 tool 노드는 홀로 남긴다", () => {
+    const chain: Message[] = [
+      node("u1", null, 1, "user"),
+      node("t1", "없는-부모", 2, "tool", { toolCalls: [call("c1", "read_file")] }),
+    ];
+
+    const bubbles = toBubbles(chain);
+
+    expect(bubbles.map((bubble) => bubble.message.id)).toEqual(["u1", "t1"]);
+    expect(bubbles[1].toolNode).toBeNull();
+  });
+
+  it("빈 체인은 빈 목록", () => {
+    expect(toBubbles([])).toEqual([]);
   });
 });

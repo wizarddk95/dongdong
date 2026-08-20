@@ -7,6 +7,7 @@ import { Button } from "@/components/Panel";
 import { findModelOption } from "@/lib/ai/providers";
 import { summarizeToolCall } from "@/lib/ai/skills";
 import { buildIndex, pathTo, siblingsOf } from "@/lib/tree";
+import { toBubbles } from "@/lib/turns";
 import { useChat } from "@/store/chat";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
@@ -43,8 +44,10 @@ export function ChatPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 활성 경로(루트 → activeParent)가 곧 "지금 보고 있는 대화".
-  const { path, index } = useMemo(() => {
-    return { path: pathTo(messages, activeParentId), index: buildIndex(messages) };
+  // tool 노드는 자기를 부른 assistant 말풍선 안으로 접어 넣는다.
+  const { path, bubbles, index } = useMemo(() => {
+    const path = pathTo(messages, activeParentId);
+    return { path, bubbles: toBubbles(path), index: buildIndex(messages) };
   }, [messages, activeParentId]);
 
   useEffect(() => {
@@ -71,10 +74,11 @@ export function ChatPanel() {
           </div>
         )}
 
-        {path.map((message) => (
+        {bubbles.map(({ message, toolNode }) => (
           <MessageBubble
             key={message.id}
             message={message}
+            toolNode={toolNode}
             liveText={message.id === streamingMessageId ? streamingText : undefined}
             liveReasoning={message.id === streamingMessageId ? streamingReasoning : undefined}
             siblingCount={siblingsOf(index, message).length}

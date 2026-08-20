@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 143 / cargo 34. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 147 / cargo 37. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -60,7 +60,7 @@ src/
   types/ipc.ts          Rust ↔ TS 타입 (serde camelCase 와 1:1)
   lib/ipc.ts            invoke 얇은 래퍼 — 유일한 IPC 통로
   lib/tree.ts           parent_id → 트리 복원, pathTo(), siblingsOf()
-  lib/turns.ts          노드 체인 → 턴(질문+응답+도구) 묶음. 순수 파생, 스키마 무관
+  lib/turns.ts          노드 체인 → 턴 묶음 + 채팅 말풍선 접기(toBubbles). 순수 파생, 스키마 무관
   lib/sessionTree.ts    parent_session_id → 세션 분기 트리
   lib/layout.ts         왼→오른쪽 tidy tree 좌표 (턴 그래프·세션 맵 공용)
   lib/agentRuns.ts      서브에이전트 상태 색·경과 시간 (트리 노드와 대시보드 공용)
@@ -90,6 +90,7 @@ src-tauri/src/
 - **턴**: 화면에 보이는 노드 하나 = 턴 하나(user 앵커 + 그 아래 assistant/tool 체인). `lib/turns.ts` 가 매번 다시 계산하며 DB 에는 저장하지 않는다. 삭제도 턴 단위(앵커부터 CASCADE) — 반쪽 노드를 만들지 않는다.
 - **세션 맵**: 프로젝트를 열면 먼저 뜨는 화면. `parent_session_id` 로 세션 분기를 그린다. 카드 집계는 `list_sessions` 가 `SessionOverview` 로 한 번에 내려준다(세션마다 메시지를 읽지 않는다).
 - **도구 실행**: 한 턴이 여러 스텝. 스텝마다 `assistant`(호출) → `tool`(결과) → `assistant` 노드가 쌓인다. 짝 없는 tool-call/result 는 `toModelMessages()` 가 걸러낸다(공급자가 400 을 낸다).
+  저장은 이렇게 둘로 나뉘지만 **채팅 화면에서는 한 말풍선**이다 — `toBubbles()`(`lib/turns.ts`)가 tool 노드를 자기를 부른 assistant 말풍선으로 흡수하고, 도구 묶음은 기본 접힘이다.
 - **투명성이 이 툴의 경쟁력**: assistant 노드의 `context_snapshot` 에 그 시점 LLM 입력 원문을 남기고 인스펙터로 보여준다. 새 기능도 "무엇이 LLM 에 갔는지" 숨기지 않게 만든다.
 - **프로젝트 지침**: 연 프로젝트 루트의 `AGENTS.md` 를 매 턴 다시 읽어 시스템 프롬프트 맨 앞에 원문 그대로 싣는다(서브에이전트에도 전달).
 - **서브에이전트**: `delegate_task` → 컨텍스트가 격리된 별도 실행, 요약만 상위로. `parent_message_id` 가 가리키는 노드의 턴에서 위/아래로 분기해 그려진다(대시보드 탭과 병행). `onDelegate` 없이 ToolSet 을 만들면 도구가 노출되지 않아 재위임이 구조적으로 불가능하다. 상태는 `agent_runs`.

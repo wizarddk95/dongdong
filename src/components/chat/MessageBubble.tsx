@@ -2,12 +2,19 @@ import { useState } from "react";
 
 import { Markdown } from "@/components/chat/Markdown";
 import { JsonTree } from "@/components/inspect/JsonTree";
-import { readToolCalls, readToolResults } from "@/lib/ai/runner";
+import {
+  readToolCalls,
+  readToolResults,
+  type StoredToolCall,
+  type StoredToolResult,
+} from "@/lib/ai/runner";
 import { summarizeToolCall } from "@/lib/ai/skills";
 import type { Message } from "@/types/ipc";
 
 interface MessageBubbleProps {
   message: Message;
+  /** 이 노드가 부른 도구들의 결과 노드. 말풍선 안에 접어서 함께 보여준다. */
+  toolNode?: Message | null;
   /** 스트리밍 중이면 DB 내용 대신 이 텍스트를 보여준다 */
   liveText?: string;
   liveReasoning?: string;
@@ -54,6 +61,7 @@ function usageSummary(usage: unknown): string | null {
 
 export function MessageBubble({
   message,
+  toolNode,
   liveText,
   liveReasoning,
   siblingCount,
@@ -76,7 +84,16 @@ export function MessageBubble({
     ? undefined
     : (message.toolResults as { error?: string } | null)?.error;
   const usage = usageSummary(message.tokenUsage);
-  const toolCalls = readToolCalls(message.toolCalls);
+
+  // 도구 호출은 assistant 노드에, 결과는 그 아래 tool 노드에 나뉘어 저장된다.
+  // 화면에서는 둘을 한 말풍선으로 합쳐 보여준다.
+  const toolCalls = isTool
+    ? readToolCalls(message.toolCalls)
+    : (() => {
+        const own = readToolCalls(message.toolCalls);
+        return own.length > 0 ? own : readToolCalls(toolNode?.toolCalls);
+      })();
+  const toolResults = readToolResults((isTool ? message : toolNode)?.toolResults);
 
   return (
     <div className={`group rounded-lg border px-3 py-2 ${style.wrap}`}>
@@ -89,11 +106,6 @@ export function MessageBubble({
         )}
         {usage && <span className="text-zinc-600">{usage}</span>}
         {message.status === "aborted" && <span className="text-amber-400">중단됨</span>}
-        {!isTool && toolCalls.length > 0 && (
-          <span className="rounded bg-amber-950 px-1 text-amber-300">
-            도구 {toolCalls.length}회 호출
-          </span>
-        )}
 
         <span className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           {onInspectContext && (
@@ -138,16 +150,23 @@ export function MessageBubble({
         </div>
       ) : null}
 
-      {isTool ? (
-        <ToolCallList message={message} />
+      {isTool && toolCalls.length === 0 ? (
+        // 짝을 잃은 tool 노드 — 저장해 둔 요약문이라도 보여준다.
+        <p className="whitespace-pre-wrap break-words text-[12px] text-zinc-200">
+          {message.content}
+        </p>
       ) : message.role === "user" ? (
         // 사용자가 친 글자는 마크다운으로 해석하지 않고 그대로 보여준다.
         <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-100">
           {body}
         </p>
-      ) : (
+      ) : !isTool && (streaming || body) ? (
         // 스트리밍 커서는 본문 끝에 붙여 마지막 블록 안에서 흐르게 한다.
         <Markdown text={streaming ? `${body}▌` : body} />
+      ) : null}
+
+      {toolCalls.length > 0 && (
+        <ToolCallList calls={toolCalls} results={toolResults} withGap={!isTool && Boolean(body)} />
       )}
 
       {errorText && (
@@ -159,33 +178,68 @@ export function MessageBubble({
   );
 }
 
-/** tool 노드 본문 — 호출 입력과 실행 결과를 접었다 펼 수 있게 보여준다. */
-function ToolCallList({ message }: { message: Message }) {
-  const calls = readToolCalls(message.toolCalls);
-  const results = readToolResults(message.toolResults);
+/**
+ * 한 스텝에서 부른 도구들 — 기본은 한 줄 요약으로 접어 둔다.
+ * 도구를 여러 번 부르는 턴에서 대화가 아래로 끝없이 늘어지는 걸 막는다.
+ */
+function ToolCallList({
+  calls,
+  results,
+  withGap,
+}: {
+  calls: StoredToolCall[];
+  results: StoredToolResult[];
+  withGap: boolean;
+}) {
+  const [open, setOpen] = useState(false);
 
-  if (calls.length === 0) {
+  const cards = calls.map((call) => {
+    const result = results.find((item) => item.toolCallId === call.toolCallId);
+    const failed = result?.errorText != null;
     return (
-      <p className="whitespace-pre-wrap break-words text-[12px] text-zinc-200">{message.content}</p>
+      <ToolCallCard
+        key={call.toolCallId}
+        title={summarizeToolCall(call.toolName, call.input)}
+        failed={failed}
+        pending={!result}
+        input={call.input}
+        output={failed ? result?.errorText : result?.output}
+      />
     );
-  }
+  });
+
+  const wrap = withGap ? "mt-2 border-t border-zinc-800 pt-2" : "";
+
+  // 하나뿐이면 카드 자체가 이미 접힌 한 줄이라 요약을 덧붙이지 않는다.
+  if (calls.length === 1) return <div className={wrap}>{cards}</div>;
+
+  const pending = calls.some(
+    (call) => !results.some((item) => item.toolCallId === call.toolCallId),
+  );
+  const failedCount = results.filter((item) => item.errorText != null).length;
+  const status = pending ? "실행 중" : failedCount > 0 ? `${failedCount}건 실패` : "완료";
 
   return (
-    <div className="space-y-1.5">
-      {calls.map((call) => {
-        const result = results.find((item) => item.toolCallId === call.toolCallId);
-        const failed = result?.errorText != null;
-        return (
-          <ToolCallCard
-            key={call.toolCallId}
-            title={summarizeToolCall(call.toolName, call.input)}
-            failed={failed}
-            pending={!result}
-            input={call.input}
-            output={failed ? result?.errorText : result?.output}
-          />
-        );
-      })}
+    <div className={wrap}>
+      <button
+        className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] hover:bg-amber-950/40"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="text-zinc-600">{open ? "▾" : "▸"}</span>
+        <span className="shrink-0 text-amber-300">도구 {calls.length}개</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-zinc-500">
+          {calls.map((call) => summarizeToolCall(call.toolName, call.input)).join(" · ")}
+        </span>
+        <span
+          className={`shrink-0 text-[10px] ${
+            pending ? "text-zinc-500" : failedCount > 0 ? "text-red-400" : "text-emerald-400"
+          }`}
+        >
+          {status}
+        </span>
+      </button>
+
+      {open && <div className="mt-1.5 space-y-1.5">{cards}</div>}
     </div>
   );
 }
