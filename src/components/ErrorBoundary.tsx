@@ -33,23 +33,27 @@ export class ErrorBoundary extends Component<Props, State> {
     const { error, stack } = this.state;
     if (!error) return this.props.children;
 
+    /*
+     * 이 화면은 앱의 스타일 시트가 살아 있다는 보장이 없다 —
+     * 그래도 토큰은 CSS 변수라 `index.css` 만 붙어 있으면 테마를 따라간다.
+     */
     return (
-      <div className="flex h-full flex-col gap-3 overflow-auto bg-zinc-950 p-6 text-zinc-200">
-        <h1 className="text-sm font-semibold text-red-300">화면을 그리다가 오류가 났습니다</h1>
-        <p className="text-xs text-zinc-400">
+      <div className="flex h-full flex-col gap-4 overflow-auto bg-canvas p-8 text-ink">
+        <h1 className="text-headline text-ink">화면을 그리다가 오류가 났습니다</h1>
+        <p className="text-body-sm text-ink-muted">
           작업 내용은 DB 에 그대로 있습니다. 아래 내용을 남겨 두고 다시 시도하세요.
         </p>
-        <pre className="max-h-40 overflow-auto rounded border border-red-900 bg-red-950/30 p-2 text-[11px] whitespace-pre-wrap text-red-200">
+        <pre className="max-h-40 overflow-auto rounded-md border-l-2 border-error bg-error-subtle p-3 font-mono text-caption whitespace-pre-wrap text-ink">
           {error.message}
         </pre>
         {stack && (
-          <pre className="max-h-60 overflow-auto rounded border border-zinc-800 bg-black/40 p-2 text-[10px] whitespace-pre-wrap text-zinc-500">
+          <pre className="max-h-60 overflow-auto rounded-md border border-hairline bg-surface-1 p-3 font-mono text-caption whitespace-pre-wrap text-ink-muted">
             {stack}
           </pre>
         )}
         <div>
           <button
-            className="rounded bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700"
+            className="rounded-sm bg-primary px-4 py-2.5 text-button font-medium text-on-primary transition-colors hover:bg-primary-hover"
             onClick={() => this.setState({ error: null, stack: null })}
           >
             다시 그리기

@@ -3,6 +3,9 @@ import { useState } from "react";
 /**
  * 컨텍스트/도구 페이로드를 접었다 펼 수 있는 트리로 보여준다.
  * 이 툴의 핵심은 '무엇이 LLM 에 갔는지'를 숨기지 않는 것이라 값은 가공하지 않고 그대로 렌더링한다.
+ *
+ * 값의 종류는 색이 아니라 **명도 계조**로 가른다 — 키는 잉크, 문자열은 본문,
+ * 숫자·불리언은 액센트, null 은 흐리게. 에디터식 신택스 팔레트는 두지 않는다.
  */
 interface JsonTreeProps {
   value: unknown;
@@ -14,7 +17,7 @@ const LONG_TEXT = 400;
 
 export function JsonTree({ value, defaultOpenDepth = 2 }: JsonTreeProps) {
   return (
-    <div className="font-mono text-[11px] leading-relaxed text-zinc-300">
+    <div className="font-mono text-caption leading-relaxed text-ink-muted">
       <Node value={value} depth={0} defaultOpenDepth={defaultOpenDepth} />
     </div>
   );
@@ -33,13 +36,13 @@ function Node({
 }) {
   const [open, setOpen] = useState(depth < defaultOpenDepth);
 
-  const label = name != null ? <span className="text-sky-300">{name}</span> : null;
+  const label = name != null ? <span className="font-semibold text-ink">{name}</span> : null;
 
   if (value === null || value === undefined) {
     return (
       <Row>
         {label}
-        <span className="text-zinc-600">{value === null ? "null" : "undefined"}</span>
+        <span className="text-ink-subtle">{value === null ? "null" : "undefined"}</span>
       </Row>
     );
   }
@@ -57,7 +60,7 @@ function Node({
     return (
       <Row>
         {label}
-        <span className="text-amber-300">{String(value)}</span>
+        <span className="text-accent">{String(value)}</span>
       </Row>
     );
   }
@@ -72,16 +75,16 @@ function Node({
   return (
     <div>
       <button
-        className="flex items-baseline gap-1 text-left hover:text-zinc-100"
+        className="flex items-baseline gap-1 text-left hover:text-ink"
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="w-3 shrink-0 text-zinc-600">{open ? "▾" : "▸"}</span>
+        <span className="w-3 shrink-0 text-ink-subtle">{open ? "▾" : "▸"}</span>
         {label}
-        <span className="text-zinc-600">{summary}</span>
+        <span className="text-ink-subtle">{summary}</span>
       </button>
 
       {open && (
-        <div className="ml-3 border-l border-zinc-800 pl-2">
+        <div className="ml-3 border-l border-hairline pl-2">
           {entries.map(([key, item]) => (
             <Node
               key={key}
@@ -110,10 +113,10 @@ function LongString({ text }: { text: string }) {
 
   return (
     <span className="min-w-0 flex-1">
-      <span className="whitespace-pre-wrap break-words text-emerald-200">{shown}</span>
+      <span className="whitespace-pre-wrap break-words text-ink">{shown}</span>
       {long && (
         <button
-          className="ml-1 text-[10px] text-zinc-500 hover:text-zinc-300"
+          className="ml-1.5 text-caption text-accent hover:underline"
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? "접기" : `더 보기 (${text.length}자)`}

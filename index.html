@@ -1,9 +1,30 @@
 <!doctype html>
-<html lang="ko" class="dark">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>dongdong — Local Coding Agent</title>
+    <!--
+      테마를 첫 페인트 전에 새긴다.
+      진짜 설정은 Rust 의 settings.json 이지만 그건 비동기라, 다크를 쓰는 사람에게
+      흰 화면이 한 번 번쩍인다. `lib/theme.ts` 가 선택할 때마다 localStorage 에
+      복사해 두므로 여기서 그 캐시만 먼저 읽어 깔아 둔다 (설정을 읽으면 다시 맞춘다).
+    -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("dongdong.theme") || "light";
+          var dark =
+            saved === "dark" ||
+            (saved === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+          var root = document.documentElement;
+          root.dataset.theme = dark ? "dark" : "light";
+          root.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

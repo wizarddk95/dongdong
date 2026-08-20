@@ -10,6 +10,7 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { ShellConsole } from "@/components/ShellConsole";
 import { TopBar } from "@/components/TopBar";
 import { clampRightWidth, defaultRightWidth } from "@/lib/panelSize";
+import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import { useAgents } from "@/store/agents";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
@@ -42,6 +43,7 @@ export default function App() {
   const selectSession = useWorkspace((state) => state.selectSession);
   const refreshAgents = useAgents((state) => state.refresh);
   const settingsLoaded = useSettings((state) => state.loaded);
+  const theme = useSettings((state) => state.theme);
   const connectMcp = useMcp((state) => state.connectEnabled);
 
   const [view, setView] = useState<View>("map");
@@ -95,6 +97,9 @@ export default function App() {
     void loadSettings();
   }, [bootstrap, loadSettings]);
 
+  // "시스템 설정" 을 고른 사용자는 OS 가 밤낮을 바꿀 때 앱도 같이 따라가야 한다.
+  useEffect(() => watchSystemTheme(() => applyTheme(theme)), [theme]);
+
   // 폴더를 새로 열면 어떤 세션으로 들어갈지 먼저 고르게 한다.
   useEffect(() => {
     if (project) setView("map");
@@ -112,13 +117,19 @@ export default function App() {
   }, [settingsLoaded, project?.rootPath, connectMcp]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-canvas text-ink">
       <TopBar onOpenSettings={() => setSettingsOpen(true)} />
 
       {error && (
-        <div className="flex shrink-0 items-start gap-2 border-b border-red-900 bg-red-950/60 px-4 py-2 text-xs text-red-200">
+        <div className="flex shrink-0 items-start gap-2 border-b border-hairline bg-error-subtle px-4 py-2 text-caption text-ink">
+          {/* 색 없이도 읽히도록 앞에 라벨을 세운다. */}
+          <span className="shrink-0 text-body-emphasis text-error">오류</span>
           <span className="flex-1 font-mono break-all">{error}</span>
-          <button className="shrink-0 text-red-300 hover:text-red-100" onClick={() => setError(null)}>
+          <button
+            className="shrink-0 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+            title="닫기"
+            onClick={() => setError(null)}
+          >
             ✕
           </button>
         </div>
@@ -160,8 +171,8 @@ export default function App() {
                   const box = splitRef.current?.getBoundingClientRect();
                   if (box) setRightWidth(defaultRightWidth(box.width));
                 }}
-                className={`group relative w-1 shrink-0 cursor-col-resize border-r border-zinc-800 transition-colors ${
-                  dragging ? "bg-emerald-600" : "hover:bg-emerald-700/60"
+                className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
+                  dragging ? "bg-accent" : "bg-hairline hover:bg-accent"
                 }`}
               >
                 {/* 1px 선은 집기 어려워 잡히는 영역만 좌우로 넓힌다 */}
@@ -173,37 +184,54 @@ export default function App() {
                 className="flex min-h-0 shrink-0 flex-col"
                 style={{ width: rightWidth ?? "40%" }}
               >
-                <nav className="flex shrink-0 gap-1 border-b border-zinc-800 px-2 py-1.5">
-                  {TABS.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => setTab(item.id)}
-                      className={`rounded px-2 py-1 text-[11px] transition-colors ${
-                        tab === item.id
-                          ? "bg-zinc-800 text-zinc-100"
-                          : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
-                      }`}
-                    >
-                      {item.label}
-                      {item.id === "agents" && activeAgents > 0 && (
-                        <span className="ml-1 rounded bg-emerald-900 px-1 text-[10px] text-emerald-200">
-                          {activeAgents}
-                        </span>
-                      )}
-                    </button>
-                  ))}
+                {/*
+                 * 탭은 배경으로 고르지 않는다. 선택된 것만 잉크색 글자에 2px 청록 밑줄이
+                 * 붙고, 나머지는 1px 헤어라인 위에 흐리게 남는다.
+                 */}
+                <nav
+                  role="tablist"
+                  className="flex shrink-0 border-b border-hairline bg-canvas px-2"
+                >
+                  {TABS.map((item) => {
+                    const selected = tab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        role="tab"
+                        aria-selected={selected}
+                        onClick={() => setTab(item.id)}
+                        /*
+                         * 크기는 고정하고 **웨이트와 밑줄만** 바꾼다 — 선택에 따라 글자
+                         * 크기가 달라지면 탭 폭이 흔들려서 누를 때마다 줄이 출렁인다.
+                         */
+                        className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-body-sm transition-colors ${
+                          selected
+                            ? "border-accent font-semibold text-ink"
+                            : "border-transparent text-ink-muted hover:bg-hover hover:text-ink"
+                        }`}
+                      >
+                        {item.label}
+                        {item.id === "agents" && activeAgents > 0 && (
+                          // 채움색은 accent 가 아니라 primary — 다크에서 흰 글자와의 대비가 여기서만 충분하다.
+                          <span className="rounded-full bg-primary px-1.5 text-caption text-on-primary">
+                            {activeAgents}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </nav>
 
                 <div className="min-h-0 flex-1">
                   {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
                   {tab === "agents" && <AgentDashboard />}
                   {tab === "files" && (
-                    <div className="h-full min-h-0 overflow-hidden p-2">
+                    <div className="h-full min-h-0 overflow-hidden p-3">
                       <FileExplorer />
                     </div>
                   )}
                   {tab === "shell" && (
-                    <div className="flex h-full flex-col p-2">
+                    <div className="flex h-full flex-col p-3">
                       <ShellConsole />
                     </div>
                   )}

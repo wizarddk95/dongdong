@@ -10,6 +10,7 @@ import {
 } from "@/lib/ai/runner";
 import { summarizeToolCall } from "@/lib/ai/skills";
 import { readNodeUsage } from "@/lib/ai/usage";
+import { Tag } from "@/components/Panel";
 import { UsageTag } from "@/components/UsageMeter";
 import type { Message } from "@/types/ipc";
 
@@ -27,28 +28,29 @@ interface MessageBubbleProps {
   onInspectContext?: () => void;
 }
 
-const ROLE_STYLE: Record<string, { wrap: string; label: string; badge: string }> = {
-  user: {
-    wrap: "ml-auto max-w-[85%] border-sky-800 bg-sky-950/50",
-    label: "나",
-    badge: "text-sky-300",
-  },
+/**
+ * 역할을 색이 아니라 **자리와 면**으로 가른다 — 크로마틱 액센트는 청록 하나뿐이다.
+ * 말풍선 꼬리 쪽 모서리만 덜 둥글게 깎아 말하는 쪽을 가리킨다.
+ *   나     오른쪽 정렬 + 회색 면 (오른쪽 아래 모서리를 깎음)
+ *   에이전트 왼쪽 정렬 + 흰 면 + 옅은 그림자
+ *   도구   왼쪽 정렬 + 회색 면
+ */
+const ROLE_STYLE: Record<string, { wrap: string; label: string }> = {
+  user: { wrap: "ml-auto max-w-[85%] rounded-br-xs border-hairline bg-surface-1", label: "나" },
   assistant: {
-    wrap: "mr-auto max-w-[92%] border-zinc-800 bg-zinc-900/60",
+    wrap: "mr-auto max-w-[92%] rounded-bl-xs border-hairline bg-canvas elevate",
     label: "에이전트",
-    badge: "text-emerald-300",
   },
   tool: {
-    wrap: "mr-auto max-w-[92%] border-amber-900 bg-amber-950/40",
+    wrap: "mr-auto max-w-[92%] rounded-bl-xs border-hairline bg-surface-1",
     label: "도구",
-    badge: "text-amber-300",
   },
-  system: {
-    wrap: "mr-auto max-w-[92%] border-zinc-800 bg-zinc-900/40",
-    label: "시스템",
-    badge: "text-zinc-400",
-  },
+  system: { wrap: "mr-auto max-w-[92%] rounded-bl-xs border-hairline bg-surface-1", label: "시스템" },
 };
+
+/** 말풍선 위에 뜨는 보조 동작 — 배경 없이 글자만, 호버에서만 나타난다. */
+const ACTION =
+  "rounded-sm px-2 py-0.5 text-caption text-accent transition-colors hover:bg-hover";
 
 export function MessageBubble({
   message,
@@ -88,28 +90,19 @@ export function MessageBubble({
   const toolResults = readToolResults((isTool ? message : toolNode)?.toolResults);
 
   return (
-    <div className={`group rounded-lg border px-3 py-2 ${style.wrap}`}>
-      <div className="mb-1 flex items-center gap-2 text-[10px]">
-        <span className={`font-semibold ${style.badge}`}>{style.label}</span>
-        {siblingCount > 1 && (
-          <span className="rounded bg-violet-950 px-1 text-violet-300">
-            분기 {siblingCount}개 중 하나
-          </span>
-        )}
+    <div className={`group rounded-lg border px-3.5 py-2.5 ${style.wrap}`}>
+      <div className="mb-1 flex flex-wrap items-center gap-2 text-caption">
+        <span className="text-body-emphasis text-ink">{style.label}</span>
+        {siblingCount > 1 && <Tag title="같은 부모에서 갈라진 형제 턴이 있습니다">⑂ 분기 {siblingCount}</Tag>}
         {usage && (
-          <UsageTag
-            usage={usage.usage}
-            cost={usage.cost}
-            modelId={usage.modelId}
-            className="text-[10px]"
-          />
+          <UsageTag usage={usage.usage} cost={usage.cost} modelId={usage.modelId} />
         )}
-        {message.status === "aborted" && <span className="text-amber-400">중단됨</span>}
+        {message.status === "aborted" && <span className="text-warning">중단됨</span>}
 
-        <span className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <span className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           {onInspectContext && (
             <button
-              className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-700"
+              className={ACTION}
               title="이 응답을 만들 때 LLM 에 실제로 보낸 컨텍스트를 봅니다"
               onClick={onInspectContext}
             >
@@ -117,14 +110,14 @@ export function MessageBubble({
             </button>
           )}
           <button
-            className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-700"
+            className={ACTION}
             title="이 노드의 부모로 돌아가 다른 답을 시도합니다 (같은 세션 안에서 분기)"
             onClick={onBranchHere}
           >
             여기서 다시
           </button>
           <button
-            className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-700"
+            className={ACTION}
             title="이 시점까지를 복제한 새 세션을 만듭니다"
             onClick={onBranchSession}
           >
@@ -136,13 +129,13 @@ export function MessageBubble({
       {reasoning ? (
         <div className="mb-1.5">
           <button
-            className="text-[10px] text-zinc-500 hover:text-zinc-300"
+            className="text-caption text-ink-muted hover:text-ink"
             onClick={() => setShowReasoning((value) => !value)}
           >
             {showReasoning ? "▾" : "▸"} 사고 과정 {streaming ? "(진행 중)" : ""}
           </button>
           {showReasoning && (
-            <div className="mt-1 rounded bg-black/30 p-2">
+            <div className="mt-1 rounded-md bg-surface-1 p-2.5">
               <Markdown text={reasoning ?? ""} dim />
             </div>
           )}
@@ -151,12 +144,10 @@ export function MessageBubble({
 
       {isTool && toolCalls.length === 0 ? (
         // 짝을 잃은 tool 노드 — 저장해 둔 요약문이라도 보여준다.
-        <p className="whitespace-pre-wrap break-words text-[12px] text-zinc-200">
-          {message.content}
-        </p>
+        <p className="whitespace-pre-wrap break-words text-caption text-ink">{message.content}</p>
       ) : message.role === "user" ? (
         // 사용자가 친 글자는 마크다운으로 해석하지 않고 그대로 보여준다.
-        <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-100">
+        <p className="whitespace-pre-wrap break-words text-body-sm leading-relaxed text-ink">
           {body}
         </p>
       ) : !isTool && (streaming || body) ? (
@@ -169,12 +160,22 @@ export function MessageBubble({
       )}
 
       {errorText && (
-        <p className="mt-1.5 rounded border border-red-900 bg-red-950/50 px-2 py-1 font-mono text-[11px] break-all text-red-300">
+        <p className="mt-1.5 rounded-md border-l-2 border-error bg-error-subtle px-2.5 py-1.5 font-mono text-caption break-all text-ink">
           {errorText}
         </p>
       )}
     </div>
   );
+}
+
+/** 도구 실행 결과 한 줄 상태. 글자가 먼저 읽히고 색은 거들기만 한다. */
+function StatusText({ pending, failed }: { pending: boolean; failed: boolean }) {
+  const [text, tone] = pending
+    ? ["실행 중", "text-ink-muted"]
+    : failed
+      ? ["실패", "text-error"]
+      : ["완료", "text-success"];
+  return <span className={`shrink-0 text-caption ${tone}`}>{text}</span>;
 }
 
 /**
@@ -207,7 +208,7 @@ function ToolCallList({
     );
   });
 
-  const wrap = withGap ? "mt-2 border-t border-zinc-800 pt-2" : "";
+  const wrap = withGap ? "mt-2 border-t border-hairline pt-2" : "";
 
   // 하나뿐이면 카드 자체가 이미 접힌 한 줄이라 요약을 덧붙이지 않는다.
   if (calls.length === 1) return <div className={wrap}>{cards}</div>;
@@ -216,26 +217,23 @@ function ToolCallList({
     (call) => !results.some((item) => item.toolCallId === call.toolCallId),
   );
   const failedCount = results.filter((item) => item.errorText != null).length;
-  const status = pending ? "실행 중" : failedCount > 0 ? `${failedCount}건 실패` : "완료";
 
   return (
     <div className={wrap}>
       <button
-        className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] hover:bg-amber-950/40"
+        className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-caption transition-colors hover:bg-hover"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="text-zinc-600">{open ? "▾" : "▸"}</span>
-        <span className="shrink-0 text-amber-300">도구 {calls.length}개</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-zinc-500">
+        <span className="text-ink-subtle">{open ? "▾" : "▸"}</span>
+        <span className="shrink-0 text-body-emphasis text-ink">도구 {calls.length}개</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-ink-muted">
           {calls.map((call) => summarizeToolCall(call.toolName, call.input)).join(" · ")}
         </span>
-        <span
-          className={`shrink-0 text-[10px] ${
-            pending ? "text-zinc-500" : failedCount > 0 ? "text-red-400" : "text-emerald-400"
-          }`}
-        >
-          {status}
-        </span>
+        {failedCount > 0 && !pending ? (
+          <span className="shrink-0 text-caption text-error">{failedCount}건 실패</span>
+        ) : (
+          <StatusText pending={pending} failed={false} />
+        )}
       </button>
 
       {open && <div className="mt-1.5 space-y-1.5">{cards}</div>}
@@ -259,30 +257,24 @@ function ToolCallCard({
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="rounded border border-amber-900/60 bg-black/20">
+    <div className="overflow-hidden rounded-md border border-hairline bg-canvas">
       <button
-        className="flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] hover:bg-amber-950/40"
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-hover"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="text-zinc-600">{open ? "▾" : "▸"}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-amber-200">{title}</span>
-        <span
-          className={`shrink-0 text-[10px] ${
-            pending ? "text-zinc-500" : failed ? "text-red-400" : "text-emerald-400"
-          }`}
-        >
-          {pending ? "실행 중" : failed ? "실패" : "완료"}
-        </span>
+        <span className="text-caption text-ink-subtle">{open ? "▾" : "▸"}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-caption text-ink">{title}</span>
+        <StatusText pending={pending} failed={failed} />
       </button>
 
       {open && (
-        <div className="space-y-1.5 border-t border-amber-900/40 px-2 py-1.5">
+        <div className="space-y-1.5 border-t border-hairline px-2 py-1.5">
           <div>
-            <p className="mb-0.5 text-[10px] text-zinc-500">입력</p>
+            <p className="mb-0.5 text-caption text-ink-muted">입력</p>
             <JsonTree value={input} defaultOpenDepth={2} />
           </div>
           <div>
-            <p className="mb-0.5 text-[10px] text-zinc-500">{failed ? "오류" : "출력"}</p>
+            <p className="mb-0.5 text-caption text-ink-muted">{failed ? "오류" : "출력"}</p>
             <JsonTree value={output ?? null} defaultOpenDepth={1} />
           </div>
         </div>

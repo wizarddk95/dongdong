@@ -10,27 +10,32 @@ export interface RunStatusStyle {
   barClassName: string;
 }
 
+/**
+ * 상태별 색·문구. 뜻은 `label` 이 지고 색은 거들기만 한다 —
+ * 크로마틱 액센트는 청록 하나뿐이라 "진행 중"은 액센트로 두고,
+ * 끝난 상태만 시맨틱(초록·노랑·빨강)을 꺼내 쓴다.
+ */
 export const RUN_STATUS_STYLE: Record<string, RunStatusStyle> = {
   pending: {
     label: "대기",
-    className: "bg-zinc-800 text-zinc-300",
-    barClassName: "bg-emerald-600",
+    className: "bg-surface-2 text-ink-muted",
+    barClassName: "bg-surface-3",
   },
   running: {
     label: "실행 중",
-    className: "bg-emerald-950 text-emerald-300",
-    barClassName: "bg-emerald-600",
+    className: "bg-accent-subtle text-ink",
+    barClassName: "bg-accent",
   },
   succeeded: {
     label: "성공",
-    className: "bg-sky-950 text-sky-300",
-    barClassName: "bg-sky-600",
+    className: "bg-success-subtle text-ink",
+    barClassName: "bg-success",
   },
-  failed: { label: "실패", className: "bg-red-950 text-red-300", barClassName: "bg-red-700" },
+  failed: { label: "실패", className: "bg-error-subtle text-ink", barClassName: "bg-error" },
   cancelled: {
     label: "취소",
-    className: "bg-amber-950 text-amber-300",
-    barClassName: "bg-red-700",
+    className: "bg-warning-subtle text-ink",
+    barClassName: "bg-warning",
   },
 };
 

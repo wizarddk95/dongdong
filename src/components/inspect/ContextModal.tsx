@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { JsonTree } from "@/components/inspect/JsonTree";
-import { Button, Modal } from "@/components/Panel";
+import { Button, Modal, Tag, type TagTone } from "@/components/Panel";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { buildMcpTools } from "@/lib/ai/mcp";
 import { buildTurnContext, type TurnContext } from "@/lib/ai/runner";
@@ -20,10 +20,14 @@ interface ContextModalProps {
 
 type Source = "snapshot" | "derived" | "preview";
 
-const SOURCE_LABEL: Record<Source, { text: string; className: string }> = {
-  snapshot: { text: "저장된 스냅샷", className: "bg-emerald-950 text-emerald-300" },
-  derived: { text: "트리에서 재구성", className: "bg-amber-950 text-amber-300" },
-  preview: { text: "다음 턴 미리보기", className: "bg-sky-950 text-sky-300" },
+/**
+ * 이 컨텍스트가 어디서 왔는지 — 이 툴의 투명성이 걸린 표시라 글자로 못 박고,
+ * 색은 "그대로 저장된 것(중립)" 과 "재구성한 것(주의)" 만 구분한다.
+ */
+const SOURCE_LABEL: Record<Source, { text: string; tone: TagTone }> = {
+  snapshot: { text: "저장된 스냅샷", tone: "success" },
+  derived: { text: "트리에서 재구성", tone: "warning" },
+  preview: { text: "다음 턴 미리보기", tone: "accent" },
 };
 
 /** 스냅샷에 messages 가 들어 있는지 (도구 스텝 노드는 설정값만 저장한다) */
@@ -104,7 +108,7 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
       widthClass="max-w-3xl"
       footer={
         <>
-          <span className="mr-auto text-[10px] text-zinc-600">
+          <span className="mr-auto text-caption text-ink-muted">
             총 {totalChars.toLocaleString()}자 (토큰 아님) · 메시지 {context.messages.length}개
           </span>
           <Button onClick={() => void copyRaw()}>{copied ? "복사됨" : "JSON 복사"}</Button>
@@ -117,47 +121,47 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
         </>
       }
     >
-      <div className="space-y-3 p-4 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`rounded px-1.5 py-0.5 text-[10px] ${badge.className}`}>{badge.text}</span>
-          <span className="font-mono text-[11px] text-zinc-300">{context.modelId}</span>
-          <span className="text-zinc-500">effort {context.effort}</span>
-          <span className="text-zinc-500">최대 {context.maxSteps} 스텝</span>
-          <span className="font-mono text-[10px] text-zinc-600">{context.createdAt}</span>
+      <div className="space-y-4 p-4">
+        <div className="flex flex-wrap items-center gap-2 text-caption text-ink-muted">
+          <Tag tone={badge.tone}>{badge.text}</Tag>
+          <span className="font-mono text-ink">{context.modelId}</span>
+          <span>effort {context.effort}</span>
+          <span>최대 {context.maxSteps} 스텝</span>
+          <span className="font-mono">{context.createdAt}</span>
         </div>
 
         {source === "derived" && (
-          <p className="rounded border border-amber-900 bg-amber-950/40 px-2 py-1 text-[11px] text-amber-200">
+          <p className="rounded-md border-l-2 border-warning bg-warning-subtle px-3 py-2 text-caption text-ink">
             이 노드는 도구 실행 뒤 이어진 스텝이라 메시지 원문을 따로 저장하지 않습니다. 부모까지의
             대화 체인으로 동일하게 재구성했습니다.
           </p>
         )}
 
         {raw ? (
-          <pre className="overflow-auto rounded bg-black/40 p-3 font-mono text-[11px] whitespace-pre-wrap text-zinc-300">
+          <pre className="overflow-auto rounded-md border border-hairline bg-surface-1 p-3 font-mono text-caption whitespace-pre-wrap text-ink">
             {json}
           </pre>
         ) : (
           <>
             <section>
-              <h3 className="mb-1 text-[11px] font-semibold text-zinc-400">시스템 프롬프트</h3>
-              <pre className="max-h-40 overflow-auto rounded bg-black/30 p-2 font-mono text-[11px] whitespace-pre-wrap text-zinc-300">
+              <h3 className="mb-1.5 text-body-emphasis text-ink">시스템 프롬프트</h3>
+              <pre className="max-h-40 overflow-auto rounded-md border border-hairline bg-surface-1 p-3 font-mono text-caption whitespace-pre-wrap text-ink">
                 {context.system || "(없음)"}
               </pre>
             </section>
 
             <section>
-              <h3 className="mb-1 text-[11px] font-semibold text-zinc-400">
+              <h3 className="mb-1.5 text-body-emphasis text-ink">
                 노출된 도구 {context.toolNames.length}개
               </h3>
               <div className="flex flex-wrap gap-1">
                 {context.toolNames.length === 0 && (
-                  <span className="text-[11px] text-zinc-600">(도구 없음)</span>
+                  <span className="text-caption text-ink-subtle">(도구 없음)</span>
                 )}
                 {context.toolNames.map((name) => (
                   <span
                     key={name}
-                    className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300"
+                    className="rounded-full bg-surface-1 px-2 py-0.5 font-mono text-caption text-ink-muted"
                   >
                     {name}
                   </span>
@@ -166,21 +170,21 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
             </section>
 
             <section>
-              <h3 className="mb-1 text-[11px] font-semibold text-zinc-400">
+              <h3 className="mb-1.5 text-body-emphasis text-ink">
                 메시지 {context.messages.length}개
               </h3>
               <div className="space-y-1.5">
                 {context.messages.map((message, index) => (
-                  <div key={index} className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                    <div className="mb-1 flex items-center gap-2 text-[10px]">
-                      <span className="font-semibold text-zinc-300">{message.role}</span>
-                      <span className="text-zinc-600">#{index + 1}</span>
+                  <div key={index} className="rounded-md border border-hairline bg-surface-1 p-2.5">
+                    <div className="mb-1 flex items-center gap-2 text-caption">
+                      <span className="text-body-emphasis text-ink">{message.role}</span>
+                      <span className="text-ink-subtle">#{index + 1}</span>
                     </div>
                     <JsonTree value={message.content} defaultOpenDepth={2} />
                   </div>
                 ))}
                 {context.messages.length === 0 && (
-                  <p className="text-[11px] text-zinc-600">
+                  <p className="text-caption text-ink-subtle">
                     아직 보낼 대화가 없습니다. 메시지를 입력하면 여기에 나타납니다.
                   </p>
                 )}

@@ -41,6 +41,40 @@ describe("모델을 바꾸면 권장 사고 강도를 따라간다", () => {
   });
 });
 
+describe("테마", () => {
+  const readSettings = vi.mocked(ipc.readAppSettings);
+
+  beforeEach(() => {
+    vi.mocked(ipc.writeAppSettings).mockClear();
+    vi.mocked(ipc.appSettingsPath).mockResolvedValue("C:/settings.json" as never);
+  });
+
+  it("고른 테마가 디스크에 함께 저장된다", async () => {
+    await useSettings.getState().update({ theme: "dark" });
+    expect(useSettings.getState().theme).toBe("dark");
+    const written = vi.mocked(ipc.writeAppSettings).mock.calls.at(-1)?.[0];
+    expect(written).toMatchObject({ theme: "dark" });
+  });
+
+  it("저장된 테마를 읽어 온다", async () => {
+    readSettings.mockResolvedValue({ theme: "dark" } as never);
+    await useSettings.getState().load();
+    expect(useSettings.getState().theme).toBe("dark");
+  });
+
+  it("모르는 값이 들어 있어도 기본값으로 떨어질 뿐 앱은 뜬다", async () => {
+    readSettings.mockResolvedValue({ theme: "solarized" } as never);
+    await useSettings.getState().load();
+    expect(useSettings.getState().theme).toBe("light");
+  });
+
+  it("테마를 안 쓰던 옛 settings.json 도 기본값으로 채워진다", async () => {
+    readSettings.mockResolvedValue({ modelId: "anthropic:claude-opus-5" } as never);
+    await useSettings.getState().load();
+    expect(useSettings.getState().theme).toBe("light");
+  });
+});
+
 describe("로컬 모델 목록 새로고침", () => {
   const http = vi.mocked(tauriFetch);
 

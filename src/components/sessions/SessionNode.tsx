@@ -1,12 +1,13 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 
+import { Tag } from "@/components/Panel";
 import { ContextGauge, UsageTag } from "@/components/UsageMeter";
 import { sessionContextStatus, summarizeSessionUsage } from "@/lib/ai/usage";
 import type { SessionOverview } from "@/types/ipc";
 
-export const SESSION_WIDTH = 232;
+export const SESSION_WIDTH = 276;
 /** 비용 줄 + 컨텍스트 게이지가 아래 두 줄을 더 쓴다. */
-export const SESSION_HEIGHT = 124;
+export const SESSION_HEIGHT = 168;
 
 export interface SessionNodeData extends Record<string, unknown> {
   session: SessionOverview;
@@ -33,43 +34,40 @@ export function SessionNode({ data }: NodeProps<SessionFlowNode>) {
   const summary = summarizeSessionUsage(session);
   const context = sessionContextStatus(session);
 
-  const ring = isSelected
-    ? "ring-2 ring-violet-400"
+  // 턴 카드와 같은 규칙 — 선택은 파란 2px, 열려 있음은 잉크 2px.
+  const edge = isSelected
+    ? "border-2 border-accent"
     : isActive
-      ? "ring-2 ring-emerald-400"
-      : "";
+      ? "border-2 border-hairline-strong"
+      : "border border-hairline";
 
   return (
     <div
       style={{ width: SESSION_WIDTH, height: SESSION_HEIGHT }}
-      className={`flex flex-col gap-1 rounded-lg border border-zinc-700 bg-zinc-900/90 px-2.5 py-2 text-left ${ring}`}
+      className={`flex flex-col gap-1.5 rounded-lg bg-canvas px-3 py-2.5 text-left elevate ${edge}`}
     >
-      <Handle type="target" position={Position.Left} className="!h-1.5 !w-1.5 !bg-zinc-500" />
+      <Handle type="target" position={Position.Left} />
 
-      <div className="flex items-center gap-1 text-[9px] text-zinc-500">
-        {session.branchedFromMessageId && (
-          <span className="rounded bg-violet-950 px-1 text-violet-300">⑂ 분기</span>
-        )}
-        {isActive && <span className="text-emerald-400">● 열려 있음</span>}
+      <div className="flex items-center gap-1.5 text-caption text-ink-muted">
+        {session.branchedFromMessageId && <Tag title="다른 세션에서 갈라져 나왔습니다">⑂ 분기</Tag>}
+        {isActive && <span className="text-accent">● 열려 있음</span>}
         <span className="ml-auto">{shortTime(session.lastMessageAt ?? session.updatedAt)}</span>
       </div>
 
-      <p className="truncate text-[12px] font-medium text-zinc-100">{session.title}</p>
+      <p className="truncate text-body-emphasis text-ink">{session.title}</p>
 
-      <p className="line-clamp-2 flex-1 overflow-hidden text-[10px] leading-snug text-zinc-500">
+      <p className="line-clamp-2 flex-1 overflow-hidden text-caption leading-snug text-ink-muted">
         {session.preview?.trim() || "(아직 대화 없음)"}
       </p>
 
-      <div className="flex shrink-0 items-center gap-2 text-[9px] text-zinc-500">
+      <div className="flex shrink-0 items-center gap-2 text-caption text-ink-muted">
         <span>노드 {session.messageCount}</span>
-        {session.agentRunCount > 0 && (
-          <span className="text-fuchsia-400">🤝 {session.agentRunCount}</span>
-        )}
+        {session.agentRunCount > 0 && <span>위임 {session.agentRunCount}</span>}
         <UsageTag
           usage={summary.usage}
           cost={summary.cost}
           modelId={summary.primaryModelId}
-          className="ml-auto text-[9px]"
+          className="ml-auto"
         />
       </div>
 
@@ -80,7 +78,7 @@ export function SessionNode({ data }: NodeProps<SessionFlowNode>) {
         className="shrink-0"
       />
 
-      <Handle type="source" position={Position.Right} className="!h-1.5 !w-1.5 !bg-zinc-500" />
+      <Handle type="source" position={Position.Right} />
     </div>
   );
 }

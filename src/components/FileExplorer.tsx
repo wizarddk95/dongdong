@@ -73,20 +73,20 @@ export function FileExplorer() {
         className="max-h-64 shrink-0"
         actions={
           <>
-            <Button onClick={() => setShowHidden((value) => !value)} disabled={!project}>
+            <Button variant="ghost" onClick={() => setShowHidden((value) => !value)} disabled={!project}>
               {showHidden ? "숨김 ON" : "숨김 OFF"}
             </Button>
-            <Button onClick={() => void refresh(cwd)} disabled={!project}>
+            <Button variant="ghost" onClick={() => void refresh(cwd)} disabled={!project}>
               새로고침
             </Button>
           </>
         }
       >
-        <ul className="divide-y divide-zinc-800/60 font-mono text-xs">
+        <ul className="p-1.5 font-mono text-caption">
           {parent !== null && (
             <li>
               <button
-                className="w-full px-3 py-1 text-left text-zinc-400 hover:bg-zinc-800/40"
+                className="w-full rounded-sm px-2.5 py-1.5 text-left text-ink-muted transition-colors hover:bg-hover"
                 onClick={() => void refresh(parent)}
               >
                 ../
@@ -96,20 +96,21 @@ export function FileExplorer() {
           {entries.map((entry) => (
             <li key={entry.path}>
               <button
-                className="flex w-full items-center gap-2 px-3 py-1 text-left hover:bg-zinc-800/40"
+                className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left transition-colors hover:bg-hover"
                 onClick={() => void openEntry(entry)}
               >
-                <span className={entry.isDir ? "text-sky-300" : "text-zinc-300"}>
+                {/* 폴더/파일은 색이 아니라 글자 굵기와 아이콘으로 가른다. */}
+                <span className={entry.isDir ? "text-body-emphasis text-ink" : "text-ink-muted"}>
                   {entry.isDir ? "📁" : "📄"} {entry.name}
                 </span>
                 {!entry.isDir && (
-                  <span className="ml-auto text-[10px] text-zinc-600">{entry.size}B</span>
+                  <span className="ml-auto text-caption text-ink-subtle">{entry.size}B</span>
                 )}
               </button>
             </li>
           ))}
           {project && entries.length === 0 && (
-            <li className="px-3 py-4 text-center text-zinc-600">비어 있습니다.</li>
+            <li className="px-4 py-6 text-center text-ink-subtle">비어 있습니다.</li>
           )}
         </ul>
       </Panel>
@@ -127,7 +128,9 @@ export function FileExplorer() {
       >
         {file ? (
           file.isBinary ? (
-            <p className="p-3 text-xs text-zinc-500">바이너리 파일입니다 ({file.size} bytes).</p>
+            <p className="p-4 text-body-sm text-ink-muted">
+              바이너리 파일입니다 ({file.size} bytes).
+            </p>
           ) : (
             <textarea
               value={buffer}
@@ -136,11 +139,11 @@ export function FileExplorer() {
                 setDirty(true);
               }}
               spellCheck={false}
-              className="h-full min-h-64 w-full resize-none bg-transparent p-3 font-mono text-xs text-zinc-200 outline-none"
+              className="h-full min-h-64 w-full resize-none border-0 bg-transparent p-4 font-mono text-caption text-ink outline-none"
             />
           )
         ) : (
-          <p className="p-3 text-xs text-zinc-600">왼쪽 목록에서 파일을 선택하세요.</p>
+          <p className="p-4 text-body-sm text-ink-muted">왼쪽 목록에서 파일을 선택하세요.</p>
         )}
       </Panel>
     </div>

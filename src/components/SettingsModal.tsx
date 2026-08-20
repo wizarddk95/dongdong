@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { McpServers } from "@/components/mcp/McpServers";
-import { Button } from "@/components/Panel";
+import { Button, FIELD, FIELD_SM, SELECT } from "@/components/Panel";
 import {
   DEFAULT_LOCAL_BASE_URL,
   buildModelOptions,
@@ -9,6 +9,7 @@ import {
   type Effort,
 } from "@/lib/ai/providers";
 import { DEFAULT_SKILLS, SKILL_GROUPS, type SkillToggles } from "@/lib/ai/skills";
+import { THEME_LABEL, THEME_PREFERENCES, type ThemePreference } from "@/lib/theme";
 import { useSettings } from "@/store/settings";
 
 const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
@@ -16,6 +17,26 @@ const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+}
+
+/** 섹션 제목 — 모달 안에서 한 계층만 쓴다. */
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <h3 className="text-subhead text-ink">{children}</h3>;
+}
+
+/** 라벨 + 입력 한 벌. 라벨은 12px 로 입력 바로 위에 붙는다. */
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-caption text-ink-muted">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+/** 도움말 한 줄. */
+function Help({ children }: { children: React.ReactNode }) {
+  return <p className="text-caption text-ink-muted">{children}</p>;
 }
 
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
@@ -109,60 +130,86 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 backdrop-blur-[2px]"
       onClick={onClose}
     >
       <div
-        className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900"
+        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-hairline bg-canvas elevate-lg"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-4 py-3">
-          <h2 className="text-sm font-semibold text-zinc-200">설정</h2>
-          <button className="text-zinc-500 hover:text-zinc-200" onClick={onClose}>
+        <header className="flex shrink-0 items-center justify-between border-b border-hairline px-6 py-4">
+          <h2 className="text-card-title text-ink">설정</h2>
+          <button
+            className="-mr-1 rounded-sm px-2 py-1 text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+            title="닫기"
+            onClick={onClose}
+          >
             ✕
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4 text-xs">
-          <section className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-zinc-300">API 키</h3>
+        {/* 섹션은 헤어라인 한 줄로만 갈린다. */}
+        <div className="min-h-0 flex-1 divide-y divide-hairline overflow-auto">
+          <section className="space-y-3 p-6">
+            <SectionTitle>화면</SectionTitle>
+            <Field label="테마">
+              <select
+                value={settings.theme}
+                onChange={(event) =>
+                  void settings.update({ theme: event.target.value as ThemePreference })
+                }
+                className={SELECT}
+              >
+                {THEME_PREFERENCES.map((value) => (
+                  <option key={value} value={value}>
+                    {THEME_LABEL[value]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Help>
+              고르는 즉시 적용되고 저장됩니다 ([저장] 을 누르지 않아도 됩니다).
+            </Help>
+          </section>
+
+          <section className="space-y-3 p-6">
+            <div className="flex items-center justify-between gap-2">
+              <SectionTitle>API 키</SectionTitle>
               <button
-                className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                className="text-caption text-accent hover:underline"
                 onClick={() => setRevealKeys((value) => !value)}
               >
                 {revealKeys ? "가리기" : "보기"}
               </button>
             </div>
-            <label className="block">
-              <span className="text-zinc-500">Anthropic</span>
+            <Field label="Anthropic">
               <input
                 type={revealKeys ? "text" : "password"}
                 value={anthropicKey}
                 onChange={(event) => setAnthropicKey(event.target.value)}
                 placeholder="sk-ant-..."
-                className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-100"
+                className={`${FIELD} font-mono`}
               />
-            </label>
-            <label className="block">
-              <span className="text-zinc-500">OpenAI</span>
+            </Field>
+            <Field label="OpenAI">
               <input
                 type={revealKeys ? "text" : "password"}
                 value={openaiKey}
                 onChange={(event) => setOpenaiKey(event.target.value)}
                 placeholder="sk-..."
-                className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-100"
+                className={`${FIELD} font-mono`}
               />
-            </label>
+            </Field>
             {settings.settingsPath && (
-              <p className="font-mono text-[10px] break-all text-zinc-600">
-                저장 위치: {settings.settingsPath} (평문 JSON — 이 PC 안에만 있습니다)
-              </p>
+              <Help>
+                <span className="font-mono break-all">저장 위치: {settings.settingsPath}</span>{" "}
+                (평문 JSON — 이 PC 안에만 있습니다)
+              </Help>
             )}
           </section>
 
-          <section className="space-y-2">
-            <h3 className="font-semibold text-zinc-300">모델</h3>
+          <section className="space-y-3 p-6">
+            <SectionTitle>모델</SectionTitle>
             <select
               value={modelId}
               onChange={(event) => {
@@ -172,7 +219,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 const recommended = defaultEffortFor(nextId);
                 if (recommended) setEffort(recommended);
               }}
-              className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+              className={SELECT}
             >
               {modelOptions.map((option) => (
                 <option key={option.id} value={option.id}>
@@ -187,17 +234,16 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 value={customModel}
                 onChange={(event) => setCustomModel(event.target.value)}
                 placeholder="anthropic:claude-opus-5 / local:gpt-oss:20b 형식으로 입력"
-                className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-100"
+                className={`${FIELD} font-mono`}
               />
             )}
 
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="text-zinc-500">사고 강도 (Anthropic 전용)</span>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="사고 강도 (Anthropic 전용)">
                 <select
                   value={effort}
                   onChange={(event) => setEffort(event.target.value as Effort)}
-                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+                  className={SELECT}
                 >
                   {EFFORTS.map((value) => (
                     <option key={value} value={value}>
@@ -205,86 +251,87 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     </option>
                   ))}
                 </select>
-              </label>
-              <label className="block">
-                <span className="text-zinc-500">최대 스텝 (도구 루프)</span>
+              </Field>
+              <Field label="최대 스텝 (도구 루프)">
                 <input
                   type="number"
                   min={1}
                   max={64}
                   value={maxSteps}
                   onChange={(event) => setMaxSteps(Number(event.target.value) || 1)}
-                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+                  className={FIELD}
                 />
-              </label>
+              </Field>
             </div>
           </section>
 
-          <section className="space-y-2">
-            <h3 className="font-semibold text-zinc-300">로컬 모델 서버 (Ollama · LM Studio)</h3>
-            <p className="text-[10px] text-zinc-600">
+          <section className="space-y-3 p-6">
+            <SectionTitle>로컬 모델 서버 (Ollama · LM Studio)</SectionTitle>
+            <Help>
               이 PC 에서 도는 OpenAI 호환 서버입니다. 키가 필요 없고, 대화 내용이 밖으로 나가지
               않습니다. Ollama 는 <span className="font-mono">http://localhost:11434/v1</span>,
               LM Studio 는 <span className="font-mono">http://localhost:1234/v1</span>.
-            </p>
-            <label className="block">
-              <span className="text-zinc-500">서버 주소</span>
+            </Help>
+            <Field label="서버 주소">
               <input
                 value={localBaseUrl}
                 onChange={(event) => setLocalBaseUrl(event.target.value)}
                 placeholder={DEFAULT_LOCAL_BASE_URL}
-                className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-100"
+                className={`${FIELD} font-mono`}
               />
-            </label>
-            <label className="block">
-              <span className="text-zinc-500">키 (서버가 요구할 때만)</span>
+            </Field>
+            <Field label="키 (서버가 요구할 때만)">
               <input
                 type={revealKeys ? "text" : "password"}
                 value={localApiKey}
                 onChange={(event) => setLocalApiKey(event.target.value)}
                 placeholder="보통 비워 둡니다"
-                className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-100"
+                className={`${FIELD} font-mono`}
               />
-            </label>
-            <div className="flex items-center gap-2">
-              <Button onClick={() => void refreshLocalModels()} disabled={probe.state === "loading"}>
+            </Field>
+            <div className="flex items-center gap-3">
+              <Button
+                size="md"
+                onClick={() => void refreshLocalModels()}
+                disabled={probe.state === "loading"}
+              >
                 {probe.state === "loading" ? "확인 중…" : "설치된 모델 불러오기"}
               </Button>
-              <span className="text-[10px] text-zinc-600">
-                위 드롭다운의 로컬 모델은 여기서 불러온 목록이 전부입니다.
-              </span>
+              <Help>위 드롭다운의 로컬 모델은 여기서 불러온 목록이 전부입니다.</Help>
             </div>
-            <p className="text-[10px] break-all text-zinc-600">
+            <Help>
               {settings.localModels.length
                 ? `현재 목록: ${settings.localModels.join(", ")}`
                 : "발견된 로컬 모델이 없습니다 — 서버를 띄운 뒤 다시 불러오세요."}
-            </p>
+            </Help>
             {probe.message && (
               <p
-                className={`text-[10px] break-all ${
-                  probe.state === "ok" ? "text-emerald-400" : "text-amber-400"
+                className={`rounded-md border-l-2 px-3 py-2 text-caption break-all ${
+                  probe.state === "ok"
+                    ? "border-success bg-success-subtle text-ink"
+                    : "border-warning bg-warning-subtle text-ink"
                 }`}
               >
                 {probe.message}
               </p>
             )}
-            <p className="text-[10px] text-zinc-600">
-              에이전트는 도구 호출을 많이 쓰므로 컨텍스트를 크게 잡아야 합니다. Ollama 는 기본
-              4K 라 <span className="font-mono">OLLAMA_CONTEXT_LENGTH=65536</span> 를 환경 변수로
-              주고 서버를 다시 띄우세요.
-            </p>
+            <Help>
+              에이전트는 도구 호출을 많이 쓰므로 컨텍스트를 크게 잡아야 합니다. Ollama 는 기본 4K
+              라 <span className="font-mono">OLLAMA_CONTEXT_LENGTH=65536</span> 를 환경 변수로 주고
+              서버를 다시 띄우세요.
+            </Help>
           </section>
 
-          <section className="space-y-2">
-            <h3 className="font-semibold text-zinc-300">스킬 (에이전트가 쓸 수 있는 도구)</h3>
-            <p className="text-[10px] text-zinc-600">
+          <section className="space-y-3 p-6">
+            <SectionTitle>스킬 (에이전트가 쓸 수 있는 도구)</SectionTitle>
+            <Help>
               켜 둔 도구는 확인 없이 바로 실행됩니다. 샌드박스가 아니라 이 PC 의 사용자 권한으로
               동작하니 필요한 것만 켜세요.
-            </p>
+            </Help>
             {SKILL_GROUPS.map((group) => (
               <label
                 key={group.id}
-                className="flex items-start gap-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5"
+                className="flex items-start gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2.5 transition-colors hover:bg-hover"
               >
                 <input
                   type="checkbox"
@@ -292,11 +339,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   onChange={(event) =>
                     setSkills((current) => ({ ...current, [group.id]: event.target.checked }))
                   }
-                  className="mt-0.5"
+                  className="mt-0.5 accent-accent"
                 />
                 <span className="min-w-0">
-                  <span className="text-zinc-200">{group.label}</span>
-                  <span className="ml-2 font-mono text-[10px] break-all text-zinc-600">
+                  <span className="text-ink">{group.label}</span>
+                  <span className="mt-0.5 block font-mono text-caption break-all text-ink-muted">
                     {group.tools.join(", ")}
                   </span>
                 </span>
@@ -304,21 +351,22 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             ))}
           </section>
 
-          <McpServers />
+          <section className="p-6">
+            <McpServers />
+          </section>
 
-          <section className="space-y-2">
-            <h3 className="font-semibold text-zinc-300">서브에이전트</h3>
-            <p className="text-[10px] text-zinc-600">
+          <section className="space-y-3 p-6">
+            <SectionTitle>서브에이전트</SectionTitle>
+            <Help>
               `delegate_task` 로 띄우는 하위 에이전트. 자기 컨텍스트를 따로 갖고, 다시 위임하지는
               못합니다.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="text-zinc-500">모델</span>
+            </Help>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="모델">
                 <select
                   value={subagentModelId}
                   onChange={(event) => setSubagentModelId(event.target.value)}
-                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+                  className={SELECT}
                 >
                   <option value="">메인 모델과 동일</option>
                   {modelOptions.map((option) => (
@@ -327,33 +375,32 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     </option>
                   ))}
                 </select>
-              </label>
-              <label className="block">
-                <span className="text-zinc-500">스텝 예산 (1명당)</span>
+              </Field>
+              <Field label="스텝 예산 (1명당)">
                 <input
                   type="number"
                   min={1}
                   max={64}
                   value={subagentMaxSteps}
                   onChange={(event) => setSubagentMaxSteps(Number(event.target.value) || 1)}
-                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+                  className={FIELD}
                 />
-              </label>
+              </Field>
             </div>
           </section>
 
-          <section className="space-y-2">
-            <h3 className="font-semibold text-zinc-300">프로젝트 지침</h3>
-            <label className="flex items-start gap-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5">
+          <section className="space-y-3 p-6">
+            <SectionTitle>프로젝트 지침</SectionTitle>
+            <label className="flex items-start gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2.5 transition-colors hover:bg-hover">
               <input
                 type="checkbox"
                 checked={useProjectInstructions}
                 onChange={(event) => setUseProjectInstructions(event.target.checked)}
-                className="mt-0.5"
+                className="mt-0.5 accent-accent"
               />
               <span className="min-w-0">
-                <span className="text-zinc-200">프로젝트 루트의 AGENTS.md 자동 로드</span>
-                <span className="mt-0.5 block text-[10px] text-zinc-600">
+                <span className="text-ink">프로젝트 루트의 AGENTS.md 자동 로드</span>
+                <span className="mt-0.5 block text-caption text-ink-muted">
                   파일이 있으면 매 턴 컨텍스트 맨 앞에 원문을 싣습니다. 서브에이전트에게도 같은
                   지침이 전달됩니다.
                 </span>
@@ -361,20 +408,22 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </label>
           </section>
 
-          <section className="space-y-2">
-            <h3 className="font-semibold text-zinc-300">시스템 프롬프트</h3>
+          <section className="space-y-3 p-6">
+            <SectionTitle>시스템 프롬프트</SectionTitle>
             <textarea
               value={systemPrompt}
               onChange={(event) => setSystemPrompt(event.target.value)}
               rows={6}
-              className="w-full resize-none rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+              className={`${FIELD_SM} resize-none`}
             />
           </section>
         </div>
 
-        <footer className="flex shrink-0 justify-end gap-2 border-t border-zinc-800 px-4 py-3">
-          <Button onClick={onClose}>취소</Button>
-          <Button variant="primary" onClick={() => void save()} disabled={settings.saving}>
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-hairline px-6 py-4">
+          <Button size="md" onClick={onClose}>
+            취소
+          </Button>
+          <Button variant="primary" size="md" onClick={() => void save()} disabled={settings.saving}>
             {settings.saving ? "저장 중…" : "저장"}
           </Button>
         </footer>

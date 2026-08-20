@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Button, Panel } from "@/components/Panel";
+import { Button, FIELD_SM, Panel, SELECT_SM } from "@/components/Panel";
 import * as ipc from "@/lib/ipc";
 import { useWorkspace } from "@/store/workspace";
 import type { ShellKind, ShellResult } from "@/types/ipc";
@@ -61,7 +61,7 @@ export function ShellConsole() {
         <select
           value={shell}
           onChange={(event) => setShell(event.target.value as ShellKind)}
-          className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-200"
+          className={`${SELECT_SM} w-auto`}
         >
           {SHELLS.map((kind) => (
             <option key={kind} value={kind}>
@@ -72,7 +72,7 @@ export function ShellConsole() {
       }
     >
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 gap-2 border-b border-zinc-800 p-2">
+        <div className="flex shrink-0 items-center gap-2 border-b border-hairline p-2">
           <input
             value={command}
             onChange={(event) => setCommand(event.target.value)}
@@ -80,36 +80,40 @@ export function ShellConsole() {
               if (event.key === "Enter") void run();
             }}
             placeholder={system?.os === "windows" ? "예: dir" : "예: ls -la"}
-            className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-600"
+            className={`${FIELD_SM} flex-1 font-mono`}
           />
           <Button variant="primary" onClick={() => void run()} disabled={running}>
             {running ? "실행 중…" : "실행"}
           </Button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto p-2 font-mono text-xs">
+        <div className="min-h-0 flex-1 overflow-auto p-3 font-mono text-caption">
           {history.map((result, index) => (
-            <div key={index} className="mb-3 border-l-2 border-zinc-700 pl-2">
-              <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500">
-                <span className={result.success ? "text-emerald-400" : "text-red-400"}>
+            <div
+              key={index}
+              // 왼쪽 2px 룰이 성공/실패를 말한다 — 글자에도 ✓/✗ 를 남겨 색 없이 읽히게 한다.
+              className={`mb-4 border-l-2 pl-3 ${result.success ? "border-success" : "border-error"}`}
+            >
+              <div className="flex flex-wrap items-center gap-2 text-ink-muted">
+                <span className={result.success ? "text-success" : "text-error"}>
                   {result.success ? "✓" : "✗"} exit {result.exitCode ?? "—"}
                 </span>
                 <span>{result.durationMs}ms</span>
                 <span>{result.shell}</span>
-                {result.timedOut && <span className="text-amber-400">timeout</span>}
-                {result.truncated && <span className="text-amber-400">truncated</span>}
+                {result.timedOut && <span className="text-warning">timeout</span>}
+                {result.truncated && <span className="text-warning">truncated</span>}
               </div>
-              <div className="text-zinc-400">$ {result.command}</div>
+              <div className="text-ink-muted">$ {result.command}</div>
               {result.stdout && (
-                <pre className="whitespace-pre-wrap break-words text-zinc-200">{result.stdout}</pre>
+                <pre className="whitespace-pre-wrap break-words text-ink">{result.stdout}</pre>
               )}
               {result.stderr && (
-                <pre className="whitespace-pre-wrap break-words text-red-300">{result.stderr}</pre>
+                <pre className="whitespace-pre-wrap break-words text-error">{result.stderr}</pre>
               )}
             </div>
           ))}
           {history.length === 0 && (
-            <p className="p-2 text-zinc-600">명령을 실행하면 결과가 여기에 쌓입니다.</p>
+            <p className="p-2 text-ink-subtle">명령을 실행하면 결과가 여기에 쌓입니다.</p>
           )}
         </div>
       </div>

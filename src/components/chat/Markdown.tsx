@@ -12,7 +12,7 @@ interface MarkdownProps {
 /** 채팅 본문을 마크다운으로 그린다. 스트리밍 중에도 매 토큰 다시 파싱된다(본문이 짧아 부담 없음). */
 export const Markdown = memo(function Markdown({ text, dim = false, className = "" }: MarkdownProps) {
   const blocks = useMemo(() => parseMarkdown(text), [text]);
-  const tone = dim ? "text-[11px] text-zinc-400" : "text-[13px] text-zinc-100";
+  const tone = dim ? "text-caption text-ink-muted" : "text-body-sm text-ink";
 
   return (
     <div className={`min-w-0 space-y-2 break-words ${tone} ${className}`}>
@@ -23,13 +23,17 @@ export const Markdown = memo(function Markdown({ text, dim = false, className = 
   );
 });
 
+/**
+ * 제목 계층은 크기로만 만든다 — 채팅 본문이라 디스플레이 크기까지 올리지 않고
+ * card-title 아래 구간만 쓴다.
+ */
 const HEADING_CLASS: Record<number, string> = {
-  1: "text-[17px] font-bold text-zinc-50",
-  2: "text-[15px] font-bold text-zinc-50",
-  3: "text-[14px] font-semibold text-zinc-100",
-  4: "text-[13px] font-semibold text-zinc-200",
-  5: "text-[12px] font-semibold text-zinc-300",
-  6: "text-[12px] font-semibold text-zinc-400",
+  1: "text-card-title text-ink",
+  2: "text-subhead text-ink",
+  3: "text-body-lg text-ink",
+  4: "text-body-emphasis text-ink",
+  5: "text-body-emphasis text-ink-muted",
+  6: "text-caption font-semibold text-ink-muted",
 };
 
 function Block({ node, dim }: { node: BlockNode; dim: boolean }) {
@@ -58,7 +62,7 @@ function Block({ node, dim }: { node: BlockNode; dim: boolean }) {
 
     case "blockquote":
       return (
-        <blockquote className="space-y-2 border-l-2 border-zinc-600 pl-3 text-zinc-400">
+        <blockquote className="space-y-2 border-l-2 border-surface-3 pl-3 text-ink-muted">
           {node.children.map((child, index) => (
             <Block key={index} node={child} dim={dim} />
           ))}
@@ -69,7 +73,7 @@ function Block({ node, dim }: { node: BlockNode; dim: boolean }) {
       return <Table node={node} />;
 
     case "hr":
-      return <hr className="border-zinc-700" />;
+      return <hr className="border-hairline" />;
   }
 }
 
@@ -78,7 +82,7 @@ function List({ node, dim }: { node: Extract<BlockNode, { type: "list" }>; dim: 
   const marker = node.ordered ? "list-decimal" : "list-disc";
   return (
     <Tag
-      className={`${marker} pl-5 marker:text-zinc-500 ${node.tight ? "space-y-1" : "space-y-2"}`}
+      className={`${marker} pl-5 marker:text-ink-subtle ${node.tight ? "space-y-1" : "space-y-2"}`}
       start={node.ordered ? node.start : undefined}
     >
       {node.items.map((item, index) => (
@@ -99,7 +103,8 @@ function Item({ item, tight, dim }: { item: ListItem; tight: boolean; dim: boole
           type="checkbox"
           checked={item.checked}
           readOnly
-          className="mt-[3px] accent-emerald-500"
+          // 네이티브 체크박스의 채움색. 시스템의 유일한 액센트를 그대로 물려준다.
+          className="mt-[3px] accent-accent"
         />
       )}
       <div className={`min-w-0 flex-1 ${inlineOnly ? "" : "space-y-2"}`}>
@@ -120,14 +125,14 @@ function Table({ node }: { node: Extract<BlockNode, { type: "table" }> }) {
   };
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-[12px]">
+    <div className="overflow-x-auto rounded-md border border-hairline">
+      <table className="w-full border-collapse">
         <thead>
           <tr>
             {node.header.map((cell, index) => (
               <th
                 key={index}
-                className={`border border-zinc-700 bg-zinc-800/60 px-2 py-1 font-semibold ${alignClass(index)}`}
+                className={`border-b border-hairline bg-surface-1 px-3 py-2 text-body-emphasis ${alignClass(index)}`}
               >
                 <Inline nodes={cell} />
               </th>
@@ -138,7 +143,10 @@ function Table({ node }: { node: Extract<BlockNode, { type: "table" }> }) {
           {node.rows.map((row, rowIndex) => (
             <tr key={rowIndex}>
               {row.map((cell, index) => (
-                <td key={index} className={`border border-zinc-800 px-2 py-1 ${alignClass(index)}`}>
+                <td
+                  key={index}
+                  className={`border-b border-hairline px-3 py-2 text-caption ${alignClass(index)}`}
+                >
                   <Inline nodes={cell} />
                 </td>
               ))}
@@ -164,18 +172,18 @@ function CodeBlock({ lang, value }: { lang: string | null; value: string }) {
   }
 
   return (
-    <div className="overflow-hidden rounded border border-zinc-700 bg-black/40">
-      <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900/60 px-2 py-1">
-        <span className="font-mono text-[10px] text-zinc-500">{lang ?? "code"}</span>
+    <div className="overflow-hidden rounded-md border border-hairline bg-surface-1">
+      <div className="flex items-center gap-2 border-b border-hairline px-3 py-1">
+        <span className="font-mono text-caption text-ink-muted">{lang ?? "code"}</span>
         <button
-          className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+          className="ml-auto rounded-sm px-2 py-0.5 text-caption text-accent transition-colors hover:bg-hover"
           onClick={() => void copy()}
         >
           {copied ? "복사됨" : "복사"}
         </button>
       </div>
-      <pre className="overflow-x-auto px-2.5 py-2">
-        <code className="font-mono text-[12px] leading-relaxed text-zinc-200">{value}</code>
+      <pre className="overflow-x-auto px-3 py-2">
+        <code className="font-mono text-caption leading-relaxed text-ink">{value}</code>
       </pre>
     </div>
   );
@@ -201,14 +209,14 @@ function InlineNodeView({ node }: { node: InlineNode }) {
 
     case "code":
       return (
-        <code className="rounded bg-black/40 px-1 py-[1px] font-mono text-[12px] text-amber-200">
+        <code className="rounded-xs bg-surface-2 px-1.5 py-[1px] font-mono text-caption text-ink">
           {node.value}
         </code>
       );
 
     case "strong":
       return (
-        <strong className="font-semibold text-zinc-50">
+        <strong className="font-semibold text-ink">
           <Inline nodes={node.children} />
         </strong>
       );
@@ -222,7 +230,7 @@ function InlineNodeView({ node }: { node: InlineNode }) {
 
     case "del":
       return (
-        <del className="text-zinc-500 line-through">
+        <del className="text-ink-subtle line-through">
           <Inline nodes={node.children} />
         </del>
       );
@@ -234,7 +242,7 @@ function InlineNodeView({ node }: { node: InlineNode }) {
           target="_blank"
           rel="noreferrer noopener"
           title={node.href}
-          className="text-sky-400 underline decoration-sky-700 underline-offset-2 hover:text-sky-300"
+          className="text-accent underline underline-offset-2 hover:text-accent-hover"
         >
           <Inline nodes={node.children} />
         </a>
@@ -248,7 +256,7 @@ function InlineNodeView({ node }: { node: InlineNode }) {
           target="_blank"
           rel="noreferrer noopener"
           title={node.src}
-          className="text-sky-400 underline decoration-sky-700 underline-offset-2"
+          className="text-accent underline underline-offset-2 hover:text-accent-hover"
         >
           🖼 {node.alt || node.src}
         </a>

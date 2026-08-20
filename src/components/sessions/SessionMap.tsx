@@ -9,12 +9,13 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { Button } from "@/components/Panel";
+import { Button, FIELD_SM } from "@/components/Panel";
 import { UsageTag } from "@/components/UsageMeter";
 import { summarizeProjectUsage } from "@/lib/ai/usage";
 import { SessionNode, SESSION_HEIGHT, SESSION_WIDTH } from "@/components/sessions/SessionNode";
 import { tidyLayout } from "@/lib/layout";
 import { buildSessionTree } from "@/lib/sessionTree";
+import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import { useWorkspace } from "@/store/workspace";
 import type { SessionFlowNode } from "@/components/sessions/SessionNode";
 
@@ -42,6 +43,8 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
 
   const [selectedId, setSelectedId] = useState<string | null>(activeSessionId);
   const [renameDraft, setRenameDraft] = useState<string | null>(null);
+  // React Flow 는 자체 클래스로 명암을 잡으므로 해석된 테마를 직접 알려 줘야 한다.
+  const theme = useResolvedTheme();
 
   // 맵에 들어올 때마다 집계(노드 수·마지막 활동)를 다시 읽는다.
   useEffect(() => {
@@ -88,9 +91,9 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
           label: session.branchedFromMessageId
             ? `⑂ ${session.branchedFromMessageId.slice(0, 8)} 노드에서`
             : "⑂ 분기",
-          labelStyle: { fill: "#c4b5fd", fontSize: 9 },
-          labelBgStyle: { fill: "#18181b" },
-          style: { stroke: "#7c3aed", strokeWidth: 1.5 },
+          labelStyle: { fill: "var(--color-ink-muted)", fontSize: 11 },
+          labelBgStyle: { fill: "var(--color-canvas)" },
+          style: { stroke: "var(--color-surface-3)", strokeWidth: 1.5 },
         });
       }
     }
@@ -130,28 +133,27 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
 
   if (!project) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-1 text-xs text-zinc-600">
-        <p>먼저 프로젝트 폴더를 여세요.</p>
-        <p className="text-[11px]">상단의 [폴더 열기] 로 시작합니다.</p>
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+        <p className="text-display-md text-ink">프로젝트를 여세요</p>
+        <p className="text-body-sm text-ink-muted">상단의 [폴더 열기] 로 시작합니다.</p>
       </div>
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2">
-        <span className="text-[11px] text-zinc-500">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline px-3 py-2">
+        <span className="text-caption text-ink-muted">
           세션 {sessions.length}개 · 카드를 더블클릭하면 그 대화로 들어갑니다
         </span>
         {total.calls > 0 && (
-          <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
-            <span className="text-zinc-600">·</span>
+          <span className="flex items-center gap-1.5 text-caption text-ink-muted">
+            <span className="text-ink-subtle">·</span>
             <span>LLM 호출 {total.calls}회</span>
             <UsageTag
               usage={total.usage}
               cost={total.cost}
               modelId={total.primaryModelId}
-              className="text-[11px]"
             />
           </span>
         )}
@@ -167,7 +169,7 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
                   if (event.key === "Enter") commitRename();
                   if (event.key === "Escape") setRenameDraft(null);
                 }}
-                className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-100 focus:border-zinc-500 focus:outline-none"
+                className={`${FIELD_SM} w-48`}
               />
               <Button variant="primary" onClick={commitRename}>
                 확인
@@ -198,8 +200,8 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
 
       <div className="min-h-0 flex-1">
         {sessions.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-zinc-600">
-            <p>아직 세션이 없습니다.</p>
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <p className="text-display-md text-ink">아직 세션이 없습니다</p>
             <Button variant="primary" onClick={() => void createSession()}>
               + 새 세션 만들기
             </Button>
@@ -227,9 +229,14 @@ export function SessionMap({ onOpenSession }: SessionMapProps) {
             minZoom={0.2}
             maxZoom={1.5}
             proOptions={{ hideAttribution: true }}
-            colorMode="dark"
+            colorMode={theme}
           >
-            <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#3f3f46" />
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={18}
+              size={1}
+              color="var(--color-surface-2)"
+            />
             <Controls showInteractive={false} />
           </ReactFlow>
         )}

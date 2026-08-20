@@ -16,6 +16,7 @@ import {
   type ProviderCredentials,
 } from "@/lib/ai/providers";
 import { DEFAULT_SKILLS, type SkillToggles } from "@/lib/ai/skills";
+import { DEFAULT_THEME, applyTheme, normalizeTheme, type ThemePreference } from "@/lib/theme";
 
 export const DEFAULT_SYSTEM_PROMPT = `당신은 사용자의 로컬 머신에서 동작하는 코딩 에이전트입니다.
 - 답변은 한국어로, 간결하고 구체적으로 합니다.
@@ -24,6 +25,8 @@ export const DEFAULT_SYSTEM_PROMPT = `당신은 사용자의 로컬 머신에서
 
 interface SettingsState extends ProviderCredentials {
   modelId: string;
+  /** 화면 테마. 실제 적용은 `applyTheme` 가 `<html data-theme>` 에 새긴다. */
+  theme: ThemePreference;
   systemPrompt: string;
   effort: Effort;
   maxSteps: number;
@@ -68,6 +71,7 @@ type PersistedSettings = Pick<
   | "localApiKey"
   | "localModels"
   | "modelId"
+  | "theme"
   | "systemPrompt"
   | "effort"
   | "maxSteps"
@@ -87,6 +91,7 @@ const PERSISTED_KEYS: (keyof PersistedSettings)[] = [
   "localApiKey",
   "localModels",
   "modelId",
+  "theme",
   "systemPrompt",
   "effort",
   "maxSteps",
@@ -115,6 +120,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   localApiKey: "",
   localModels: [],
   modelId: DEFAULT_MODEL_ID,
+  theme: DEFAULT_THEME,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   effort: "high",
   maxSteps: 8,
@@ -142,12 +148,15 @@ export const useSettings = create<SettingsState>((set, get) => ({
         subagentModelId: persisted.subagentModelId
           ? canonicalModelId(persisted.subagentModelId)
           : "",
+        theme: normalizeTheme(persisted.theme),
         mcpServers: persisted.mcpServers ?? [],
         localBaseUrl: persisted.localBaseUrl || DEFAULT_LOCAL_BASE_URL,
         localModels: persisted.localModels ?? [],
         settingsPath: path,
         loaded: true,
       });
+      // 디스크에 적힌 테마가 인라인 스크립트가 미리 깐 캐시와 다를 수 있다 — 여기서 맞춘다.
+      applyTheme(get().theme);
       // 저장된 목록은 지난번 스냅샷일 뿐이다. 그 사이 모델을 지웠을 수도 있으니
       // 한 번 다시 물어 실제로 있는 것만 남긴다. 서버가 꺼져 있으면 조용히 넘어간다.
       void get()
@@ -168,6 +177,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       if (recommended) next.effort = recommended;
     }
     set({ ...next, saving: true });
+    // 저장을 기다리지 않고 바로 칠한다. 디스크가 느려도 클릭이 즉시 반응해야 한다.
+    if (next.theme !== undefined) applyTheme(next.theme);
     try {
       await ipc.writeAppSettings(pickPersisted(get()) as unknown as Record<string, unknown>);
     } finally {

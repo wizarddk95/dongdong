@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { Button, Modal } from "@/components/Panel";
+import { Button, FIELD_SM, Modal, SELECT_SM, Tag } from "@/components/Panel";
 import * as ipc from "@/lib/ipc";
 import { useWorkspace } from "@/store/workspace";
 import type { Memory, MemoryScope } from "@/types/ipc";
@@ -85,7 +85,7 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
       widthClass="max-w-2xl"
       footer={
         <>
-          <span className="mr-auto text-[10px] text-zinc-600">
+          <span className="mr-auto text-caption text-ink-muted">
             {loading ? "불러오는 중…" : `${memories.length}개`}
           </span>
           <Button onClick={() => void refresh()}>새로고침</Button>
@@ -95,23 +95,25 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
         </>
       }
     >
-      <div className="space-y-3 p-4 text-xs">
-        {!project && <p className="text-zinc-500">프로젝트 폴더를 먼저 여세요.</p>}
+      <div className="space-y-4 p-4">
+        {!project && (
+          <p className="text-body-sm text-ink-muted">프로젝트 폴더를 먼저 여세요.</p>
+        )}
 
         {error && (
-          <p className="rounded border border-red-900 bg-red-950/50 px-2 py-1 font-mono text-[11px] break-all text-red-300">
+          <p className="rounded-md border-l-2 border-error bg-error-subtle px-3 py-2 font-mono text-caption break-all text-ink">
             {error}
           </p>
         )}
 
         {project && (
           <>
-            <div className="space-y-1.5 rounded border border-zinc-800 bg-zinc-950/60 p-2">
-              <div className="flex gap-1.5">
+            <div className="space-y-2 rounded-md border border-hairline bg-surface-1 p-3">
+              <div className="flex gap-2">
                 <select
                   value={scope}
                   onChange={(event) => setScope(event.target.value as MemoryScope)}
-                  className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-200"
+                  className={`${SELECT_SM} w-auto`}
                 >
                   <option value="project">프로젝트 전역</option>
                   <option value="session" disabled={!activeSessionId}>
@@ -122,7 +124,7 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
                   value={key}
                   onChange={(event) => setKey(event.target.value)}
                   placeholder="키 (예: 빌드 명령)"
-                  className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-100 placeholder:text-zinc-600"
+                  className={`${FIELD_SM} flex-1`}
                 />
               </div>
               <textarea
@@ -130,18 +132,18 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
                 onChange={(event) => setValue(event.target.value)}
                 placeholder="기억할 내용"
                 rows={2}
-                className="w-full resize-none rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-100 placeholder:text-zinc-600"
+                className={`${FIELD_SM} resize-none`}
               />
               <div className="flex justify-end">
-                <Button onClick={() => void save()} disabled={!key.trim() || !value.trim()}>
+                <Button variant="primary" onClick={() => void save()} disabled={!key.trim() || !value.trim()}>
                   저장 (같은 키면 덮어쓰기)
                 </Button>
               </div>
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {memories.length === 0 && !loading && (
-                <p className="text-[11px] text-zinc-600">
+                <p className="text-caption text-ink-subtle">
                   아직 저장된 메모리가 없습니다. 에이전트가 `remember` 를 쓰거나 위에서 직접 추가할
                   수 있습니다.
                 </p>
@@ -150,28 +152,21 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
               {memories.map((memory) => (
                 <div
                   key={memory.id}
-                  className="group rounded border border-zinc-800 bg-zinc-950/60 p-2"
+                  className="group rounded-md border border-hairline bg-canvas p-3 elevate"
                 >
-                  <div className="mb-1 flex items-center gap-2 text-[10px]">
-                    <span
-                      className={`rounded px-1.5 py-0.5 ${
-                        memory.scope === "session"
-                          ? "bg-violet-950 text-violet-300"
-                          : "bg-emerald-950 text-emerald-300"
-                      }`}
-                    >
-                      {SCOPE_LABEL[memory.scope] ?? memory.scope}
-                    </span>
-                    <span className="font-mono text-zinc-200">{memory.key}</span>
-                    <span className="text-zinc-600">{memory.updatedAt.slice(0, 19)}</span>
+                  <div className="mb-1.5 flex items-center gap-2 text-caption">
+                    {/* 범위는 색이 아니라 라벨이 말한다 — 둘 다 중립 태그다. */}
+                    <Tag>{SCOPE_LABEL[memory.scope] ?? memory.scope}</Tag>
+                    <span className="font-mono text-ink">{memory.key}</span>
+                    <span className="text-ink-subtle">{memory.updatedAt.slice(0, 19)}</span>
                     <button
-                      className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-950 hover:text-red-300"
+                      className="ml-auto rounded-sm px-2 py-0.5 text-ink-muted opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-hover hover:text-error"
                       onClick={() => void remove(memory)}
                     >
                       삭제
                     </button>
                   </div>
-                  <p className="whitespace-pre-wrap break-words text-[11px] text-zinc-300">
+                  <p className="whitespace-pre-wrap break-words text-caption text-ink-muted">
                     {memory.value}
                   </p>
                 </div>

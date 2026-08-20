@@ -1,7 +1,268 @@
 @import "tailwindcss";
 
+/*
+ * 서체 — Pretendard(본문·제목) + JetBrains Mono(코드).
+ * 데스크톱 앱이라 네트워크 없이 떠야 하므로 번들에 싣는다.
+ *
+ * Pretendard 는 한글과 라틴을 한 패밀리가 함께 갖고 있어 섞인 줄에서 골격이 기울지
+ * 않는다. 가변 폰트 한 벌(2MB)로 45~920 웨이트를 다 쓰므로, 웨이트마다 파일을 받던
+ * 예전 방식보다 오히려 가볍다 — 그래서 `font-weight` 를 자유롭게 써도 된다.
+ */
+@import "pretendard/dist/web/variable/pretendardvariable.css";
+
+/*
+ * JetBrains Mono 는 라틴 자족만 싣는다 — 패키지의 `wght.css` 를 그대로 가져오면
+ * 쓰지도 않는 그리스·키릴 자족까지 번들에 딸려 온다. 코드 블록의 한글은 Pretendard 가
+ * 받으므로(`--font-mono` 스택의 다음 자리) 라틴만 있으면 충분하다.
+ */
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────
+ * 디자인 토큰
+ *
+ * 여기 있는 `--color-*` 는 **의미 토큰**이다. 값은 아래 `:root[data-theme="dark"]`
+ * 에서 테마별로 갈아 끼우고, 컴포넌트는 언제나 의미 이름만 부른다
+ * (`bg-canvas`, `text-ink-muted`, `border-hairline` …).
+ * 컴포넌트에 zinc-800 같은 팔레트 색을 직접 쓰면 테마 전환에서 깨진다.
+ *
+ * 성격 셋:
+ *   1. **둥글다.** 모서리는 6~12px. 작은 것일수록 덜, 큰 것일수록 더 둥글다.
+ *   2. **떠 있다.** 층은 면 변화 + 아주 옅은 그림자로 낸다(진한 그림자는 쓰지 않는다).
+ *   3. **청록 하나.** 크로마틱 액센트는 teal 계열 하나뿐이고, 중성색도 거기에 맞춰
+ *      아주 살짝 청기를 띤다. 나머지는 시맨틱(성공·경고·실패)뿐이다.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
 @theme {
-  --font-mono: "JetBrains Mono", "D2Coding", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans:
+    "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", system-ui,
+    sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", "JetBrains Mono", "Pretendard Variable", D2Coding, ui-monospace,
+    SFMono-Regular, Menlo, monospace;
+
+  /* ── 타이포그래피 ──
+   * 큰 글자는 자간을 좁히고(-0.02em) 본문은 행간을 넉넉히(1.6+) 준다.
+   * 이 둘이 "딱딱하지 않은" 인상의 대부분을 만든다. 웨이트는 400/500/600 만 쓴다 —
+   * 700 이상은 화면을 다시 굳게 만든다. */
+  --text-display-xl: 44px;
+  --text-display-xl--line-height: 1.2;
+  --text-display-xl--letter-spacing: -0.022em;
+  --text-display-xl--font-weight: 600;
+
+  --text-display-lg: 36px;
+  --text-display-lg--line-height: 1.22;
+  --text-display-lg--letter-spacing: -0.022em;
+  --text-display-lg--font-weight: 600;
+
+  --text-display-md: 28px;
+  --text-display-md--line-height: 1.3;
+  --text-display-md--letter-spacing: -0.02em;
+  --text-display-md--font-weight: 600;
+
+  --text-headline: 22px;
+  --text-headline--line-height: 1.36;
+  --text-headline--letter-spacing: -0.015em;
+  --text-headline--font-weight: 600;
+
+  --text-card-title: 18px;
+  --text-card-title--line-height: 1.44;
+  --text-card-title--letter-spacing: -0.01em;
+  --text-card-title--font-weight: 600;
+
+  --text-subhead: 16px;
+  --text-subhead--line-height: 1.5;
+  --text-subhead--letter-spacing: -0.01em;
+  --text-subhead--font-weight: 600;
+
+  --text-body-lg: 15px;
+  --text-body-lg--line-height: 1.65;
+  --text-body-lg--letter-spacing: -0.003em;
+  --text-body-lg--font-weight: 400;
+
+  --text-body: 14px;
+  --text-body--line-height: 1.65;
+  --text-body--letter-spacing: -0.003em;
+  --text-body--font-weight: 400;
+
+  --text-body-sm: 13px;
+  --text-body-sm--line-height: 1.6;
+  --text-body-sm--letter-spacing: 0em;
+  --text-body-sm--font-weight: 400;
+
+  --text-body-emphasis: 13px;
+  --text-body-emphasis--line-height: 1.6;
+  --text-body-emphasis--letter-spacing: 0em;
+  --text-body-emphasis--font-weight: 600;
+
+  /* 메타·노드 카드가 전부 여기로 내려온다. 촘촘한 카드에서는 `leading-snug` 로 조인다. */
+  --text-caption: 12px;
+  --text-caption--line-height: 1.5;
+  --text-caption--letter-spacing: 0.004em;
+  --text-caption--font-weight: 400;
+
+  --text-button: 13px;
+  --text-button--line-height: 1.4;
+  --text-button--letter-spacing: 0em;
+  --text-button--font-weight: 500;
+
+  --text-eyebrow: 12px;
+  --text-eyebrow--line-height: 1.4;
+  --text-eyebrow--letter-spacing: 0.04em;
+  --text-eyebrow--font-weight: 600;
+
+  /* ── 모서리 ──
+   * 작은 것은 덜, 큰 것은 더 둥글게. 같은 화면에서 반지름이 뒤섞이면 지저분해지므로
+   * 역할별로 하나씩만 고른다: 칩 xs · 버튼/입력 sm · 패널/카드 md · 모달/노드 lg. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* ── 색: 라이트 기본값 ──
+   * 다크는 아래에서 같은 이름을 통째로 덮어쓴다. */
+  --color-canvas: #fcfdfd;
+  --color-surface-1: #f1f5f4;
+  --color-surface-2: #e3ebe9;
+  --color-surface-3: #c9d6d3;
+
+  --color-ink: #16211f;
+  --color-ink-muted: #566461;
+  --color-ink-subtle: #778784;
+  --color-ink-disabled: #b8c6c3;
+
+  --color-hairline: #e2eae8;
+  --color-hairline-strong: #16211f;
+  /* 입력 테두리. 이제 밑줄이 아니라 사방을 두르므로 헤어라인보다 한 단계만 진하다. */
+  --color-field-rule: #d4dfdc;
+
+  --color-field: #ffffff;
+  --color-hover: #e8efed;
+  --color-selected: #dcebe8;
+
+  /* 버튼 채움. 흰 글자와의 대비를 확보하려고 액센트보다 한 단계 짙다. */
+  --color-primary: #0f766e;
+  --color-primary-hover: #115e59;
+  --color-primary-active: #134e4a;
+  --color-on-primary: #ffffff;
+
+  /* 링크 · 활성 표시 · 선택 테두리. 이 시스템의 유일한 크로마틱 액센트다. */
+  --color-accent: #0f766e;
+  --color-accent-hover: #115e59;
+  --color-focus: #0d9488;
+
+  --color-success: #0e7c58;
+  --color-warning: #a16207;
+  --color-error: #e11d48;
+  --color-error-hover: #be123c;
+
+  /* 알림·태그가 깔고 앉는 옅은 면 (투명도 수식을 쓰지 않는 이유는 docs/design.md). */
+  --color-accent-subtle: #e2f2ef;
+  --color-success-subtle: #e4f6ee;
+  --color-warning-subtle: #fbf1de;
+  --color-error-subtle: #fceaee;
+
+  --color-inverse-canvas: #16211f;
+  --color-inverse-surface: #223330;
+  --color-inverse-ink: #f1f5f4;
+  --color-inverse-ink-muted: #a9bab7;
+
+  --color-overlay: rgba(12, 22, 21, 0.45);
+}
+
+/*
+ * 다크 테마.
+ * `@theme` 가 뿌린 `:root` 보다 특정도가 높고(`:root[…]` = 0,2,0) 레이어 밖이라 확실히 이긴다.
+ * **모든** 의미 토큰을 빠짐없이 다시 정의한다 — 하나라도 빠지면 라이트 값이 그대로
+ * 새어 나와 그 자리만 대비가 무너진다.
+ */
+:root[data-theme="dark"] {
+  --color-canvas: #12181a;
+  --color-surface-1: #1b2426;
+  --color-surface-2: #263133;
+  --color-surface-3: #3a4749;
+
+  --color-ink: #e6edeb;
+  --color-ink-muted: #a3b3b0;
+  --color-ink-subtle: #748582;
+  --color-ink-disabled: #4a5859;
+
+  --color-hairline: #263133;
+  --color-hairline-strong: #e6edeb;
+  --color-field-rule: #33403f;
+
+  --color-field: #1b2426;
+  --color-hover: #222d2f;
+  --color-selected: #2a3739;
+
+  /*
+   * 어두운 바탕에서는 짙은 teal 에 흰 글자를 얹으면 대비가 안 나온다 →
+   * 밝은 teal 에 **어두운 글자**를 얹는 쪽으로 뒤집는다. `on-primary` 가 테마마다
+   * 다른 건 그래서다.
+   */
+  --color-primary: #2dd4bf;
+  --color-primary-hover: #5eead4;
+  --color-primary-active: #14b8a6;
+  --color-on-primary: #0b1f1d;
+
+  --color-accent: #2dd4bf;
+  --color-accent-hover: #5eead4;
+  --color-focus: #2dd4bf;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #fb7185;
+  --color-error-hover: #fda4af;
+
+  --color-accent-subtle: #13312e;
+  --color-success-subtle: #0f2e26;
+  --color-warning-subtle: #33280f;
+  --color-error-subtle: #361a21;
+
+  --color-inverse-canvas: #e6edeb;
+  --color-inverse-surface: #cbd8d5;
+  --color-inverse-ink: #12181a;
+  --color-inverse-ink-muted: #566461;
+
+  --color-overlay: rgba(4, 9, 9, 0.6);
+}
+
+/*
+ * ── 그림자 ──
+ * 아주 옅게. 색을 검정이 아니라 잉크의 청록 기운으로 써야 화면과 겉돌지 않는다.
+ *
+ * `@theme` 에 두지 않는 이유 — 거기 넣으면 Tailwind 가 `shadow-soft` 유틸리티를
+ * 만들면서 **값을 그대로 인라인**한다. 그러면 다크에서 변수를 덮어써도 유틸리티는
+ * 옛 값을 그대로 들고 있어 층이 안 보인다. `@utility` 로 직접 선언해 `var()` 를
+ * 런타임에 읽게 한다.
+ */
+:root {
+  --shadow-soft: 0 1px 2px rgba(16, 33, 31, 0.04), 0 2px 8px rgba(16, 33, 31, 0.05);
+  --shadow-lifted: 0 2px 8px rgba(16, 33, 31, 0.06), 0 16px 40px rgba(16, 33, 31, 0.12);
+}
+
+/* 어두운 바탕에서는 더 깊게 줘야 층이 보인다. */
+:root[data-theme="dark"] {
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.28);
+  --shadow-lifted: 0 2px 8px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+@utility elevate {
+  box-shadow: var(--shadow-soft);
+}
+
+@utility elevate-lg {
+  box-shadow: var(--shadow-lifted);
 }
 
 html,
@@ -12,14 +273,72 @@ body,
 
 body {
   margin: 0;
-  background-color: var(--color-zinc-950);
-  color: var(--color-zinc-100);
-  font-family: ui-sans-serif, system-ui, "Pretendard", "Malgun Gothic", sans-serif;
   overflow: hidden;
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* 도구 창이라 기본은 13px. 행간을 넉넉히 줘서 빽빽해 보이지 않게 한다. */
+  font-size: 13px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/*
+ * 포커스 링은 바깥으로 2px 띄운다 — 둥근 모서리를 따라 흐르면서 안쪽을 파고들지 않는다.
+ */
+:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 /* 얇은 스크롤바 — 패널이 많아 기본 스크롤바는 시각적으로 무겁다 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-zinc-700) transparent;
+  scrollbar-color: var(--color-surface-3) transparent;
+}
+
+::selection {
+  background-color: var(--color-selected);
+}
+
+/*
+ * React Flow 는 자체 CSS 변수로 그린다. 여기서 한 번 토큰에 묶어 두면
+ * 컨트롤·핸들·엣지가 테마 전환을 그대로 따라온다.
+ */
+.react-flow {
+  --xy-background-color: var(--color-canvas);
+  --xy-edge-stroke: var(--color-surface-3);
+  --xy-edge-stroke-selected: var(--color-accent);
+  --xy-handle-background-color: var(--color-ink-subtle);
+  --xy-handle-border-color: var(--color-canvas);
+  --xy-controls-button-background-color: var(--color-canvas);
+  --xy-controls-button-background-color-hover: var(--color-hover);
+  --xy-controls-button-color: var(--color-ink);
+  --xy-controls-button-color-hover: var(--color-ink);
+  --xy-controls-button-border-color: var(--color-hairline);
+  --xy-attribution-background-color: transparent;
+}
+
+/*
+ * 컨트롤과 핸들도 같은 둥근 언어로. `.react-flow` 를 앞에 붙여 특정도를 올린다 —
+ * React Flow 스타일시트가 언제 로드되든 이기게 하기 위해서다.
+ */
+.react-flow .react-flow__controls {
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+}
+
+.react-flow .react-flow__controls-button {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.react-flow .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  border: 0;
+  border-radius: 9999px;
+  background-color: var(--color-ink-subtle);
 }

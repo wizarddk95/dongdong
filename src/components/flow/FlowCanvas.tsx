@@ -13,6 +13,7 @@ import "@xyflow/react/dist/style.css";
 import { AgentNode, AGENT_HEIGHT, AGENT_WIDTH } from "@/components/flow/AgentNode";
 import { TurnNode, TURN_HEIGHT, TURN_WIDTH } from "@/components/flow/TurnNode";
 import { Button } from "@/components/Panel";
+import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import { isRunActive } from "@/lib/agentRuns";
 import { tidyLayout } from "@/lib/layout";
 import { pathTo } from "@/lib/tree";
@@ -51,6 +52,8 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
   const removeRunsForMessages = useAgents((state) => state.removeForMessages);
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // React Flow 는 자체 클래스로 명암을 잡으므로 해석된 테마를 직접 알려 줘야 한다.
+  const theme = useResolvedTheme();
 
   const { nodes, edges, index, orphanCount } = useMemo(() => {
     const index = buildTurns(messages);
@@ -123,10 +126,11 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
           target: turn.id,
           animated: turn.status === "streaming",
           label: midway ? "중간 스텝에서 분기" : undefined,
-          labelStyle: { fill: "#c4b5fd", fontSize: 9 },
-          labelBgStyle: { fill: "#18181b" },
+          // 색값을 박아 두면 테마를 바꿔도 선만 옛 색으로 남는다 → 토큰 변수를 그대로 넘긴다.
+          labelStyle: { fill: "var(--color-ink-muted)", fontSize: 11 },
+          labelBgStyle: { fill: "var(--color-canvas)" },
           style: {
-            stroke: onActivePath ? "#34d399" : "#3f3f46",
+            stroke: onActivePath ? "var(--color-accent)" : "var(--color-surface-3)",
             strokeWidth: onActivePath ? 2 : 1,
             strokeDasharray: midway ? "4 3" : undefined,
           },
@@ -157,7 +161,8 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
           target: nodeId,
           targetHandle: direction === 1 ? "top" : "bottom",
           animated: isRunActive(run),
-          style: { stroke: "#a21caf", strokeWidth: 1.5, strokeDasharray: "5 4" },
+          // 서브에이전트 연결은 색이 아니라 점선으로 구분한다.
+          style: { stroke: "var(--color-ink-subtle)", strokeWidth: 1.5, strokeDasharray: "5 4" },
         });
       });
     }
@@ -210,15 +215,17 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2">
-        <span className="text-[11px] text-zinc-500">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline px-3 py-2">
+        <span className="text-caption text-ink-muted">
           {index.turns.length}개 턴 · {messages.length}노드
           {orphanCount > 0 && ` · 연결 끊긴 위임 ${orphanCount}건`}
         </span>
 
         {selectedRun ? (
           <div className="ml-auto flex items-center gap-1">
-            <span className="text-[11px] text-fuchsia-300">🤝 {selectedRun.name}</span>
+            <span className="truncate text-caption text-ink-muted">
+              서브에이전트 <span className="text-ink">{selectedRun.name}</span>
+            </span>
             <Button onClick={() => onFocusAgents?.()} disabled={!onFocusAgents}>
               서브에이전트 탭에서 보기
             </Button>
@@ -253,7 +260,7 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
 
       <div className="min-h-0 flex-1">
         {messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-xs text-zinc-600">
+          <div className="flex h-full items-center justify-center text-body-sm text-ink-muted">
             메시지를 보내면 대화 턴이 여기에 그려집니다.
           </div>
         ) : (
@@ -271,9 +278,14 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
             minZoom={0.15}
             maxZoom={1.5}
             proOptions={{ hideAttribution: true }}
-            colorMode="dark"
+            colorMode={theme}
           >
-            <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#3f3f46" />
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={18}
+              size={1}
+              color="var(--color-surface-2)"
+            />
             <Controls showInteractive={false} />
           </ReactFlow>
         )}

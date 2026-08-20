@@ -22,12 +22,16 @@ import {
   type Usage,
 } from "@/lib/ai/usage";
 
-/** 컨텍스트가 얼마나 찼는지에 따라 바 색이 바뀐다. */
-const LEVEL_STYLE: Record<ContextLevel, { bar: string; text: string }> = {
-  ok: { bar: "bg-emerald-500", text: "text-emerald-300" },
-  warn: { bar: "bg-amber-500", text: "text-amber-300" },
-  danger: { bar: "bg-red-500", text: "text-red-300" },
-  unknown: { bar: "bg-zinc-600", text: "text-zinc-400" },
+/**
+ * 컨텍스트가 얼마나 찼는지에 따라 바 색이 바뀐다.
+ * 여유 구간은 액센트(청록) — 경고·위험만 시맨틱 색을 꺼내 쓴다.
+ * 색을 못 읽어도 알 수 있도록 `label` 을 툴팁·수치 옆에 함께 내보낸다.
+ */
+const LEVEL_STYLE: Record<ContextLevel, { bar: string; text: string; label: string }> = {
+  ok: { bar: "bg-accent", text: "text-accent", label: "여유" },
+  warn: { bar: "bg-warning", text: "text-ink", label: "주의" },
+  danger: { bar: "bg-error", text: "text-error", label: "위험" },
+  unknown: { bar: "bg-surface-3", text: "text-ink-muted", label: "미상" },
 };
 
 function percent(ratio: number): string {
@@ -66,6 +70,7 @@ interface ContextGaugeProps {
  *
  * 막대는 두 겹이다 — 옅은 칸이 캐시에서 읽히는 몫, 진한 칸이 새로 청구되는 몫.
  * 창 크기를 모르는 모델(로컬 등)은 비율을 그릴 수 없어 수치만 보여준다.
+ * 막대는 얇고 양 끝이 둥글다.
  */
 export function ContextGauge({
   status,
@@ -82,45 +87,46 @@ export function ContextGauge({
   return (
     <div className={`flex min-w-0 flex-col gap-1 ${className}`} title={tooltip}>
       {variant === "full" && (
-        <div className="flex items-baseline gap-1.5 text-[10px]">
-          <span className="text-zinc-500">컨텍스트</span>
-          <span className={`font-medium ${style.text}`}>
-            {status.window ? percent(ratio) : "창 크기 미상"}
+        <div className="flex items-baseline gap-1.5 text-caption">
+          <span className="text-ink-muted">컨텍스트</span>
+          <span className={style.text}>
+            {status.window ? `${percent(ratio)} · ${style.label}` : "창 크기 미상"}
           </span>
-          <span className="text-zinc-500">
+          <span className="text-ink-muted">
             {formatExact(status.used)}
             {status.window ? ` / ${formatExact(status.window)}` : " 사용"}
           </span>
           {status.remaining !== null && (
-            <span className="ml-auto text-zinc-500">남음 {formatExact(status.remaining)}</span>
+            <span className="ml-auto text-ink-muted">남음 {formatExact(status.remaining)}</span>
           )}
         </div>
       )}
 
-      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
         {status.window ? (
           <>
             <div
-              className={`absolute inset-y-0 left-0 ${style.bar}`}
+              className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-300 ${style.bar}`}
               style={{ width: `${ratio * 100}%` }}
             />
             {/* 캐시에서 읽히는 몫은 같은 자리에 흐리게 덧칠해 "싼 부분"을 구분한다. */}
             <div
-              className={`absolute inset-y-0 left-0 ${style.bar} opacity-40`}
+              className={`absolute inset-y-0 left-0 rounded-full ${style.bar} opacity-40`}
               style={{ width: `${cachedRatio * 100}%` }}
             />
             {/* 경고선 — 눈금이 있어야 "얼마나 남았나"가 감으로 읽힌다. */}
             <span
-              className="absolute inset-y-0 w-px bg-zinc-950/70"
+              className="absolute inset-y-0 w-px bg-canvas"
               style={{ left: `${CONTEXT_WARN_RATIO * 100}%` }}
             />
             <span
-              className="absolute inset-y-0 w-px bg-zinc-950/70"
+              className="absolute inset-y-0 w-px bg-canvas"
               style={{ left: `${CONTEXT_DANGER_RATIO * 100}%` }}
             />
           </>
         ) : (
-          <div className="absolute inset-y-0 left-0 w-full bg-[repeating-linear-gradient(45deg,#3f3f46_0,#3f3f46_4px,transparent_4px,transparent_8px)]" />
+          // 창 크기를 모를 때의 사선 해치 — 비율이 없다는 걸 형태로 말한다.
+          <div className="absolute inset-y-0 left-0 w-full [background-image:repeating-linear-gradient(45deg,var(--color-surface-3)_0,var(--color-surface-3)_4px,transparent_4px,transparent_8px)]" />
         )}
       </div>
     </div>
@@ -148,11 +154,11 @@ export function UsageTag({
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap tabular-nums ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-caption tabular-nums ${className}`}
       title={usageTooltip(usage, cost, modelId)}
     >
-      {variant === "full" && <span className="text-zinc-500">{formatUsageLine(usage)}</span>}
-      <span className="text-zinc-400">{formatCost(cost, modelId)}</span>
+      {variant === "full" && <span className="text-ink-subtle">{formatUsageLine(usage)}</span>}
+      <span className="text-ink-muted">{formatCost(cost, modelId)}</span>
     </span>
   );
 }
@@ -175,28 +181,31 @@ export function UsageBreakdown({ usage, cost, modelId, calls }: UsageBreakdownPr
   ];
 
   return (
-    <div className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-1.5 text-[10px]">
-      <div className="mb-1 flex items-center gap-2 text-zinc-500">
+    <div className="rounded-md border border-hairline bg-surface-1 px-3 py-2.5 text-caption">
+      <div className="mb-1.5 flex items-center gap-2 text-ink-muted">
         <span>{modelId ?? "모델 미상"}</span>
         {calls !== undefined && <span>· LLM 호출 {calls}회</span>}
-        <span className="ml-auto text-zinc-300">{formatCost(cost, modelId)}</span>
+        <span className="ml-auto text-ink">{formatCost(cost, modelId)}</span>
       </div>
 
       <table className="w-full tabular-nums">
         <tbody>
           {rows.map((row) => (
-            <tr key={row.label} className={row.tokens === 0 ? "text-zinc-600" : "text-zinc-400"}>
-              <td className="py-0.5">{row.label}</td>
-              <td className="py-0.5 text-right">{formatExact(row.tokens)}</td>
-              <td className="w-16 py-0.5 text-right text-zinc-500">
+            <tr
+              key={row.label}
+              className={`border-t border-hairline ${row.tokens === 0 ? "text-ink-subtle" : "text-ink-muted"}`}
+            >
+              <td className="py-1">{row.label}</td>
+              <td className="py-1 text-right">{formatExact(row.tokens)}</td>
+              <td className="w-16 py-1 text-right">
                 {cost.unpriced || isLocalModel(modelId) ? "—" : formatUsd(row.cost)}
               </td>
             </tr>
           ))}
           {usage.reasoningTokens > 0 && (
-            <tr className="text-zinc-600">
-              <td className="py-0.5">└ 그중 사고</td>
-              <td className="py-0.5 text-right">{formatExact(usage.reasoningTokens)}</td>
+            <tr className="border-t border-hairline text-ink-subtle">
+              <td className="py-1">└ 그중 사고</td>
+              <td className="py-1 text-right">{formatExact(usage.reasoningTokens)}</td>
               <td />
             </tr>
           )}
@@ -204,10 +213,14 @@ export function UsageBreakdown({ usage, cost, modelId, calls }: UsageBreakdownPr
       </table>
 
       {cost.longContext && (
-        <p className="mt-1 text-amber-400">롱컨텍스트 구간 요율이 적용된 호출이 있습니다.</p>
+        <p className="mt-1.5 border-l-2 border-warning pl-2 text-ink">
+          롱컨텍스트 구간 요율이 적용된 호출이 있습니다.
+        </p>
       )}
       {cost.underestimated && (
-        <p className="mt-1 text-amber-400">요율을 모르는 항목이 있어 실제보다 적게 잡혔습니다.</p>
+        <p className="mt-1.5 border-l-2 border-warning pl-2 text-ink">
+          요율을 모르는 항목이 있어 실제보다 적게 잡혔습니다.
+        </p>
       )}
     </div>
   );

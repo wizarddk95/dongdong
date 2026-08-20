@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 227 / cargo 40. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 235 / cargo 40. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -32,6 +32,11 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - **중단 경로를 끊지 말 것**: 새 도구를 붙이면 `abortSignal` 을 반드시 존중한다. `runner.ts` 가 `abortableTools()` 로 한 번 감싸 주지만, 백그라운드에서 진짜 돌고 있는 작업(프로세스·자식 프로세스)은 도구가 스스로 정리해야 한다(`execute_shell_command` → `cancel_shell_command`).
 - **스트리밍 중 DB 쓰기 금지**. 토큰은 Zustand 에만 쌓고 **스텝 경계**(도구 호출 확정 / 턴 종료)에서만 저장한다.
 - **`MODEL_CATALOG`(`lib/ai/providers.ts`) 는 사용자 소유** — 임의로 고치지 않는다.
+- **색·활자는 토큰만 쓴다**: 컴포넌트에 `zinc-800` 같은 팔레트 값이나 `#hex` 를 직접 적지 않는다.
+  전부 `index.css` 의 의미 토큰(`bg-canvas` · `text-ink-muted` · `border-hairline` · `text-caption` …)
+  경유. 하드코딩하면 다크 테마에서 그 자리만 깨진다. 규율은 `docs/design.md`.
+- **모서리는 둥글게 · 그림자는 아주 옅게 · 크로마틱 액센트는 청록 하나** — 두 번째 브랜드 색을
+  만들지 않는다. 뜻이 더 필요하면 라벨·아이콘·자리·테두리 굵기로 가른다.
 - 주석과 UI 문구는 **한국어**. 주변 코드의 주석 밀도·네이밍을 따른다.
 
 ## 함정 (겪은 것들)
@@ -61,12 +66,22 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - API 키·MCP 서버 목록은 프로젝트 DB 가 아니라 **OS 앱 설정 디렉터리의 `settings.json`**.
 - Bash 툴에서 cargo 를 쓰려면 `export PATH="$USERPROFILE/.cargo/bin:$PATH"`.
 - `pnpm tauri dev` 실행 중에 Rust 를 고치면 exe 교체 실패(os error 5)로 워처가 죽는다 → 앱 프로세스를 종료하고 다시 띄운다. 종료 후 포트 1420 을 문 vite 프로세스가 남기도 한다.
+- **Tailwind v4 의 important 는 접미사**(`bg-x!`)다. v3 문법인 `!bg-x` 는 클래스를 아예 안 만든다 —
+  오타와 똑같이 **조용히 죽어서** 타입체크도 테스트도 못 잡는다. 색이 안 먹으면 빌드된 CSS 에
+  그 클래스가 있는지부터 본다(`grep -o 'bg-hairline[^{]*{[^}]*}' dist/assets/index-*.css`).
+- **투명도 수식(`bg-error/10`)은 테마를 안 따라간다**. Tailwind 가 `color-mix()` 로 뽑으면서
+  **라이트 값이 박힌 정적 폴백**을 같이 깔기 때문이다 → 옅은 면은 `--color-*-subtle` 토큰으로 만든다.
+- **그림자를 `@theme` 에 넣으면 테마를 안 따라간다**. Tailwind 가 `shadow-*` 유틸리티를 만들면서
+  값을 그대로 인라인하기 때문이다 → 평범한 `:root` 변수로 두고 `@utility`(`elevate`)로 선언한다.
+- 폰트는 필요한 자족만 골라 `index.css` 가 `@font-face` 를 직접 적기도 한다. 패키지의 CSS 를
+  통째로 `@import` 하면 쓰지도 않는 자족·폴백까지 실행 파일에 딸려 온다.
 - `tsconfig.node.json` 은 composite 라 `noEmit` 대신 `emitDeclarationOnly`.
 
 ## 구조
 
 ```
 src/
+  index.css             디자인 토큰 (색·활자·모서리·그림자) — 라이트/다크 두 벌. 화면의 유일한 색 출처
   types/ipc.ts          Rust ↔ TS 타입 (serde camelCase 와 1:1)
   lib/ipc.ts            invoke 얇은 래퍼 — 유일한 IPC 통로
   lib/tree.ts           parent_id → 트리 복원, pathTo(), siblingsOf()
@@ -75,6 +90,8 @@ src/
   lib/layout.ts         왼→오른쪽 tidy tree 좌표 (턴 그래프·세션 맵 공용)
   lib/agentRuns.ts      서브에이전트 상태 색·경과 시간 (트리 노드와 대시보드 공용)
   lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음)
+  lib/theme.ts          테마 결정(순수) + <html data-theme> 적용. 색값은 안 갖는다
+  lib/useResolvedTheme.ts  지금 적용된 테마를 React 로 (React Flow 처럼 JS 로 명암을 넘겨야 하는 곳만)
   lib/ai/abort.ts       도구 실행에 중단 붙이기 (ToolSet 래퍼)
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입 + 로컬 서버(OpenAI 호환) 탐색
   lib/ai/usage.ts       토큰 사용량 정규화 + 요금 추정 + 컨텍스트 잔량 (순수 파생)
@@ -87,6 +104,7 @@ src/
   components/           chat · flow(턴 그래프) · sessions(세션 맵) · agents · mcp · inspect
                         ErrorBoundary.tsx — 렌더 예외로 창이 새까매지는 것을 막는다
                         UsageMeter.tsx — 토큰·요금·컨텍스트 게이지 (채팅/턴/세션 공용)
+                        Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·입력 크롬). 새 UI 는 여기서 가져다 쓴다
 src-tauri/src/
   lib.rs                command 등록 지점
   state.rs              프로젝트별 SQLite 커넥션 (with_conn)
@@ -116,4 +134,4 @@ src-tauri/src/
 - **서브에이전트**: `delegate_task` → 컨텍스트가 격리된 별도 실행, 요약만 상위로. `parent_message_id` 가 가리키는 노드의 턴에서 위/아래로 분기해 그려진다(대시보드 탭과 병행). `onDelegate` 없이 ToolSet 을 만들면 도구가 노출되지 않아 재위임이 구조적으로 불가능하다. 상태는 `agent_runs`.
 - **MCP**: 외부 서버를 stdio 자식 프로세스로 띄워 도구를 `mcp__서버__도구` 이름으로 합친다. 파이프 읽기는 블로킹이라 요청마다 감시 스레드로 타임아웃을 건다.
 
-설계 배경과 상세는 `README.md`. 로컬 오픈소스 모델 운용은 `docs/local-llm.md`.
+설계 배경과 상세는 `README.md`. 로컬 오픈소스 모델 운용은 `docs/local-llm.md`. 디자인 규율은 `docs/design.md`.
