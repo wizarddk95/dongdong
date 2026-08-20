@@ -8,11 +8,14 @@ import {
   DEFAULT_LOCAL_BASE_URL,
   DEFAULT_MODEL_ID,
   LOCAL_MODEL_PRESETS,
+  LONG_CONTEXT_THRESHOLD_TOKENS,
   MODEL_CATALOG,
   MissingApiKeyError,
+  REGIONAL_PROCESSING_MULTIPLIER,
   buildModelOptions,
   canonicalModelId,
   defaultEffortFor,
+  effectivePricing,
   fetchLocalModels,
   findModelOption,
   hasCredentialFor,
@@ -20,6 +23,7 @@ import {
   parseModelId,
   providerOptionsFor,
   resolveModel,
+  supportedEffortsFor,
 } from "@/lib/ai/providers";
 import { toModelMessages } from "@/lib/ai/runner";
 import type { Message } from "@/types/ipc";
@@ -351,5 +355,191 @@ describe("Anthropic 모델 메타데이터", () => {
     for (const option of anthropic) {
       expect(option.supportsAdaptiveThinking && option.supportsExtendedThinking).toBe(false);
     }
+  });
+});
+
+describe("OpenAI 모델 메타데이터", () => {
+  const openai = MODEL_CATALOG.filter((option) => option.provider === "openai");
+
+  it("OpenAI 항목은 가격·컨텍스트 정보를 모두 갖는다", () => {
+    expect(openai).toHaveLength(13);
+    for (const option of openai) {
+      expect(option.inputPrice).toBeGreaterThan(0);
+      expect(option.outputPrice).toBeGreaterThan(0);
+      expect(option.contextWindow).toBeGreaterThan(0);
+      expect(option.maxOutput).toBe(128_000);
+      expect(option.trainingCutoff).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(option.batchDiscount).toBe(0.5);
+    }
+  });
+
+  it("캐시 읽기는 세대와 무관하게 입력가의 10%", () => {
+    for (const option of openai) {
+      if (!option.supportsPromptCaching) {
+        // 캐싱이 없는 Pro 계열은 "0 원" 이 아니라 "과금 항목 없음" 이다.
+        expect(option.cacheRead).toBeNull();
+        continue;
+      }
+      expect(option.cacheRead).toBeCloseTo(option.inputPrice! * 0.1, 10);
+    }
+  });
+
+  it("캐시 쓰기 과금은 GPT-5.6 세대에만 있고(= 입력가 × 1.25) 그 이전은 null", () => {
+    for (const option of openai) {
+      if (option.modelId.startsWith("gpt-5.6")) {
+        expect(option.cacheWrite).toBeCloseTo(option.inputPrice! * 1.25, 10);
+      } else {
+        // undefined("모른다") 가 아니라 null("무료") 이어야 구분이 산다.
+        expect(option.cacheWrite).toBeNull();
+      }
+    }
+  });
+
+  it("롱컨텍스트 요율은 입력 2배 · 출력 1.5배 규칙을 지킨다", () => {
+    const withLongContext = openai.filter((option) => option.longContextPricing);
+    expect(withLongContext.map((option) => option.modelId)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.5-pro",
+      "gpt-5.4",
+      "gpt-5.4-pro",
+    ]);
+    for (const option of withLongContext) {
+      const long = option.longContextPricing!;
+      expect(option.longContextThresholdTokens).toBe(LONG_CONTEXT_THRESHOLD_TOKENS);
+      expect(long.inputPrice).toBeCloseTo(option.inputPrice! * 2, 10);
+      expect(long.outputPrice).toBeCloseTo(option.outputPrice! * 1.5, 10);
+      if (long.cacheRead !== null) expect(long.cacheRead).toBeCloseTo(long.inputPrice * 0.1, 10);
+    }
+  });
+
+  it("Cyber 는 문턱만 알고 요율은 공개돼 있지 않다", () => {
+    const cyber = findModelOption("openai:gpt-5.6-cyber")!;
+    expect(cyber.longContextThresholdTokens).toBe(LONG_CONTEXT_THRESHOLD_TOKENS);
+    expect(cyber.longContextPricing).toBeNull();
+  });
+
+  it("Responses API 전용 모델을 플래그로 구분한다", () => {
+    const only = openai.filter((option) => option.responsesApiOnly).map((option) => option.modelId);
+    expect(only).toEqual(["gpt-5.5-pro", "gpt-5.4-pro", "gpt-5.3-codex"]);
+  });
+
+  it("추론 강도 지원값은 세대마다 다르다", () => {
+    expect(supportedEffortsFor("openai:gpt-5.6-terra")).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(supportedEffortsFor("openai:gpt-5.4")).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(supportedEffortsFor("openai:gpt-5.3-codex")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(supportedEffortsFor("openai:gpt-5")).toEqual(["minimal", "low", "medium", "high"]);
+    // Anthropic 항목에는 목록이 없다 — 호출부가 제한하지 않는다.
+    expect(supportedEffortsFor("anthropic:claude-opus-5")).toBeUndefined();
+  });
+
+  it("gpt-5.6 은 sol 의 별칭이고 항목을 따로 만들지 않는다", () => {
+    expect(canonicalModelId("openai:gpt-5.6")).toBe("openai:gpt-5.6-sol");
+    expect(findModelOption("openai:gpt-5.6")?.label).toBe("GPT-5.6 Sol");
+    expect(openai.filter((option) => option.modelId === "gpt-5.6")).toHaveLength(0);
+  });
+
+  it("움직이는 별칭(daybreak-*)은 가격을 들고 있는 항목으로도 별칭으로도 넣지 않는다", () => {
+    // 대상 모델이 바뀌면 가격이 통째로 달라진다 — 고정하면 조용히 틀린 값을 쓴다.
+    for (const id of ["openai:daybreak-blue-latest", "openai:daybreak-red-latest"]) {
+      expect(findModelOption(id)).toBeUndefined();
+      expect(canonicalModelId(id)).toBe(id);
+    }
+  });
+});
+
+describe("effectivePricing", () => {
+  it("문턱 이하면 기본 요율", () => {
+    const pricing = effectivePricing("openai:gpt-5.6-sol", { inputTokens: 272_000 })!;
+    expect(pricing.longContext).toBe(false);
+    expect(pricing.inputPrice).toBe(5);
+    expect(pricing.outputPrice).toBe(30);
+    expect(pricing.cacheWrite).toBe(6.25);
+    expect(pricing.multiplier).toBe(1);
+  });
+
+  it("문턱을 1 토큰만 넘어도 요청 전체가 롱컨텍스트 요율", () => {
+    const pricing = effectivePricing("openai:gpt-5.6-sol", { inputTokens: 272_001 })!;
+    expect(pricing.longContext).toBe(true);
+    expect(pricing.inputPrice).toBe(10);
+    expect(pricing.cacheRead).toBe(1);
+    expect(pricing.cacheWrite).toBe(12.5);
+    expect(pricing.outputPrice).toBe(45);
+  });
+
+  it("롱컨텍스트 요율이 공개되지 않은 모델은 그 사실을 알린다", () => {
+    const pricing = effectivePricing("openai:gpt-5.6-cyber", { inputTokens: 300_000 })!;
+    expect(pricing.longContext).toBe(true);
+    expect(pricing.longContextRateUnknown).toBe(true);
+    // 기본 요율을 그대로 돌려주므로 호출부는 과소 추정임을 알아야 한다.
+    expect(pricing.inputPrice).toBe(12.5);
+  });
+
+  it("문턱이 없는 모델은 입력이 아무리 커도 구간이 바뀌지 않는다", () => {
+    const pricing = effectivePricing("openai:gpt-5.1", { inputTokens: 399_000 })!;
+    expect(pricing.longContext).toBe(false);
+    expect(pricing.longContextRateUnknown).toBe(false);
+  });
+
+  it("서비스 티어는 가격표가 아니라 배수로 적용된다", () => {
+    expect(effectivePricing("openai:gpt-5.6-terra", { serviceTier: "batch" })?.inputPrice).toBe(1);
+    expect(effectivePricing("openai:gpt-5.6-terra", { serviceTier: "flex" })?.outputPrice).toBe(6);
+    // fast 는 2026-07-30 에 priority 에서 개명된 같은 티어다.
+    expect(effectivePricing("openai:gpt-5.6-terra", { serviceTier: "fast" })?.inputPrice).toBe(4);
+    expect(effectivePricing("openai:gpt-5.6-terra", { serviceTier: "priority" })?.inputPrice).toBe(
+      4,
+    );
+  });
+
+  it("티어 배수와 롱컨텍스트 요율은 함께 걸린다", () => {
+    const pricing = effectivePricing("openai:gpt-5.6-terra", {
+      inputTokens: 500_000,
+      serviceTier: "batch",
+    })!;
+    expect(pricing.inputPrice).toBe(2);
+    expect(pricing.outputPrice).toBe(9);
+    expect(pricing.multiplier).toBe(0.5);
+  });
+
+  it("지역 처리 엔드포인트는 10% 가산", () => {
+    const pricing = effectivePricing("openai:gpt-5.6-terra", { regional: true })!;
+    expect(pricing.multiplier).toBeCloseTo(REGIONAL_PROCESSING_MULTIPLIER, 10);
+    expect(pricing.inputPrice).toBeCloseTo(2.2, 10);
+  });
+
+  it("과금 항목이 없는 자리(null)는 배수를 곱해도 null 로 남는다", () => {
+    const pricing = effectivePricing("openai:gpt-5.4", { serviceTier: "batch" })!;
+    expect(pricing.cacheWrite).toBeNull();
+    expect(pricing.cacheRead).toBeCloseTo(0.125, 10);
+  });
+
+  it("Anthropic 항목도 같은 함수로 조회된다", () => {
+    const pricing = effectivePricing("anthropic:claude-opus-5", { serviceTier: "batch" })!;
+    expect(pricing.inputPrice).toBe(2.5);
+    expect(pricing.longContext).toBe(false);
+  });
+
+  it("카탈로그에 없는 모델은 undefined", () => {
+    expect(effectivePricing("openai:gpt-9")).toBeUndefined();
   });
 });

@@ -15,6 +15,17 @@ import type { LanguageModel } from "ai";
 
 export type ProviderId = "anthropic" | "openai" | "local";
 
+/**
+ * 롱컨텍스트 구간 요율 (USD / 1M tokens).
+ * `cacheRead` / `cacheWrite` 가 `null` 이면 그 세대는 해당 과금 자체가 없다는 뜻이다.
+ */
+export interface LongContextPricing {
+  inputPrice: number;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+  outputPrice: number;
+}
+
 export interface ModelOption {
   /** `provider:modelId` — 스토어와 DB 에 저장되는 식별자 */
   id: string;
@@ -33,13 +44,13 @@ export interface ModelOption {
   cacheWrite5m?: number;
   /** 프롬프트 캐시 1시간 쓰기 단가 (= 입력가 × 2) */
   cacheWrite1h?: number;
-  /** 프롬프트 캐시 읽기 단가 (= 입력가 × 0.1) */
-  cacheRead?: number;
+  /** 프롬프트 캐시 읽기 단가 (= 입력가 × 0.1). `null` 은 이 모델에 캐시 읽기 과금이 없다는 뜻 */
+  cacheRead?: number | null;
   /** 컨텍스트 창(토큰). 1M 모델도 전 구간 동일 단가라 구간별 가격은 없다 */
   contextWindow?: number;
   /** 한 응답의 최대 출력 토큰 */
   maxOutput?: number;
-  /** 학습 기준일 (`YYYY-MM`) */
+  /** 학습 기준일 (`YYYY-MM`, 일자까지 공개된 모델은 `YYYY-MM-DD`) */
   trainingCutoff?: string;
   /** 이 토큰 수 미만의 접두사는 캐시되지 않는다 */
   minCacheTokens?: number;
@@ -63,6 +74,26 @@ export interface ModelOption {
   defaultEffort?: Effort;
   /** Batch API 할인율. 0.5 = 입력·출력 50% (캐싱 할인과 중첩 가능) */
   batchDiscount?: number;
+
+  // --- 아래는 OpenAI 쪽 개념. Anthropic 항목에서는 비워 둔다 ---
+
+  /**
+   * 캐시 TTL 티어가 없는 공급자(OpenAI)의 캐시 쓰기 단가 (= 입력가 × 1.25).
+   * `null` 은 **그 세대에 캐시 쓰기 과금이 없다(무료)** 는 뜻이고,
+   * 비워 두면 "모른다" 는 뜻이다 — 0 으로 두면 둘이 구분되지 않는다.
+   */
+  cacheWrite?: number | null;
+  /**
+   * 입력 토큰이 이 수를 넘으면 **그 요청 전체**가 `longContextPricing` 요율로 과금된다
+   * (초과분만이 아니다). OpenAI 현행 기준 272,000.
+   */
+  longContextThresholdTokens?: number;
+  /** 롱컨텍스트 구간 요율. `null` 은 공개된 요율이 없다는 뜻(기본 요율로 추정하면 과소 추정) */
+  longContextPricing?: LongContextPricing | null;
+  /** Chat Completions 에서는 동작하지 않고 Responses API 로만 부를 수 있다 */
+  responsesApiOnly?: boolean;
+  /** 이 모델이 받는 추론 강도 값. 세대마다 다르다 */
+  supportedEfforts?: Effort[];
 }
 
 /**
@@ -85,6 +116,18 @@ const localFetch = tauriFetch as unknown as typeof globalThis.fetch;
 const ANTHROPIC_DIRECT_HEADERS: Record<string, string> = {
   "anthropic-dangerous-direct-browser-access": "true",
 };
+
+/**
+ * OpenAI 롱컨텍스트 문턱. 입력이 이 수를 넘으면 **요청 전체**가 롱컨텍스트 요율이 된다 —
+ * 초과분만 비싸지는 게 아니라 272,001 번째 토큰 하나 때문에 앞의 272,000 개도 같이 오른다.
+ */
+export const LONG_CONTEXT_THRESHOLD_TOKENS = 272_000;
+
+/** 추론 강도 지원값은 세대마다 다르다. 목록에 없는 값을 보내면 공급자가 거절한다. */
+const EFFORTS_GPT_5_6: Effort[] = ["none", "low", "medium", "high", "xhigh", "max"];
+const EFFORTS_GPT_5_4: Effort[] = ["none", "low", "medium", "high", "xhigh"];
+const EFFORTS_GPT_5_3_CODEX: Effort[] = ["low", "medium", "high", "xhigh"];
+const EFFORTS_GPT_5: Effort[] = ["minimal", "low", "medium", "high"];
 
 /** 공급자별 모델 목록. 라벨만 표시용이고 실제 호출에는 `modelId` 를 쓴다. */
 export const MODEL_CATALOG: ModelOption[] = [
@@ -184,17 +227,254 @@ export const MODEL_CATALOG: ModelOption[] = [
     // defaultEffort 없음 — adaptive 미지원 모델이라 effort 를 보내면 400 이다.
     batchDiscount: 0.5,
   },
+
+  // --- OpenAI 프론티어 (GPT-5.6 세대) ---
+  // 이 세대부터 캐시 **쓰기**가 과금된다(입력가 × 1.25, 최소 30분 유지).
+  // 이전 세대는 캐시 쓰기가 무료라 `cacheWrite: null` 로 구분한다.
+  // 넷 다 입력이 272K 를 넘으면 그 요청 전체가 롱컨텍스트 요율로 바뀐다.
   {
-    id: "openai:gpt-5.6",
+    id: "openai:gpt-5.6-sol",
     provider: "openai",
-    modelId: "gpt-5.6",
-    label: "GPT-5.6",
+    modelId: "gpt-5.6-sol",
+    label: "GPT-5.6 Sol",
+    note: "프론티어 최상위 · 1.05M 컨텍스트 · 고난도 에스컬레이션용",
+    inputPrice: 5,
+    outputPrice: 30,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
+    contextWindow: 1_050_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2026-02-16",
+    supportsPromptCaching: true,
+    defaultEffort: "medium",
+    batchDiscount: 0.5,
+    longContextThresholdTokens: LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 10, cacheRead: 1, cacheWrite: 12.5, outputPrice: 45 },
+    supportedEfforts: EFFORTS_GPT_5_6,
+  },
+  {
+    id: "openai:gpt-5.6-terra",
+    provider: "openai",
+    modelId: "gpt-5.6-terra",
+    label: "GPT-5.6 Terra",
+    note: "OpenAI 쪽 기본값 · 1.05M 컨텍스트 · 성능 대비 저렴",
+    inputPrice: 2,
+    outputPrice: 12,
+    cacheRead: 0.2,
+    cacheWrite: 2.5,
+    contextWindow: 1_050_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2026-02-16",
+    supportsPromptCaching: true,
+    defaultEffort: "medium",
+    batchDiscount: 0.5,
+    longContextThresholdTokens: LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 4, cacheRead: 0.4, cacheWrite: 5, outputPrice: 18 },
+    supportedEfforts: EFFORTS_GPT_5_6,
+  },
+  {
+    id: "openai:gpt-5.6-luna",
+    provider: "openai",
+    modelId: "gpt-5.6-luna",
+    label: "GPT-5.6 Luna",
+    note: "대량·저비용 (요약 · 분류 · 서브에이전트)",
+    inputPrice: 0.2,
+    outputPrice: 1.2,
+    cacheRead: 0.02,
+    cacheWrite: 0.25,
+    contextWindow: 1_050_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2026-02-16",
+    supportsPromptCaching: true,
+    defaultEffort: "medium",
+    batchDiscount: 0.5,
+    longContextThresholdTokens: LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 0.4, cacheRead: 0.04, cacheWrite: 0.5, outputPrice: 1.8 },
+    supportedEfforts: EFFORTS_GPT_5_6,
+  },
+  {
+    id: "openai:gpt-5.6-cyber",
+    provider: "openai",
+    modelId: "gpt-5.6-cyber",
+    label: "GPT-5.6 Cyber",
+    note: "보안 특화 · Daybreak 프로그램 별도 승인 필요",
+    inputPrice: 12.5,
+    outputPrice: 75,
+    cacheRead: 1.25,
+    cacheWrite: 15.625,
+    contextWindow: 1_050_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2026-02-16",
+    supportsPromptCaching: true,
+    defaultEffort: "medium",
+    batchDiscount: 0.5,
+    longContextThresholdTokens: LONG_CONTEXT_THRESHOLD_TOKENS,
+    // 문턱은 같지만 요율이 공개돼 있지 않다 → 기본 요율로 추정하면 과소 추정이라는 것만 알린다.
+    longContextPricing: null,
+    supportedEfforts: EFFORTS_GPT_5_6,
+  },
+
+  // --- OpenAI 이전 세대 (현재도 API 판매 중) ---
+  // 여기부터는 캐시 쓰기가 무료다 → `cacheWrite: null` ("0 원" 이 아니라 "과금 항목 없음").
+  {
+    id: "openai:gpt-5.5",
+    provider: "openai",
+    modelId: "gpt-5.5",
+    label: "GPT-5.5",
+    note: "이전 세대 프론티어 · 1.05M 컨텍스트",
+    inputPrice: 5,
+    outputPrice: 30,
+    cacheRead: 0.5,
+    cacheWrite: null,
+    contextWindow: 1_050_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2025-12-01",
+    supportsPromptCaching: true,
+    batchDiscount: 0.5,
+    longContextThresholdTokens: LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 10, cacheRead: 1, cacheWrite: null, outputPrice: 45 },
+    supportedEfforts: EFFORTS_GPT_5_4,
+  },
+  {
+    id: "openai:gpt-5.5-pro",
+    provider: "openai",
+    modelId: "gpt-5.5-pro",
+    label: "GPT-5.5 Pro",
+    note: "장고형 · 응답에 수 분 · Responses API 전용",
+    inputPrice: 30,
+    outputPrice: 180,
+    // 문서에 캐시 입력 단가 자체가 없다 → 캐싱 미지원으로 본다.
+    cacheRead: null,
+    cacheWrite: null,
+    contextWindow: 1_000_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2025-12-01",
+    supportsPromptCaching: false,
+    batchDiscount: 0.5,
+    longContextThresholdTokens: LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 60, cacheRead: null, cacheWrite: null, outputPrice: 270 },
+    responsesApiOnly: true,
+    supportedEfforts: EFFORTS_GPT_5_4,
+  },
+  {
+    id: "openai:gpt-5.4",
+    provider: "openai",
+    modelId: "gpt-5.4",
+    label: "GPT-5.4",
+    inputPrice: 2.5,
+    outputPrice: 15,
+    cacheRead: 0.25,
+    cacheWrite: null,
+    contextWindow: 1_050_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2025-08-31",
+    supportsPromptCaching: true,
+    batchDiscount: 0.5,
+    longContextThresholdTokens: LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 5, cacheRead: 0.5, cacheWrite: null, outputPrice: 22.5 },
+    supportedEfforts: EFFORTS_GPT_5_4,
   },
   {
     id: "openai:gpt-5.4-mini",
     provider: "openai",
     modelId: "gpt-5.4-mini",
     label: "GPT-5.4 mini",
+    inputPrice: 0.75,
+    outputPrice: 4.5,
+    cacheRead: 0.075,
+    cacheWrite: null,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2025-08-31",
+    supportsPromptCaching: true,
+    batchDiscount: 0.5,
+    supportedEfforts: EFFORTS_GPT_5_4,
+  },
+  {
+    id: "openai:gpt-5.4-nano",
+    provider: "openai",
+    modelId: "gpt-5.4-nano",
+    label: "GPT-5.4 nano",
+    inputPrice: 0.2,
+    outputPrice: 1.25,
+    cacheRead: 0.02,
+    cacheWrite: null,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2025-08-31",
+    supportsPromptCaching: true,
+    batchDiscount: 0.5,
+    supportedEfforts: EFFORTS_GPT_5_4,
+  },
+  {
+    id: "openai:gpt-5.4-pro",
+    provider: "openai",
+    modelId: "gpt-5.4-pro",
+    label: "GPT-5.4 Pro",
+    note: "장고형 · 응답에 수 분 · Responses API 전용",
+    inputPrice: 30,
+    outputPrice: 180,
+    cacheRead: null,
+    cacheWrite: null,
+    contextWindow: 1_050_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2025-08-31",
+    supportsPromptCaching: false,
+    batchDiscount: 0.5,
+    longContextThresholdTokens: LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 60, cacheRead: null, cacheWrite: null, outputPrice: 270 },
+    responsesApiOnly: true,
+    supportedEfforts: EFFORTS_GPT_5_4,
+  },
+  {
+    id: "openai:gpt-5.3-codex",
+    provider: "openai",
+    modelId: "gpt-5.3-codex",
+    label: "GPT-5.3 Codex",
+    note: "코딩 특화 · Responses API 전용",
+    inputPrice: 1.75,
+    outputPrice: 14,
+    cacheRead: 0.175,
+    cacheWrite: null,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2025-08-31",
+    supportsPromptCaching: true,
+    batchDiscount: 0.5,
+    responsesApiOnly: true,
+    supportedEfforts: EFFORTS_GPT_5_3_CODEX,
+  },
+  {
+    id: "openai:gpt-5.1",
+    provider: "openai",
+    modelId: "gpt-5.1",
+    label: "GPT-5.1",
+    inputPrice: 1.25,
+    outputPrice: 10,
+    cacheRead: 0.125,
+    cacheWrite: null,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2025-08-31",
+    supportsPromptCaching: true,
+    batchDiscount: 0.5,
+    supportedEfforts: EFFORTS_GPT_5_4,
+  },
+  {
+    id: "openai:gpt-5",
+    provider: "openai",
+    modelId: "gpt-5",
+    label: "GPT-5",
+    inputPrice: 1.25,
+    outputPrice: 10,
+    cacheRead: 0.125,
+    cacheWrite: null,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2024-09-30",
+    supportsPromptCaching: true,
+    batchDiscount: 0.5,
+    supportedEfforts: EFFORTS_GPT_5,
   },
 ];
 
@@ -294,8 +574,12 @@ export async function fetchLocalModels(baseUrl?: string): Promise<string[]> {
 
 export const DEFAULT_MODEL_ID = "anthropic:claude-opus-5";
 
-/** Anthropic 만 지원하는 사고 강도. 다른 공급자에서는 무시된다. */
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+/**
+ * 사고 강도. Anthropic 은 `providerOptionsFor()` 가 실제 요청에 실어 보낸다.
+ * OpenAI 는 세대마다 받는 값이 달라서(`supportedEfforts`) 카탈로그에 기록만 해 두고
+ * 아직 요청에는 싣지 않는다 — 목록에 없는 값을 보내면 공급자가 거절한다.
+ */
+export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ProviderCredentials {
   anthropicApiKey?: string;
@@ -327,6 +611,13 @@ export function parseModelId(id: string): { provider: ProviderId; modelId: strin
  */
 const MODEL_ID_ALIASES: Record<string, string> = {
   "anthropic:claude-haiku-4-5": "anthropic:claude-haiku-4-5-20251001",
+  // `gpt-5.6` 은 `gpt-5.6-sol` 을 가리키는 같은 세대 별칭이다.
+  // 항목을 둘로 만들면 가격표가 두 벌이 되므로 별칭으로만 둔다.
+  "openai:gpt-5.6": "openai:gpt-5.6-sol",
+  // `daybreak-blue-latest` / `daybreak-red-latest` 는 여기 넣지 않는다.
+  // 새 모델이 나오면 가리키는 대상과 가격이 바뀌는 **움직이는** 별칭인데,
+  // 이 표는 저장된 id 를 실제로 덮어쓴다(`canonicalModelId`) — 넣으면 최신 추종이
+  // 조용히 특정 버전 고정으로 바뀌고, 가격 조회도 옛 대상 것을 물고 있게 된다.
 };
 
 /** 옛 id 를 현재 id 로 되돌린다. 모르는 id 는 그대로 통과시킨다. */
@@ -337,6 +628,94 @@ export function canonicalModelId(id: string): string {
 export function findModelOption(id: string): ModelOption | undefined {
   const canonical = canonicalModelId(id);
   return [...MODEL_CATALOG, ...LOCAL_MODEL_PRESETS].find((option) => option.id === canonical);
+}
+
+/**
+ * 서비스 티어 배수. 티어마다 가격표를 따로 두지 않고 기본 요율에 곱한다
+ * (모델이 늘어날 때마다 가격이 티어 수만큼 복제되는 걸 막는다).
+ * `fast` 는 2026-07-30 에 `priority` 에서 이름만 바뀐 같은 티어라 값이 같다.
+ */
+export const SERVICE_TIER_MULTIPLIERS = {
+  standard: 1,
+  batch: 0.5,
+  flex: 0.5,
+  fast: 2,
+  priority: 2,
+} as const;
+
+export type ServiceTier = keyof typeof SERVICE_TIER_MULTIPLIERS;
+
+/**
+ * 지역 처리(데이터 레지던시) 엔드포인트 가산. 2026-03-05 이후 출시 모델만 쓸 수 있는데
+ * 카탈로그가 출시일을 들고 있지 않아 모델별로 판정하지 않는다 —
+ * 호출부가 그 엔드포인트로 보낸다고 알려줄 때만 곱한다.
+ */
+export const REGIONAL_PROCESSING_MULTIPLIER = 1.1;
+
+export interface PricingQuery {
+  /** 이번 요청의 입력 토큰 수. 롱컨텍스트 구간 판정에만 쓴다 */
+  inputTokens?: number;
+  serviceTier?: ServiceTier;
+  /** 지역 처리 엔드포인트로 보내는가 */
+  regional?: boolean;
+}
+
+/** `null` = 그 모델에 해당 과금 항목이 없다, `undefined` = 값을 모른다. */
+export interface EffectivePricing {
+  inputPrice?: number;
+  outputPrice?: number;
+  cacheRead?: number | null;
+  cacheWrite?: number | null;
+  /** 롱컨텍스트 요율 구간에 들어갔는가 */
+  longContext: boolean;
+  /** 구간에는 들어갔지만 공개된 요율이 없어 기본 요율을 그대로 쓴 경우 — **과소 추정** */
+  longContextRateUnknown: boolean;
+  /** 기본 요율에 곱한 값 (서비스 티어 × 지역 처리) */
+  multiplier: number;
+}
+
+function scale(price: number | null | undefined, multiplier: number) {
+  if (price === null || price === undefined) return price;
+  return price * multiplier;
+}
+
+/**
+ * 그 요청에 실제로 적용되는 1M 토큰당 요율.
+ *
+ * 롱컨텍스트는 **구간 합산이 아니다** — 입력이 문턱을 넘으면 그 요청 전체가
+ * 비싼 요율로 계산된다. 그래서 초과분만 따로 곱하지 않고 요율표 자체를 갈아 끼운다.
+ * 카탈로그에 없는 모델이면 `undefined`.
+ */
+export function effectivePricing(id: string, query: PricingQuery = {}): EffectivePricing | undefined {
+  const option = findModelOption(id);
+  if (!option) return undefined;
+
+  const threshold = option.longContextThresholdTokens;
+  const longContext = threshold !== undefined && (query.inputTokens ?? 0) > threshold;
+  const long = longContext ? option.longContextPricing : undefined;
+
+  const tier = query.serviceTier ?? "standard";
+  // Batch 할인은 모델별로 다를 수 있어 카탈로그 값이 있으면 그쪽을 쓴다.
+  const tierMultiplier =
+    tier === "batch"
+      ? (option.batchDiscount ?? SERVICE_TIER_MULTIPLIERS.batch)
+      : SERVICE_TIER_MULTIPLIERS[tier];
+  const multiplier = tierMultiplier * (query.regional ? REGIONAL_PROCESSING_MULTIPLIER : 1);
+
+  return {
+    inputPrice: scale(long ? long.inputPrice : option.inputPrice, multiplier) ?? undefined,
+    outputPrice: scale(long ? long.outputPrice : option.outputPrice, multiplier) ?? undefined,
+    cacheRead: scale(long ? long.cacheRead : option.cacheRead, multiplier),
+    cacheWrite: scale(long ? long.cacheWrite : option.cacheWrite, multiplier),
+    longContext,
+    longContextRateUnknown: longContext && !long,
+    multiplier,
+  };
+}
+
+/** 그 모델이 받는 추론 강도 목록. 모르면 `undefined` (호출부가 제한하지 않는다). */
+export function supportedEffortsFor(id: string): Effort[] | undefined {
+  return findModelOption(id)?.supportedEfforts;
 }
 
 export class MissingApiKeyError extends Error {
