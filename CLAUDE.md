@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 124 / cargo 31. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 132 / cargo 31. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -36,6 +36,7 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 ## 함정 (겪은 것들)
 
 - **CORS**: 웹뷰 기본 `fetch` 로는 Anthropic 이 막힌다. `@tauri-apps/plugin-http` 의 `fetch` 를 provider 에 주입해 Rust(reqwest)를 경유한다. **새 LLM 도메인을 쓰면 `src-tauri/capabilities/default.json` 의 `http:default` 스코프에 URL 추가** 필수.
+- Tauri HTTP 플러그인은 그래도 요청마다 웹뷰 주소로 **`Origin` 헤더를 강제로 붙인다**(플러그인 Rust 쪽 `commands.rs`). Anthropic 은 `Origin` 이 있으면 브라우저 직접 호출로 보고 `CORS requests must set 'anthropic-dangerous-direct-browser-access' header` 로 거부한다 → `createAnthropic({ headers: { "anthropic-dangerous-direct-browser-access": "true" } })` 로 켜 준다. 키가 로컬 밖으로 안 나가므로 안전하다.
 - Anthropic 4.6+ 는 `temperature` 를 거부한다 → adaptive thinking + `effort`(`providerOptionsFor()`).
 - `ModelMessage` / `ToolSet` / `tool` / `dynamicTool` / `jsonSchema` 는 `ai` 가 아니라 **`@ai-sdk/provider-utils`** 에서 import.
 - Windows `cmd` 출력은 CP949 로 깨진다 → `chcp 65001` 선행. `npx` 같은 `.cmd` 는 직접 spawn 되지 않아 `cmd /C` 경유.

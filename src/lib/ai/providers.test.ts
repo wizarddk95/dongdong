@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@tauri-apps/plugin-http", () => ({ fetch: vi.fn() }));
+
+import type { LanguageModel } from "ai";
 
 import {
   DEFAULT_MODEL_ID,
@@ -132,5 +136,37 @@ describe("toModelMessages", () => {
       node({ id: "c", role: "user", content: "3" }),
     ];
     expect(toModelMessages(chain).map((m) => m.content)).toEqual(["1", "2", "3"]);
+  });
+});
+
+describe("Anthropic 요청 헤더", () => {
+  it("브라우저 직접 호출 허용 헤더를 붙인다 (Tauri 가 Origin 을 강제로 넣는다)", async () => {
+    // 실제 전송은 mock 으로 가로채고, 헤더만 확인한다.
+    const { fetch: mockFetch } = await import("@tauri-apps/plugin-http");
+    const spy = vi.mocked(mockFetch);
+    spy.mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: "stub", message: "stub" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }) as never,
+    );
+
+    // resolveModel 의 반환 타입은 `string | LanguageModelV3` 유니온이라 좁혀 준다.
+    const model = resolveModel("anthropic:claude-opus-5", {
+      anthropicApiKey: "sk-ant-test",
+    }) as Exclude<LanguageModel, string>;
+    try {
+      // 응답은 stub 이라 파싱에서 실패한다. 여기서는 나간 헤더만 본다.
+      await model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "안녕" }] }],
+      });
+    } catch {
+      // 무시
+    }
+
+    expect(spy).toHaveBeenCalled();
+    const headers = new Headers(spy.mock.calls[0][1]?.headers as HeadersInit);
+    expect(headers.get("anthropic-dangerous-direct-browser-access")).toBe("true");
+    expect(headers.get("x-api-key")).toBe("sk-ant-test");
   });
 });

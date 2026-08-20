@@ -29,6 +29,19 @@ export interface ModelOption {
  */
 const localFetch = tauriFetch as unknown as typeof globalThis.fetch;
 
+/**
+ * Tauri HTTP 플러그인(Rust)은 요청마다 웹뷰 주소로 `Origin` 헤더를 강제로 붙인다
+ * (`tauri-plugin-http/src/commands.rs` — "ensure we have an Origin header set").
+ * Anthropic 은 `Origin` 이 붙은 요청을 브라우저 직접 호출로 보고
+ * `anthropic-dangerous-direct-browser-access` 없이는 거부한다.
+ *
+ * 이 앱에서는 키가 사용자 PC 밖으로 나가지 않고(설정 디렉터리의 `settings.json`),
+ * 실제 요청도 웹뷰가 아니라 Rust(reqwest)가 보내므로 이 헤더를 켜도 노출 위험이 없다.
+ */
+const ANTHROPIC_DIRECT_HEADERS: Record<string, string> = {
+  "anthropic-dangerous-direct-browser-access": "true",
+};
+
 /** 공급자별 모델 목록. 라벨만 표시용이고 실제 호출에는 `modelId` 를 쓴다. */
 export const MODEL_CATALOG: ModelOption[] = [
   {
@@ -115,6 +128,7 @@ export function resolveModel(id: string, credentials: ProviderCredentials): Lang
       return createAnthropic({
         apiKey,
         fetch: localFetch,
+        headers: ANTHROPIC_DIRECT_HEADERS,
         ...(credentials.anthropicBaseUrl ? { baseURL: credentials.anthropicBaseUrl } : {}),
       })(modelId);
     }
