@@ -5,6 +5,7 @@ import { Button } from "@/components/Panel";
 import {
   DEFAULT_LOCAL_BASE_URL,
   buildModelOptions,
+  defaultEffortFor,
   fetchLocalModels,
   type Effort,
 } from "@/lib/ai/providers";
@@ -169,7 +170,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <h3 className="font-semibold text-zinc-300">모델</h3>
             <select
               value={modelId}
-              onChange={(event) => setModelId(event.target.value)}
+              onChange={(event) => {
+                const nextId = event.target.value;
+                setModelId(nextId);
+                // 권장 사고 강도는 모델마다 다르다 — 저장 전에 눈에 보이게 미리 옮겨 준다.
+                const recommended = defaultEffortFor(nextId);
+                if (recommended) setEffort(recommended);
+              }}
               className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
             >
               {modelOptions.map((option) => (

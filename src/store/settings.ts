@@ -9,6 +9,8 @@ import type { McpServerConfig } from "@/types/ipc";
 import {
   DEFAULT_LOCAL_BASE_URL,
   DEFAULT_MODEL_ID,
+  canonicalModelId,
+  defaultEffortFor,
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
@@ -128,6 +130,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
         ...persisted,
         // 새 스킬이 추가돼도 예전 settings.json 이 덮어쓰지 않도록 기본값 위에 병합한다.
         skills: { ...DEFAULT_SKILLS, ...(persisted.skills ?? {}) },
+        // 카탈로그에서 id 가 바뀐 모델(예: 날짜 접미사가 붙은 Haiku 4.5)을 되돌린다.
+        // 안 하면 드롭다운이 "직접 입력" 으로 떨어지고 모델 능력 조회도 빗나간다.
+        modelId: canonicalModelId(persisted.modelId ?? DEFAULT_MODEL_ID),
+        subagentModelId: persisted.subagentModelId
+          ? canonicalModelId(persisted.subagentModelId)
+          : "",
         mcpServers: persisted.mcpServers ?? [],
         localBaseUrl: persisted.localBaseUrl || DEFAULT_LOCAL_BASE_URL,
         localModels: persisted.localModels ?? [],
@@ -141,7 +149,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
   },
 
   update: async (patch) => {
-    set({ ...patch, saving: true });
+    const next = { ...patch };
+    // 모델을 바꾸면 그 모델에 권장되는 사고 강도로 함께 옮긴다.
+    // 같은 patch 에 effort 가 들어 있으면(설정 모달의 저장) 사용자가 고른 값이 우선이다.
+    if (next.modelId && next.modelId !== get().modelId && next.effort === undefined) {
+      const recommended = defaultEffortFor(next.modelId);
+      if (recommended) next.effort = recommended;
+    }
+    set({ ...next, saving: true });
     try {
       await ipc.writeAppSettings(pickPersisted(get()) as unknown as Record<string, unknown>);
     } finally {

@@ -22,6 +22,47 @@ export interface ModelOption {
   modelId: string;
   label: string;
   note?: string;
+
+  // --- 아래는 모두 선택 필드. 값을 아는 모델에만 채운다(모르는 값은 비워 둔다) ---
+
+  /** 입력 단가. **USD / 1M tokens** */
+  inputPrice?: number;
+  /** 출력 단가. USD / 1M tokens */
+  outputPrice?: number;
+  /** 프롬프트 캐시 5분 쓰기 단가 (= 입력가 × 1.25) */
+  cacheWrite5m?: number;
+  /** 프롬프트 캐시 1시간 쓰기 단가 (= 입력가 × 2) */
+  cacheWrite1h?: number;
+  /** 프롬프트 캐시 읽기 단가 (= 입력가 × 0.1) */
+  cacheRead?: number;
+  /** 컨텍스트 창(토큰). 1M 모델도 전 구간 동일 단가라 구간별 가격은 없다 */
+  contextWindow?: number;
+  /** 한 응답의 최대 출력 토큰 */
+  maxOutput?: number;
+  /** 학습 기준일 (`YYYY-MM`) */
+  trainingCutoff?: string;
+  /** 이 토큰 수 미만의 접두사는 캐시되지 않는다 */
+  minCacheTokens?: number;
+
+  supportsPromptCaching?: boolean;
+  /** `thinking: { type: "adaptive" }` */
+  supportsAdaptiveThinking?: boolean;
+  /** 구형 `thinking: { type: "enabled", budget_tokens }` */
+  supportsExtendedThinking?: boolean;
+  supportsVision?: boolean;
+  supportsToolUse?: boolean;
+
+  /** 같은 텍스트가 몇 배 토큰이 되는지 (추정용) */
+  tokenizerMultiplier?: number;
+  /**
+   * 공식 문서가 "이 모델의 `effort` 기본값" 이라고 못박은 값만 넣는다(추측 금지).
+   * 현재 문서가 명시한 건 Opus 4.8 · Opus 5 · Sonnet 5 = `high` 뿐이다.
+   * - Fable 5: 문서에 기본값이 없다 → 비워 둔다(사용자가 쓰던 강도를 유지).
+   * - Haiku 4.5: adaptive 를 모르는 모델이라 `effort` 자체를 못 받는다 → **넣으면 안 된다**.
+   */
+  defaultEffort?: Effort;
+  /** Batch API 할인율. 0.5 = 입력·출력 50% (캐싱 할인과 중첩 가능) */
+  batchDiscount?: number;
 }
 
 /**
@@ -48,11 +89,52 @@ const ANTHROPIC_DIRECT_HEADERS: Record<string, string> = {
 /** 공급자별 모델 목록. 라벨만 표시용이고 실제 호출에는 `modelId` 를 쓴다. */
 export const MODEL_CATALOG: ModelOption[] = [
   {
+    id: "anthropic:claude-fable-5",
+    provider: "anthropic",
+    modelId: "claude-fable-5",
+    label: "Claude Fable 5",
+    note: "최상위 · 1M 컨텍스트 · 사고 항상 켜짐",
+    inputPrice: 10,
+    outputPrice: 50,
+    cacheWrite5m: 12.5,
+    cacheWrite1h: 20,
+    cacheRead: 1,
+    contextWindow: 1_000_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2026-01",
+    minCacheTokens: 512,
+    supportsPromptCaching: true,
+    supportsAdaptiveThinking: true,
+    supportsExtendedThinking: false,
+    supportsVision: true,
+    supportsToolUse: true,
+    tokenizerMultiplier: 1.3,
+    // defaultEffort 없음 — 문서가 Fable 5 의 effort 기본값을 명시하지 않는다.
+    batchDiscount: 0.5,
+  },
+  {
     id: "anthropic:claude-opus-5",
     provider: "anthropic",
     modelId: "claude-opus-5",
     label: "Claude Opus 5",
     note: "기본값 · 1M 컨텍스트",
+    inputPrice: 5,
+    outputPrice: 25,
+    cacheWrite5m: 6.25,
+    cacheWrite1h: 10,
+    cacheRead: 0.5,
+    contextWindow: 1_000_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2026-05",
+    minCacheTokens: 512,
+    supportsPromptCaching: true,
+    supportsAdaptiveThinking: true,
+    supportsExtendedThinking: false,
+    supportsVision: true,
+    supportsToolUse: true,
+    tokenizerMultiplier: 1.3,
+    defaultEffort: "high",
+    batchDiscount: 0.5,
   },
   {
     id: "anthropic:claude-sonnet-5",
@@ -60,13 +142,47 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "claude-sonnet-5",
     label: "Claude Sonnet 5",
     note: "빠르고 저렴",
+    inputPrice: 2,
+    outputPrice: 10,
+    cacheWrite5m: 2.5,
+    cacheWrite1h: 4,
+    cacheRead: 0.2,
+    contextWindow: 1_000_000,
+    maxOutput: 128_000,
+    trainingCutoff: "2026-01",
+    minCacheTokens: 1024,
+    supportsPromptCaching: true,
+    supportsAdaptiveThinking: true,
+    supportsExtendedThinking: false,
+    supportsVision: true,
+    supportsToolUse: true,
+    tokenizerMultiplier: 1.3,
+    defaultEffort: "high",
+    batchDiscount: 0.5,
   },
   {
-    id: "anthropic:claude-haiku-4-5",
+    id: "anthropic:claude-haiku-4-5-20251001",
     provider: "anthropic",
-    modelId: "claude-haiku-4-5",
+    modelId: "claude-haiku-4-5-20251001",
     label: "Claude Haiku 4.5",
-    note: "서브에이전트용",
+    note: "서브에이전트 · 분류 · 라우팅용 저비용 티어 · 200K 컨텍스트",
+    inputPrice: 1,
+    outputPrice: 5,
+    cacheWrite5m: 1.25,
+    cacheWrite1h: 2,
+    cacheRead: 0.1,
+    contextWindow: 200_000,
+    maxOutput: 64_000,
+    trainingCutoff: "2025-07",
+    minCacheTokens: 4096,
+    supportsPromptCaching: true,
+    supportsAdaptiveThinking: false,
+    supportsExtendedThinking: true,
+    supportsVision: true,
+    supportsToolUse: true,
+    tokenizerMultiplier: 1,
+    // defaultEffort 없음 — adaptive 미지원 모델이라 effort 를 보내면 400 이다.
+    batchDiscount: 0.5,
   },
   {
     id: "openai:gpt-5.6",
@@ -203,8 +319,24 @@ export function parseModelId(id: string): { provider: ProviderId; modelId: strin
   return { provider, modelId: id.slice(separator + 1) };
 }
 
+/**
+ * 예전에 쓰던 모델 id → 현재 카탈로그 id.
+ * 이미 저장된 `settings.json` 과 DB 의 `context_snapshot` 이 옛 id 를 들고 있어서,
+ * 카탈로그의 id 를 바꾸면 드롭다운에서 "직접 입력" 으로 떨어지고
+ * 모델 능력 조회(`findModelOption`)도 빗나간다.
+ */
+const MODEL_ID_ALIASES: Record<string, string> = {
+  "anthropic:claude-haiku-4-5": "anthropic:claude-haiku-4-5-20251001",
+};
+
+/** 옛 id 를 현재 id 로 되돌린다. 모르는 id 는 그대로 통과시킨다. */
+export function canonicalModelId(id: string): string {
+  return MODEL_ID_ALIASES[id] ?? id;
+}
+
 export function findModelOption(id: string): ModelOption | undefined {
-  return [...MODEL_CATALOG, ...LOCAL_MODEL_PRESETS].find((option) => option.id === id);
+  const canonical = canonicalModelId(id);
+  return [...MODEL_CATALOG, ...LOCAL_MODEL_PRESETS].find((option) => option.id === canonical);
 }
 
 export class MissingApiKeyError extends Error {
@@ -261,10 +393,28 @@ export function resolveModel(id: string, credentials: ProviderCredentials): Lang
 /**
  * 공급자별 옵션. Anthropic 4.6+ 모델은 `temperature` 를 거부하므로 넣지 않고,
  * 대신 adaptive thinking + effort 로 사고량을 조절한다.
+ *
+ * 다만 이건 **모델마다 다르다**. Haiku 4.5 처럼 adaptive 를 모르는 구형 모델에
+ * `thinking`/`effort` 를 보내면 공급자가 400 을 낸다 — 서브에이전트용으로 고르면
+ * 바로 터진다. 카탈로그의 `supportsAdaptiveThinking` 을 보고 지원하는 모델에만 붙인다.
+ *
+ * 구형 `thinking: { type: "enabled", budget_tokens }` 는 켜지 않는다.
+ * 예산 토큰 수를 임의로 정해야 하는데 그건 사용자가 결정할 몫이다 — 사고 없이 부른다.
+ *
+ * 카탈로그에 없는 id(사용자가 직접 넣은 신모델)는 붙이는 쪽을 기본값으로 둔다.
  */
+/**
+ * 그 모델에 권장되는 사고 강도. 카탈로그에 값이 없으면 `undefined` —
+ * 호출부는 현재 설정을 그대로 두면 된다.
+ */
+export function defaultEffortFor(id: string): Effort | undefined {
+  return findModelOption(id)?.defaultEffort;
+}
+
 export function providerOptionsFor(id: string, effort: Effort) {
   const { provider } = parseModelId(id);
   if (provider !== "anthropic") return undefined;
+  if (findModelOption(id)?.supportsAdaptiveThinking === false) return undefined;
 
   return {
     anthropic: {

@@ -41,6 +41,10 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - **AI SDK 의 중단은 "청크가 흐를 때만" 관측된다**. `streamText` 는 스트림에서 청크를 하나 읽은 뒤에 `abortSignal.aborted` 를 확인한다. 도구가 실행 중이면 청크가 없으므로 [중단]을 눌러도 아무 일도 일어나지 않는다 → 도구 자체를 중단 시그널과 경주시킨다(`lib/ai/abort.ts`). 도구가 거절되면 tool-error 청크가 흐르고 그때 스트림이 닫힌다.
 - **Windows 에서 자식만 kill 하면 파이프가 안 닫힌다**. `cmd /C pnpm dev` 처럼 손자가 생기는 명령은 cmd 를 죽여도 손자가 stdout 을 물고 있어 리더 스레드의 `read` 가 EOF 를 못 본다 → `join()` 이 영구 대기하고 도구 호출이 영영 안 끝난다. `taskkill /T /F` 로 트리째 죽이고, 리더 조인에도 유예 시간을 둔다(`commands/shell.rs`).
 - Anthropic 4.6+ 는 `temperature` 를 거부한다 → adaptive thinking + `effort`(`providerOptionsFor()`).
+  **단 이건 모델마다 다르다** — Haiku 4.5 같은 구형은 adaptive 를 모르고 `effort` 도 안 받아서 그대로 보내면 400 이다.
+  `providerOptionsFor()` 가 `MODEL_CATALOG` 의 `supportsAdaptiveThinking` 을 보고 붙일지 말지 정한다.
+- **카탈로그의 모델 id 를 바꾸면 이미 저장된 `settings.json` 이 고아가 된다** → 드롭다운이 "직접 입력" 으로 떨어지고
+  모델 능력 조회도 빗나간다. `providers.ts` 의 `MODEL_ID_ALIASES` 에 옛 id 를 등록하고, 설정 로드에서 `canonicalModelId()` 로 되돌린다.
 - `ModelMessage` / `ToolSet` / `tool` / `dynamicTool` / `jsonSchema` 는 `ai` 가 아니라 **`@ai-sdk/provider-utils`** 에서 import.
 - **Windows 셸 출력은 `chcp 65001` 로 안 고쳐진다**. 출력이 파이프로 리다이렉트되면 `dir` 같은 cmd 내장 명령과
   PowerShell 5 는 코드 페이지와 무관하게 OEM 코드 페이지(한국어면 CP949)로 쓴다 → 받는 쪽에서 되돌린다.

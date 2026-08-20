@@ -11,6 +11,8 @@ import {
   MODEL_CATALOG,
   MissingApiKeyError,
   buildModelOptions,
+  canonicalModelId,
+  defaultEffortFor,
   fetchLocalModels,
   findModelOption,
   hasCredentialFor,
@@ -145,8 +147,56 @@ describe("providerOptionsFor", () => {
     expect(options?.anthropic.effort).toBe("xhigh");
   });
 
+  it("adaptive 를 지원하는 모델에는 모두 붙는다", () => {
+    for (const id of [
+      "anthropic:claude-fable-5",
+      "anthropic:claude-opus-5",
+      "anthropic:claude-sonnet-5",
+    ]) {
+      expect(providerOptionsFor(id, "high")?.anthropic.thinking.type).toBe("adaptive");
+    }
+  });
+
+  it("adaptive 를 모르는 모델(Haiku 4.5)에는 thinking·effort 를 보내지 않는다", () => {
+    // 보내면 공급자가 400 을 낸다.
+    expect(providerOptionsFor("anthropic:claude-haiku-4-5-20251001", "high")).toBeUndefined();
+    // 옛 id 로 저장돼 있어도 마찬가지여야 한다.
+    expect(providerOptionsFor("anthropic:claude-haiku-4-5", "high")).toBeUndefined();
+  });
+
+  it("카탈로그에 없는 Anthropic 모델은 붙이는 쪽이 기본값", () => {
+    expect(providerOptionsFor("anthropic:claude-opus-6", "max")?.anthropic.effort).toBe("max");
+  });
+
   it("다른 공급자에는 붙이지 않는다", () => {
     expect(providerOptionsFor("openai:gpt-5.6", "high")).toBeUndefined();
+  });
+});
+
+describe("defaultEffortFor", () => {
+  it("권장값이 있는 모델은 그 값을 돌려준다", () => {
+    expect(defaultEffortFor("anthropic:claude-opus-5")).toBe("high");
+    expect(defaultEffortFor("anthropic:claude-sonnet-5")).toBe("high");
+  });
+
+  it("권장값이 없으면 undefined (현재 설정을 그대로 둔다)", () => {
+    expect(defaultEffortFor("anthropic:claude-fable-5")).toBeUndefined();
+    expect(defaultEffortFor("anthropic:claude-haiku-4-5-20251001")).toBeUndefined();
+    expect(defaultEffortFor("local:qwen3:14b")).toBeUndefined();
+    expect(defaultEffortFor("anthropic:claude-opus-6")).toBeUndefined();
+  });
+});
+
+describe("canonicalModelId", () => {
+  it("옛 모델 id 를 현재 카탈로그 id 로 되돌린다", () => {
+    expect(canonicalModelId("anthropic:claude-haiku-4-5")).toBe(
+      "anthropic:claude-haiku-4-5-20251001",
+    );
+    expect(findModelOption("anthropic:claude-haiku-4-5")?.label).toBe("Claude Haiku 4.5");
+  });
+
+  it("모르는 id 는 그대로 통과시킨다", () => {
+    expect(canonicalModelId("local:qwen3:14b")).toBe("local:qwen3:14b");
   });
 });
 
@@ -261,5 +311,45 @@ describe("로컬 서버 호출", () => {
 
     expect(spy.mock.calls[0][0]).toBe("http://127.0.0.1:1234/v1/chat/completions");
     expect(JSON.parse(String(spy.mock.calls[0][1]?.body)).model).toBe("gpt-oss:20b");
+  });
+});
+
+describe("Anthropic 모델 메타데이터", () => {
+  const anthropic = MODEL_CATALOG.filter((option) => option.provider === "anthropic");
+
+  it("Anthropic 항목은 가격·컨텍스트 정보를 모두 갖는다", () => {
+    expect(anthropic).toHaveLength(4);
+    for (const option of anthropic) {
+      expect(option.inputPrice).toBeGreaterThan(0);
+      expect(option.outputPrice).toBeGreaterThan(0);
+      expect(option.contextWindow).toBeGreaterThan(0);
+      expect(option.maxOutput).toBeGreaterThan(0);
+      expect(option.trainingCutoff).toMatch(/^\d{4}-\d{2}$/);
+      expect(option.supportsPromptCaching).toBe(true);
+      expect(option.batchDiscount).toBe(0.5);
+    }
+  });
+
+  it("캐시 단가는 입력가의 배수 규칙(×1.25 / ×2 / ×0.1)을 지킨다", () => {
+    for (const option of anthropic) {
+      const input = option.inputPrice!;
+      expect(option.cacheWrite5m).toBeCloseTo(input * 1.25, 10);
+      expect(option.cacheWrite1h).toBeCloseTo(input * 2, 10);
+      expect(option.cacheRead).toBeCloseTo(input * 0.1, 10);
+    }
+  });
+
+  it("adaptive 를 모르는 모델에는 defaultEffort 를 달지 않는다", () => {
+    // effort 는 adaptive thinking 모델에만 있는 파라미터다. 달아 두면 400 을 부른다.
+    for (const option of anthropic) {
+      if (option.supportsAdaptiveThinking) continue;
+      expect(option.defaultEffort).toBeUndefined();
+    }
+  });
+
+  it("adaptive 와 구형 extended thinking 은 동시에 켜지지 않는다", () => {
+    for (const option of anthropic) {
+      expect(option.supportsAdaptiveThinking && option.supportsExtendedThinking).toBe(false);
+    }
   });
 });
