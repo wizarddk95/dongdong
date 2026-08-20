@@ -101,7 +101,11 @@ cd src-tauri && cargo test --lib   # 백엔드 단위 테스트
 src/                        프론트엔드 (React + TS + Tailwind v4)
   types/ipc.ts              Rust ↔ TS 타입 정의 (serde camelCase 와 1:1)
   lib/ipc.ts                invoke 래퍼 — 모든 IPC 는 이 모듈을 경유
-  lib/tree.ts               parent_id → 트리 복원 + tidy tree 좌표 계산
+  lib/tree.ts               parent_id → 트리 복원 (buildIndex / pathTo / siblingsOf)
+  lib/turns.ts              노드 체인 → 턴(질문+응답+도구 스텝) 묶음 — 순수 파생 계산
+  lib/sessionTree.ts        parent_session_id → 세션 분기 트리 복원
+  lib/layout.ts             왼→오른쪽 tidy tree 좌표 계산 (턴 그래프 · 세션 맵 공용)
+  lib/agentRuns.ts          서브에이전트 실행 표시용 공통 값 (상태 색 · 경과 시간)
   lib/markdown.ts           채팅 본문용 경량 마크다운 파서 (외부 의존성 없음)
   lib/ai/providers.ts       다중 모델 라우팅 (`provider:modelId`) + Tauri fetch 주입
   lib/ai/runner.ts          streamText 한 턴 실행 (DB 는 건드리지 않음) + 도구 파트 변환
@@ -115,7 +119,8 @@ src/                        프론트엔드 (React + TS + Tailwind v4)
   store/mcp.ts              MCP 서버 연결 상태 + 도구 병합
   store/settings.ts         API 키 · 모델 · 시스템 프롬프트 · 스킬 토글
   components/chat/          ChatPanel / MessageBubble (tool 노드 렌더 포함) / Markdown 렌더러
-  components/flow/          FlowCanvas / MessageNode (React Flow)
+  components/flow/          FlowCanvas / TurnNode / AgentNode (대화 턴 그래프)
+  components/sessions/      SessionMap / SessionNode (채팅 앞단의 세션 맵)
   components/inspect/       ContextModal / MemoryModal / JsonTree (투명성 UI)
   components/agents/        AgentDashboard (서브에이전트 칸반)
   components/mcp/           McpServers (서버 등록 · 연결 · 도구 목록)
@@ -127,7 +132,7 @@ src-tauri/src/
   paths.rs                  크로스 플랫폼 경로 정규화 + 루트 밖 접근 차단
   state.rs                  열린 워크스페이스(프로젝트별 SQLite 커넥션) 보관
   db/schema.rs              마이그레이션 (PRAGMA user_version 기반)
-  db/models.rs              Project / Session / Message 모델
+  db/models.rs              Project / Session / SessionOverview / Message 모델
   db/queries.rs             모든 SQL 은 여기로만
   commands/workspace.rs     open_project / close_project / system_info
   commands/shell.rs         execute_shell_command (OS 분기 + 타임아웃)
@@ -140,17 +145,37 @@ src-tauri/src/
   mcp.rs                    MCP stdio 클라이언트 (JSON-RPC 피어 + 프로세스 레지스트리)
 ```
 
-## 대화 트리와 분기 (타임머신)
+## 세션 맵 (채팅 앞단)
+
+프로젝트를 열면 **세션 맵**이 먼저 뜬다. 이 프로젝트의 세션들과 거기서 갈라져 나온
+분기 세션이 `parent_session_id` 를 따라 왼→오른쪽 트리로 그려진다.
+카드에는 노드 수 · 마지막 활동 · 첫 질문 미리보기가 붙는데, 세션마다 메시지를 따로 읽지 않고
+`list_sessions` 가 집계까지 한 번에 내려준다(`SessionOverview`).
+
+카드를 더블클릭하면 그 세션의 채팅으로 들어가고, 좌측 사이드바의 **[← 세션 맵]** 으로 돌아온다.
+
+## 대화 턴 그래프와 분기 (타임머신)
+
+우측 트리의 노드 하나는 **턴** 하나다 — 사용자 질문 + 응답 + 그 사이의 도구 스텝을
+카드 한 장으로 묶어 왼→오른쪽으로 잇는다. 묶음은 `lib/turns.ts` 의 파생 계산이고,
+DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
+
+- **삭제도 턴 단위**다. 앵커(user) 노드부터 지우므로 질문만 남거나 응답만 남는 반쪽 상태가 없다.
+  그 턴에 매달렸던 서브에이전트 실행 기록도 함께 정리된다.
+- **위임된 서브에이전트**는 발화한 턴 카드에서 위/아래로 점선 분기해 붙는다.
+  진행률과 현재 Skill 이 노드에서 바로 보이고, 상세·중단은 [서브에이전트] 탭에서 한다.
 
 분기는 두 층위로 동작한다.
 
-1. **세션 안 분기** — 트리에서 노드를 클릭하면 그 노드가 "다음 메시지의 부모"가 된다.
-   이미 답이 달린 노드에 다시 질문하면 형제 노드가 생기고, 트리가 갈라진다.
+1. **세션 안 분기** — 턴 카드를 클릭하면 그 턴의 끝이 "다음 메시지의 부모"가 된다.
+   앞선 턴을 고르고 다시 질문하면 형제 턴이 생기고, 그래프가 갈라진다.
+   **[⑂ 이 턴 다시 질문]** 은 그 턴이 갈라져 나온 지점으로 되돌린다.
    채팅 말풍선의 **[여기서 다시]** 도 같은 동작이다.
 2. **새 세션으로 분기** — **[⑂ 새 세션]** 은 `branch_session` 을 호출해
-   해당 노드까지의 조상 체인을 **복제한 새 세션**을 만든다. 원본은 그대로 남는다.
+   해당 노드까지의 조상 체인을 **복제한 새 세션**을 만든다. 원본은 그대로 남고,
+   세션 맵에서 부모 세션의 자식 노드로 나타난다.
 
-채팅 패널은 항상 "루트 → 현재 부모 노드"의 경로만 보여준다. 다른 분기는 트리에서 골라 이동한다.
+채팅 패널은 항상 "루트 → 현재 부모 노드"의 경로만 보여준다. 다른 분기는 그래프에서 골라 이동한다.
 
 ## LLM 연동
 

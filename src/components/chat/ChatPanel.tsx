@@ -66,7 +66,7 @@ export function ChatPanel() {
         {path.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-1 text-xs text-zinc-600">
             <p>{project ? "메시지를 보내 대화를 시작하세요." : "먼저 프로젝트 폴더를 여세요."}</p>
-            <p className="text-[11px]">우측 트리에서 노드를 클릭하면 그 지점부터 이어집니다.</p>
+            <p className="text-[11px]">우측 그래프에서 턴 카드를 클릭하면 그 지점부터 이어집니다.</p>
           </div>
         )}
 

@@ -1,7 +1,12 @@
 import { Button } from "@/components/Panel";
 import { useWorkspace } from "@/store/workspace";
 
-export function SessionSidebar() {
+interface SessionSidebarProps {
+  /** 채팅 앞단의 세션 맵으로 돌아가기 */
+  onBackToMap: () => void;
+}
+
+export function SessionSidebar({ onBackToMap }: SessionSidebarProps) {
   const project = useWorkspace((state) => state.project);
   const sessions = useWorkspace((state) => state.sessions);
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
@@ -11,6 +16,13 @@ export function SessionSidebar() {
 
   return (
     <aside className="flex h-full min-h-0 w-56 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/30">
+      <button
+        className="shrink-0 border-b border-zinc-800 px-2.5 py-2 text-left text-[11px] text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200"
+        onClick={onBackToMap}
+      >
+        ← 세션 맵
+      </button>
+
       <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-2.5 py-2">
         <span className="text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
           세션 {sessions.length > 0 && `(${sessions.length})`}
@@ -37,6 +49,7 @@ export function SessionSidebar() {
                 {session.branchedFromMessageId && (
                   <span className="rounded bg-violet-950 px-1 text-violet-300">⑂ 분기</span>
                 )}
+                <span>노드 {session.messageCount}</span>
                 {new Date(session.updatedAt).toLocaleString("ko-KR", {
                   month: "2-digit",
                   day: "2-digit",

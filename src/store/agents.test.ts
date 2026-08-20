@@ -243,3 +243,28 @@ describe("useAgents.refresh / 정리", () => {
     expect(useAgents.getState().runs.map((run) => run.id)).toEqual(["r-running"]);
   });
 });
+
+describe("useAgents.removeForMessages", () => {
+  it("지워진 노드에 매달린 실행만 정리한다", async () => {
+    vi.mocked(runSubagent).mockResolvedValue(finished);
+
+    await useAgents.getState().spawn({ name: "삭제될 턴", task: "일", parentMessageId: "m1" });
+    await useAgents.getState().spawn({ name: "남을 턴", task: "일", parentMessageId: "m2" });
+    await useAgents.getState().spawn({ name: "부모 없음", task: "일" });
+
+    await useAgents.getState().removeForMessages(["m1", "m9"]);
+
+    expect(mocked.deleteAgentRun).toHaveBeenCalledTimes(1);
+    expect(useAgents.getState().runs.map((run) => run.name)).toEqual(["부모 없음", "남을 턴"]);
+  });
+
+  it("지울 게 없으면 DB 를 건드리지 않는다", async () => {
+    vi.mocked(runSubagent).mockResolvedValue(finished);
+    await useAgents.getState().spawn({ name: "무관", task: "일", parentMessageId: "m2" });
+
+    await useAgents.getState().removeForMessages(["m1"]);
+
+    expect(mocked.deleteAgentRun).not.toHaveBeenCalled();
+    expect(useAgents.getState().runs).toHaveLength(1);
+  });
+});

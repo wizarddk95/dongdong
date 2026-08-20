@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
 
-use crate::db::{self, models::Project, models::Session, queries};
+use crate::db::{self, models::Project, models::SessionOverview, queries};
 use crate::error::{AppError, AppResult};
 use crate::paths;
 use crate::state::AppState;
@@ -16,7 +16,7 @@ pub struct OpenProjectResult {
     pub workspace_dir: String,
     pub db_path: String,
     pub schema_version: i64,
-    pub sessions: Vec<Session>,
+    pub sessions: Vec<SessionOverview>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,7 +51,7 @@ pub fn open_project(state: State<'_, AppState>, path: String) -> AppResult<OpenP
         .unwrap_or_else(|| root_path.clone());
 
     let project = queries::upsert_project(&conn, &root_path, &name)?;
-    let sessions = queries::list_sessions(&conn, &project.id)?;
+    let sessions = queries::list_session_overviews(&conn, &project.id)?;
 
     let workspace_dir = paths::workspace_dir(&root).to_string_lossy().into_owned();
     let db_path = paths::db_path(&root).to_string_lossy().into_owned();

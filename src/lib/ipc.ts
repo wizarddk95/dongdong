@@ -24,6 +24,7 @@ import type {
   PathInfo,
   Project,
   Session,
+  SessionOverview,
   ShellOptions,
   ShellResult,
   SystemInfo,
@@ -121,8 +122,9 @@ export const createSession = (options?: {
   projectPath?: string;
 }) => call<Session>("create_session", options ?? {});
 
+/** 세션 목록. 노드 수·마지막 활동·미리보기 같은 집계가 함께 온다. */
 export const listSessions = (projectPath?: string) =>
-  call<Session[]>("list_sessions", { projectPath });
+  call<SessionOverview[]>("list_sessions", { projectPath });
 
 export const getSession = (sessionId: string, projectPath?: string) =>
   call<Session | null>("get_session", { sessionId, projectPath });

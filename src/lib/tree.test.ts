@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { NODE_HEIGHT, buildIndex, layoutTree, pathTo, siblingsOf } from "@/lib/tree";
+import { buildIndex, pathTo, siblingsOf } from "@/lib/tree";
 import type { Message } from "@/types/ipc";
 
 /** 테스트용 최소 노드. 트리 로직은 id/parentId/seq 만 본다. */
@@ -83,35 +83,5 @@ describe("siblingsOf", () => {
     const d = BRANCHED.find((m) => m.id === "d")!;
     expect(siblingsOf(index, c).map((m) => m.id)).toEqual(["c", "e"]);
     expect(siblingsOf(index, d).map((m) => m.id)).toEqual(["d"]);
-  });
-});
-
-describe("layoutTree", () => {
-  it("깊이에 따라 y 가 단조 증가한다", () => {
-    const positioned = layoutTree(BRANCHED);
-    const byId = new Map(positioned.map((p) => [p.message.id, p]));
-
-    expect(byId.get("a")!.y).toBe(0);
-    expect(byId.get("b")!.y).toBeGreaterThan(byId.get("a")!.y);
-    expect(byId.get("c")!.y).toBe(byId.get("e")!.y); // 형제는 같은 줄
-    expect(byId.get("d")!.y).toBe(3 * (NODE_HEIGHT + 56));
-  });
-
-  it("분기된 잎들이 서로 겹치지 않는다", () => {
-    const positioned = layoutTree(BRANCHED);
-    const byId = new Map(positioned.map((p) => [p.message.id, p]));
-    expect(byId.get("d")!.x).not.toBe(byId.get("e")!.x);
-  });
-
-  it("부모는 자식들의 가운데에 놓인다", () => {
-    const positioned = layoutTree(BRANCHED);
-    const byId = new Map(positioned.map((p) => [p.message.id, p]));
-    const center = (byId.get("c")!.x + byId.get("e")!.x) / 2;
-    expect(byId.get("b")!.x).toBeCloseTo(center);
-  });
-
-  it("모든 노드에 좌표가 하나씩 배정된다", () => {
-    expect(layoutTree(BRANCHED)).toHaveLength(BRANCHED.length);
-    expect(layoutTree([])).toEqual([]);
   });
 });

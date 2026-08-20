@@ -8,7 +8,14 @@ import { create } from "zustand";
 
 import { loadProjectInstructions, type ProjectInstructions } from "@/lib/ai/instructions";
 import * as ipc from "@/lib/ipc";
-import type { Message, NewMessage, Project, Session, SystemInfo } from "@/types/ipc";
+import type {
+  Message,
+  NewMessage,
+  Project,
+  Session,
+  SessionOverview,
+  SystemInfo,
+} from "@/types/ipc";
 
 interface WorkspaceState {
   project: Project | null;
@@ -20,7 +27,7 @@ interface WorkspaceState {
   /** 프로젝트 루트의 AGENTS.md (없으면 null). 매 턴 컨텍스트 맨 앞에 실린다. */
   instructions: ProjectInstructions | null;
 
-  sessions: Session[];
+  sessions: SessionOverview[];
   activeSessionId: string | null;
   messages: Message[];
   /** 다음 메시지가 붙을 부모 노드. 여기서 갈라지면 세션 내 분기가 생긴다. */
@@ -49,6 +56,8 @@ interface WorkspaceState {
   /** DB 를 거치지 않고 로컬 캐시만 교체 (스트리밍 종료 후 동기화용) */
   replaceMessage: (message: Message) => void;
   removeMessage: (messageId: string) => Promise<void>;
+  /** 턴 단위 삭제 — 앵커(user) 노드부터 하위 트리와 딸린 서브에이전트 기록까지 함께 지운다. */
+  removeTurn: (anchorId: string) => Promise<void>;
 
   setActiveParent: (messageId: string | null) => void;
   selectMessage: (messageId: string | null) => void;
@@ -72,6 +81,11 @@ async function guard<T>(
   } finally {
     set({ loading: false });
   }
+}
+
+/** 방금 만든 세션은 집계가 없다. 목록을 다시 읽기 전까지 쓸 빈 값. */
+function emptyOverview(session: Session): SessionOverview {
+  return { ...session, messageCount: 0, lastMessageAt: null, preview: null, agentRunCount: 0 };
 }
 
 /**
@@ -131,7 +145,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
       if (result.sessions.length === 0) {
         const session = await ipc.createSession({ title: "새 대화" });
-        set({ sessions: [session] });
+        set({ sessions: [emptyOverview(session)] });
         await get().selectSession(session.id);
       } else {
         await get().selectSession(result.sessions[0].id);
@@ -180,7 +194,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!get().project) return null;
     return guard(set, async () => {
       const session = await ipc.createSession({ title: title ?? "새 대화" });
-      set({ sessions: [session, ...get().sessions] });
+      set({ sessions: [emptyOverview(session), ...get().sessions] });
       await get().selectSession(session.id);
       return session;
     });
@@ -259,6 +273,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     });
   },
 
+  removeTurn: async (anchorId) => {
+    // 턴의 앵커(user 노드)를 지우면 그 아래 응답/도구 노드가 CASCADE 로 함께 사라진다.
+    // 딸린 서브에이전트 기록 정리는 호출부가 `agents.removeForMessages()` 로 맡는다
+    // (스토어끼리 서로를 import 하지 않기 위해).
+    await get().removeMessage(anchorId);
+  },
+
   setActiveParent: (messageId) => set({ activeParentId: messageId }),
 
   selectMessage: (messageId) => set({ selectedMessageId: messageId }),
@@ -266,8 +287,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   branchFrom: async (messageId, title) => {
     return guard(set, async () => {
       const session = await ipc.branchSession(messageId, title);
-      set({ sessions: [session, ...get().sessions] });
+      set({ sessions: [emptyOverview(session), ...get().sessions] });
       await get().selectSession(session.id);
+      // 분기 세션은 만들어질 때 이미 노드가 복제돼 있다 — 집계를 실제 값으로 맞춘다.
+      void get().refreshSessions();
       return session;
     });
   },

@@ -28,6 +28,15 @@ export interface Session {
   archivedAt: string | null;
 }
 
+/** 세션 목록/맵 카드용 — Session 에 집계를 얹은 형태 (Rust 는 serde flatten 으로 내려준다). */
+export interface SessionOverview extends Session {
+  messageCount: number;
+  lastMessageAt: string | null;
+  /** 첫 사용자 메시지 앞 120자 */
+  preview: string | null;
+  agentRunCount: number;
+}
+
 /** 대화 트리의 노드. React Flow 노드와 1:1 로 매핑된다. */
 export interface Message {
   id: string;
@@ -167,7 +176,7 @@ export interface OpenProjectResult {
   workspaceDir: string;
   dbPath: string;
   schemaVersion: number;
-  sessions: Session[];
+  sessions: SessionOverview[];
 }
 
 export interface SystemInfo {

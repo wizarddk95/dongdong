@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use super::models::{
     AgentRun, AgentRunPatch, Memory, Message, MessagePatch, NewAgentRun, NewMemory, NewMessage,
-    Project, Session,
+    Project, Session, SessionOverview,
 };
 use crate::error::{AppError, AppResult};
 
@@ -131,14 +131,43 @@ pub fn get_session(conn: &Connection, id: &str) -> AppResult<Option<Session>> {
     Ok(conn.query_row(&sql, params![id], map_session).optional()?)
 }
 
-pub fn list_sessions(conn: &Connection, project_id: &str) -> AppResult<Vec<Session>> {
+/// 미리보기 문구 길이. 너무 길면 세션 카드가 넘친다.
+const PREVIEW_CHARS: usize = 120;
+
+fn map_session_overview(row: &Row<'_>) -> rusqlite::Result<SessionOverview> {
+    let preview: Option<String> = row.get(10)?;
+    Ok(SessionOverview {
+        session: map_session(row)?,
+        message_count: row.get(11)?,
+        last_message_at: row.get(12)?,
+        preview: preview.map(|text| {
+            let trimmed = text.trim();
+            trimmed.chars().take(PREVIEW_CHARS).collect::<String>()
+        }),
+        agent_run_count: row.get(13)?,
+    })
+}
+
+/// 세션 목록 + 카드에 필요한 집계(노드 수 · 마지막 활동 · 미리보기 · 위임 수)를 한 번에 읽는다.
+/// 세션마다 메시지를 따로 조회하면 세션 수만큼 왕복이 생긴다.
+pub fn list_session_overviews(
+    conn: &Connection,
+    project_id: &str,
+) -> AppResult<Vec<SessionOverview>> {
     let sql = format!(
-        "SELECT {SESSION_COLUMNS} FROM sessions
-         WHERE project_id = ?1 AND archived_at IS NULL
-         ORDER BY updated_at DESC"
+        "SELECT {SESSION_COLUMNS},
+                (SELECT m.content FROM messages m
+                  WHERE m.session_id = s.id AND m.role = 'user'
+                  ORDER BY m.seq LIMIT 1),
+                (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
+                (SELECT MAX(m.created_at) FROM messages m WHERE m.session_id = s.id),
+                (SELECT COUNT(*) FROM agent_runs a WHERE a.session_id = s.id)
+           FROM sessions s
+          WHERE s.project_id = ?1 AND s.archived_at IS NULL
+          ORDER BY s.updated_at DESC"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![project_id], map_session)?;
+    let rows = stmt.query_map(params![project_id], map_session_overview)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 

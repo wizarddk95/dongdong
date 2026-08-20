@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/Panel";
+import { isRunActive, runDuration, runStatusStyle } from "@/lib/agentRuns";
 import { useAgents } from "@/store/agents";
 import { useWorkspace } from "@/store/workspace";
 import type { AgentRun } from "@/types/ipc";
@@ -17,34 +18,13 @@ const COLUMNS: { id: string; label: string; statuses: string[]; accent: string }
   { id: "failed", label: "실패 · 취소", statuses: ["failed", "cancelled"], accent: "border-red-900" },
 ];
 
-const STATUS_STYLE: Record<string, { label: string; className: string }> = {
-  pending: { label: "대기", className: "bg-zinc-800 text-zinc-300" },
-  running: { label: "실행 중", className: "bg-emerald-950 text-emerald-300" },
-  succeeded: { label: "성공", className: "bg-sky-950 text-sky-300" },
-  failed: { label: "실패", className: "bg-red-950 text-red-300" },
-  cancelled: { label: "취소", className: "bg-amber-950 text-amber-300" },
-};
-
-function duration(run: AgentRun): string | null {
-  if (!run.startedAt) return null;
-  const end = run.finishedAt ? Date.parse(run.finishedAt) : Date.now();
-  const seconds = Math.max(0, Math.round((end - Date.parse(run.startedAt)) / 1000));
-  return seconds < 60 ? `${seconds}초` : `${Math.floor(seconds / 60)}분 ${seconds % 60}초`;
-}
-
 /**
  * 서브에이전트 대시보드.
  * 메인 에이전트가 `delegate_task` 로 띄운 실행들을 상태별로 보여준다.
  */
 export function AgentDashboard() {
   const project = useWorkspace((state) => state.project);
-  const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const { runs, loading, error, refresh, clearFinished } = useAgents();
-
-  // 세션이 바뀌면 그 세션의 실행 기록을 읽는다.
-  useEffect(() => {
-    void refresh();
-  }, [activeSessionId, refresh]);
 
   // 실행 중인 게 있으면 경과 시간이 흐르도록 주기적으로 다시 그린다.
   const hasActive = runs.some((run) => run.status === "running" || run.status === "pending");
@@ -113,9 +93,9 @@ function RunCard({ run }: { run: AgentRun }) {
   const remove = useAgents((state) => state.remove);
   const [expanded, setExpanded] = useState(false);
 
-  const status = STATUS_STYLE[run.status] ?? STATUS_STYLE.pending;
-  const active = run.status === "running" || run.status === "pending";
-  const elapsed = duration(run);
+  const status = runStatusStyle(run.status);
+  const active = isRunActive(run);
+  const elapsed = runDuration(run);
 
   return (
     <div className="group rounded border border-zinc-800 bg-zinc-900/60 p-2">
@@ -128,13 +108,7 @@ function RunCard({ run }: { run: AgentRun }) {
       {/* 진행률은 스텝 예산 대비 비율이라 정확한 완성도가 아니다 */}
       <div className="mb-1 h-1 overflow-hidden rounded bg-zinc-800">
         <div
-          className={`h-full transition-all ${
-            run.status === "failed" || run.status === "cancelled"
-              ? "bg-red-700"
-              : run.status === "succeeded"
-                ? "bg-sky-600"
-                : "bg-emerald-600"
-          }`}
+          className={`h-full transition-all ${status.barClassName}`}
           style={{ width: `${Math.round((run.progress ?? 0) * 100)}%` }}
         />
       </div>

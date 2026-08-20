@@ -45,6 +45,8 @@ interface AgentsState {
   }) => Promise<DelegateOutcome>;
   cancel: (runId: string) => void;
   remove: (runId: string) => Promise<void>;
+  /** 지워진 노드에 매달려 있던 실행 기록을 함께 정리한다 (턴 삭제용). */
+  removeForMessages: (messageIds: string[]) => Promise<void>;
   clearFinished: () => Promise<void>;
 }
 
@@ -186,6 +188,20 @@ export const useAgents = create<AgentsState>((set, get) => {
       controllers.get(runId)?.abort();
       await ipc.deleteAgentRun(runId);
       set({ runs: get().runs.filter((run) => run.id !== runId) });
+    },
+
+    removeForMessages: async (messageIds) => {
+      const doomed = new Set(messageIds);
+      const targets = get().runs.filter(
+        (run) => run.parentMessageId && doomed.has(run.parentMessageId),
+      );
+      if (targets.length === 0) return;
+
+      for (const run of targets) controllers.get(run.id)?.abort();
+      await Promise.all(targets.map((run) => ipc.deleteAgentRun(run.id)));
+
+      const removed = new Set(targets.map((run) => run.id));
+      set({ runs: get().runs.filter((run) => !removed.has(run.id)) });
     },
 
     clearFinished: async () => {

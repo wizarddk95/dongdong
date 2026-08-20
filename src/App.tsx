@@ -4,6 +4,7 @@ import { AgentDashboard } from "@/components/agents/AgentDashboard";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { FileExplorer } from "@/components/FileExplorer";
 import { FlowCanvas } from "@/components/flow/FlowCanvas";
+import { SessionMap } from "@/components/sessions/SessionMap";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SettingsModal } from "@/components/SettingsModal";
 import { ShellConsole } from "@/components/ShellConsole";
@@ -12,6 +13,9 @@ import { useAgents } from "@/store/agents";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
+
+/** 세션 맵(채팅 앞단) ↔ 채팅 화면 */
+type View = "map" | "chat";
 
 type RightTab = "tree" | "agents" | "files" | "shell";
 
@@ -33,9 +37,13 @@ export default function App() {
   );
 
   const project = useWorkspace((state) => state.project);
+  const activeSessionId = useWorkspace((state) => state.activeSessionId);
+  const selectSession = useWorkspace((state) => state.selectSession);
+  const refreshAgents = useAgents((state) => state.refresh);
   const settingsLoaded = useSettings((state) => state.loaded);
   const connectMcp = useMcp((state) => state.connectEnabled);
 
+  const [view, setView] = useState<View>("map");
   const [tab, setTab] = useState<RightTab>("tree");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -43,6 +51,16 @@ export default function App() {
     void bootstrap();
     void loadSettings();
   }, [bootstrap, loadSettings]);
+
+  // 폴더를 새로 열면 어떤 세션으로 들어갈지 먼저 고르게 한다.
+  useEffect(() => {
+    if (project) setView("map");
+  }, [project?.rootPath]);
+
+  // 서브에이전트 기록은 트리 노드에도 그려지므로 탭과 무관하게 세션마다 읽어 둔다.
+  useEffect(() => {
+    void refreshAgents();
+  }, [activeSessionId, refreshAgents]);
 
   // MCP 서버는 설정을 읽은 뒤에 띄운다. cwd 기본값이 프로젝트 루트라 폴더를 열면 다시 시도한다.
   useEffect(() => {
@@ -64,51 +82,64 @@ export default function App() {
       )}
 
       <main className="flex min-h-0 flex-1">
-        <SessionSidebar />
+        {view === "map" ? (
+          <section className="flex min-w-0 flex-1 flex-col">
+            <SessionMap
+              onOpenSession={(sessionId) => {
+                void selectSession(sessionId);
+                setView("chat");
+              }}
+            />
+          </section>
+        ) : (
+          <>
+            <SessionSidebar onBackToMap={() => setView("map")} />
 
-        {/* 좌: 챗봇 UI */}
-        <section className="flex min-w-0 flex-1 flex-col border-r border-zinc-800">
-          <ChatPanel />
-        </section>
+            {/* 좌: 챗봇 UI */}
+            <section className="flex min-w-0 flex-1 flex-col border-r border-zinc-800">
+              <ChatPanel />
+            </section>
 
-        {/* 우: 노드 트리 시각화 (+ Phase 1 도구들) */}
-        <section className="flex min-h-0 w-[46%] min-w-[380px] flex-col">
-          <nav className="flex shrink-0 gap-1 border-b border-zinc-800 px-2 py-1.5">
-            {TABS.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setTab(item.id)}
-                className={`rounded px-2 py-1 text-[11px] transition-colors ${
-                  tab === item.id
-                    ? "bg-zinc-800 text-zinc-100"
-                    : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
-                }`}
-              >
-                {item.label}
-                {item.id === "agents" && activeAgents > 0 && (
-                  <span className="ml-1 rounded bg-emerald-900 px-1 text-[10px] text-emerald-200">
-                    {activeAgents}
-                  </span>
+            {/* 우: 노드 트리 시각화 (+ Phase 1 도구들) */}
+            <section className="flex min-h-0 w-[46%] min-w-[380px] flex-col">
+              <nav className="flex shrink-0 gap-1 border-b border-zinc-800 px-2 py-1.5">
+                {TABS.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setTab(item.id)}
+                    className={`rounded px-2 py-1 text-[11px] transition-colors ${
+                      tab === item.id
+                        ? "bg-zinc-800 text-zinc-100"
+                        : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
+                    }`}
+                  >
+                    {item.label}
+                    {item.id === "agents" && activeAgents > 0 && (
+                      <span className="ml-1 rounded bg-emerald-900 px-1 text-[10px] text-emerald-200">
+                        {activeAgents}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </nav>
+
+              <div className="min-h-0 flex-1">
+                {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
+                {tab === "agents" && <AgentDashboard />}
+                {tab === "files" && (
+                  <div className="h-full overflow-auto p-2">
+                    <FileExplorer />
+                  </div>
                 )}
-              </button>
-            ))}
-          </nav>
-
-          <div className="min-h-0 flex-1">
-            {tab === "tree" && <FlowCanvas />}
-            {tab === "agents" && <AgentDashboard />}
-            {tab === "files" && (
-              <div className="h-full overflow-auto p-2">
-                <FileExplorer />
+                {tab === "shell" && (
+                  <div className="flex h-full flex-col p-2">
+                    <ShellConsole />
+                  </div>
+                )}
               </div>
-            )}
-            {tab === "shell" && (
-              <div className="flex h-full flex-col p-2">
-                <ShellConsole />
-              </div>
-            )}
-          </div>
-        </section>
+            </section>
+          </>
+        )}
       </main>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />

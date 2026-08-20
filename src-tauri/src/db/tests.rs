@@ -455,3 +455,89 @@ fn reaps_runs_left_behind_by_a_crash() {
     assert_eq!(queries::get_agent_run(&conn, &running.id).unwrap().unwrap().status, "failed");
     assert_eq!(queries::get_agent_run(&conn, &done.id).unwrap().unwrap().status, "succeeded");
 }
+
+#[test]
+fn summarizes_sessions_with_counts_and_preview() {
+    let project = TempProject::new("overview");
+    let mut conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+
+    let record = queries::upsert_project(&conn, &root_path, "overview").unwrap();
+    let empty = queries::create_session(&conn, &record.id, "빈 세션", None, None, None).unwrap();
+    let talking = queries::create_session(&conn, &record.id, "대화", None, None, None).unwrap();
+
+    let first =
+        queries::insert_message(&conn, &message(&talking.id, None, "user", "첫 질문")).unwrap();
+    let second = queries::insert_message(
+        &conn,
+        &message(&talking.id, Some(&first.id), "assistant", "답변"),
+    )
+    .unwrap();
+    queries::insert_message(&conn, &message(&talking.id, Some(&second.id), "user", "두 번째"))
+        .unwrap();
+
+    queries::create_agent_run(
+        &conn,
+        &NewAgentRun {
+            session_id: talking.id.clone(),
+            parent_message_id: Some(second.id.clone()),
+            name: "탐색".into(),
+            task: "폴더를 훑어봐".into(),
+        },
+    )
+    .unwrap();
+
+    // 분기 세션도 목록에 함께 나와야 한다.
+    let branch = queries::branch_session_at(&mut conn, &second.id, Some("분기")).unwrap();
+
+    let overviews = queries::list_session_overviews(&conn, &record.id).unwrap();
+    assert_eq!(overviews.len(), 3);
+
+    let by_id = |id: &str| {
+        overviews
+            .iter()
+            .find(|item| item.session.id == id)
+            .expect("세션이 목록에 있어야 한다")
+    };
+
+    let empty_row = by_id(&empty.id);
+    assert_eq!(empty_row.message_count, 0);
+    assert!(empty_row.last_message_at.is_none());
+    assert!(empty_row.preview.is_none());
+    assert_eq!(empty_row.agent_run_count, 0);
+
+    let talking_row = by_id(&talking.id);
+    assert_eq!(talking_row.message_count, 3);
+    assert_eq!(talking_row.preview.as_deref(), Some("첫 질문"), "첫 user 메시지가 미리보기");
+    assert!(talking_row.last_message_at.is_some());
+    assert_eq!(talking_row.agent_run_count, 1);
+
+    let branch_row = by_id(&branch.id);
+    assert_eq!(branch_row.message_count, 2, "분기 세션은 복제된 노드를 갖는다");
+    assert_eq!(
+        branch_row.session.parent_session_id.as_deref(),
+        Some(talking.id.as_str())
+    );
+    assert_eq!(
+        branch_row.session.branched_from_message_id.as_deref(),
+        Some(second.id.as_str())
+    );
+}
+
+#[test]
+fn truncates_long_session_preview() {
+    let project = TempProject::new("preview");
+    let conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+
+    let record = queries::upsert_project(&conn, &root_path, "preview").unwrap();
+    let session = queries::create_session(&conn, &record.id, "긴 질문", None, None, None).unwrap();
+
+    // 한글이 섞여도 문자 경계에서 잘려야 한다 (바이트 슬라이스면 패닉).
+    let long = "가".repeat(300);
+    queries::insert_message(&conn, &message(&session.id, None, "user", &long)).unwrap();
+
+    let overviews = queries::list_session_overviews(&conn, &record.id).unwrap();
+    let preview = overviews[0].preview.as_deref().unwrap();
+    assert_eq!(preview.chars().count(), 120);
+}

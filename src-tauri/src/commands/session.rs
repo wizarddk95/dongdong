@@ -2,7 +2,7 @@
 
 use tauri::State;
 
-use crate::db::models::{Message, MessagePatch, NewMessage, Session};
+use crate::db::models::{Message, MessagePatch, NewMessage, Session, SessionOverview};
 use crate::db::queries;
 use crate::error::AppResult;
 use crate::state::AppState;
@@ -26,13 +26,14 @@ pub fn create_session(
     })
 }
 
+/// 세션 목록. 카드 표시에 필요한 집계(노드 수 · 마지막 활동 · 미리보기)까지 함께 내려준다.
 #[tauri::command]
 pub fn list_sessions(
     state: State<'_, AppState>,
     project_path: Option<String>,
-) -> AppResult<Vec<Session>> {
+) -> AppResult<Vec<SessionOverview>> {
     state.with_conn(project_path.as_deref(), |conn, project| {
-        queries::list_sessions(conn, &project.id)
+        queries::list_session_overviews(conn, &project.id)
     })
 }
 

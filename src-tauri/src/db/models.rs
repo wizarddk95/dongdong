@@ -27,6 +27,20 @@ pub struct Session {
     pub archived_at: Option<String>,
 }
 
+/// 세션 목록 카드에 필요한 집계까지 얹은 형태.
+/// `session` 을 flatten 하므로 프론트에서는 `Session` 을 확장한 하나의 객체로 보인다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionOverview {
+    #[serde(flatten)]
+    pub session: Session,
+    pub message_count: i64,
+    pub last_message_at: Option<String>,
+    /// 첫 사용자 메시지 앞부분 (세션 맵 카드 미리보기)
+    pub preview: Option<String>,
+    pub agent_run_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {

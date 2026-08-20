@@ -1,13 +1,8 @@
 /**
- * 대화 트리 유틸. DB 의 `messages.parent_id` 만으로 트리를 복원하고
- * React Flow 가 쓸 좌표를 계산한다.
+ * 대화 트리 유틸. DB 의 `messages.parent_id` 만으로 트리를 복원한다.
+ * 좌표 계산은 `lib/layout.ts`, 턴 묶음은 `lib/turns.ts` 담당.
  */
 import type { Message } from "@/types/ipc";
-
-export const NODE_WIDTH = 220;
-export const NODE_HEIGHT = 88;
-const X_GAP = 36;
-const Y_GAP = 56;
 
 export interface TreeIndex {
   byId: Map<string, Message>;
@@ -58,40 +53,4 @@ export function siblingsOf(index: TreeIndex, message: Message): Message[] {
   const parentId =
     message.parentId && index.byId.has(message.parentId) ? message.parentId : null;
   return index.childrenOf.get(parentId) ?? [];
-}
-
-export interface PositionedNode {
-  message: Message;
-  x: number;
-  y: number;
-  depth: number;
-}
-
-/**
- * 위→아래로 흐르는 tidy tree 배치.
- * 잎 노드를 왼쪽부터 차례로 놓고, 부모는 자식들의 가운데에 맞춘다.
- */
-export function layoutTree(messages: Message[]): PositionedNode[] {
-  const index = buildIndex(messages);
-  const positioned: PositionedNode[] = [];
-  let leafCursor = 0;
-
-  const place = (message: Message, depth: number): number => {
-    const children = index.childrenOf.get(message.id) ?? [];
-
-    let x: number;
-    if (children.length === 0) {
-      x = leafCursor * (NODE_WIDTH + X_GAP);
-      leafCursor += 1;
-    } else {
-      const childCenters = children.map((child) => place(child, depth + 1));
-      x = (childCenters[0] + childCenters[childCenters.length - 1]) / 2;
-    }
-
-    positioned.push({ message, x, y: depth * (NODE_HEIGHT + Y_GAP), depth });
-    return x;
-  };
-
-  for (const root of index.roots) place(root, 0);
-  return positioned;
 }

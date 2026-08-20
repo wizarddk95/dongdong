@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 102 / cargo 29. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 124 / cargo 31. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -50,7 +50,11 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 src/
   types/ipc.ts          Rust ↔ TS 타입 (serde camelCase 와 1:1)
   lib/ipc.ts            invoke 얇은 래퍼 — 유일한 IPC 통로
-  lib/tree.ts           parent_id → 트리 복원, pathTo(), 좌표 계산
+  lib/tree.ts           parent_id → 트리 복원, pathTo(), siblingsOf()
+  lib/turns.ts          노드 체인 → 턴(질문+응답+도구) 묶음. 순수 파생, 스키마 무관
+  lib/sessionTree.ts    parent_session_id → 세션 분기 트리
+  lib/layout.ts         왼→오른쪽 tidy tree 좌표 (턴 그래프·세션 맵 공용)
+  lib/agentRuns.ts      서브에이전트 상태 색·경과 시간 (트리 노드와 대시보드 공용)
   lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음)
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입
   lib/ai/runner.ts      streamText 한 턴 (DB 안 건드림) + tool 파트 변환
@@ -59,7 +63,7 @@ src/
   lib/ai/mcp.ts         MCP 도구 → dynamicTool (서버의 JSON Schema 그대로)
   lib/ai/instructions.ts 프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합
   store/                workspace(트리) · chat(턴) · agents(서브) · mcp · settings
-  components/           chat · flow · agents · mcp · inspect(Context/Memory)
+  components/           chat · flow(턴 그래프) · sessions(세션 맵) · agents · mcp · inspect
 src-tauri/src/
   lib.rs                command 등록 지점
   state.rs              프로젝트별 SQLite 커넥션 (with_conn)
@@ -72,10 +76,12 @@ src-tauri/src/
 ## 도메인 개념
 
 - **대화 트리**: `messages.parent_id` 가 간선. 분기는 2층 — (a) 세션 내: `activeParentId` 변경 → 형제 노드, (b) 새 세션: `branch_session` 이 조상 체인을 복제.
+- **턴**: 화면에 보이는 노드 하나 = 턴 하나(user 앵커 + 그 아래 assistant/tool 체인). `lib/turns.ts` 가 매번 다시 계산하며 DB 에는 저장하지 않는다. 삭제도 턴 단위(앵커부터 CASCADE) — 반쪽 노드를 만들지 않는다.
+- **세션 맵**: 프로젝트를 열면 먼저 뜨는 화면. `parent_session_id` 로 세션 분기를 그린다. 카드 집계는 `list_sessions` 가 `SessionOverview` 로 한 번에 내려준다(세션마다 메시지를 읽지 않는다).
 - **도구 실행**: 한 턴이 여러 스텝. 스텝마다 `assistant`(호출) → `tool`(결과) → `assistant` 노드가 쌓인다. 짝 없는 tool-call/result 는 `toModelMessages()` 가 걸러낸다(공급자가 400 을 낸다).
 - **투명성이 이 툴의 경쟁력**: assistant 노드의 `context_snapshot` 에 그 시점 LLM 입력 원문을 남기고 인스펙터로 보여준다. 새 기능도 "무엇이 LLM 에 갔는지" 숨기지 않게 만든다.
 - **프로젝트 지침**: 연 프로젝트 루트의 `AGENTS.md` 를 매 턴 다시 읽어 시스템 프롬프트 맨 앞에 원문 그대로 싣는다(서브에이전트에도 전달).
-- **서브에이전트**: `delegate_task` → 컨텍스트가 격리된 별도 실행, 요약만 상위로. `onDelegate` 없이 ToolSet 을 만들면 도구가 노출되지 않아 재위임이 구조적으로 불가능하다. 상태는 `agent_runs`.
+- **서브에이전트**: `delegate_task` → 컨텍스트가 격리된 별도 실행, 요약만 상위로. `parent_message_id` 가 가리키는 노드의 턴에서 위/아래로 분기해 그려진다(대시보드 탭과 병행). `onDelegate` 없이 ToolSet 을 만들면 도구가 노출되지 않아 재위임이 구조적으로 불가능하다. 상태는 `agent_runs`.
 - **MCP**: 외부 서버를 stdio 자식 프로세스로 띄워 도구를 `mcp__서버__도구` 이름으로 합친다. 파이프 읽기는 블로킹이라 요청마다 감시 스레드로 타임아웃을 건다.
 
 설계 배경과 상세는 `README.md`.
