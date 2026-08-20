@@ -8,6 +8,7 @@
 import { streamText, stepCountIs } from "ai";
 import type { ModelMessage, ToolResultPart, ToolSet } from "@ai-sdk/provider-utils";
 
+import { abortableTools } from "@/lib/ai/abort";
 import {
   providerOptionsFor,
   resolveModel,
@@ -232,7 +233,8 @@ export async function runTurn({
     model,
     system: context.system,
     messages: context.messages,
-    ...(tools && Object.keys(tools).length > 0 ? { tools } : {}),
+    // 도구에 중단을 붙여서 넘긴다 — 안 그러면 도구가 도는 동안 [중단]이 먹지 않는다.
+    ...(tools && Object.keys(tools).length > 0 ? { tools: abortableTools(tools) } : {}),
     stopWhen: stepCountIs(context.maxSteps),
     providerOptions: providerOptionsFor(context.modelId, context.effort),
     abortSignal,
@@ -323,6 +325,10 @@ export async function runTurn({
         break;
     }
   }
+
+  // 중단은 공급자마다 다른 모습으로 온다(끊긴 fetch, 도구 거절, abort 파트).
+  // 시그널이 내려간 상태면 무조건 "중단"으로 취급해 에러 배너 대신 중단 표시를 남긴다.
+  if (abortSignal?.aborted) aborted = true;
 
   if (streamError && !aborted) {
     throw streamError instanceof Error ? streamError : new Error(String(streamError));

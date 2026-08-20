@@ -1,9 +1,12 @@
 //! 로컬 쉘 명령 실행. 도커/샌드박스 없이 사용자 권한으로 직접 실행한다.
-//! OS 별 쉘 분기와 타임아웃, 출력 캡처를 담당한다.
+//! OS 별 쉘 분기와 타임아웃, 출력 캡처, 중단(취소)을 담당한다.
 
 use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +26,11 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_OUTPUT_BYTES: usize = 1_000_000;
 
+/// 자식이 정상 종료했을 때 남은 파이프를 마저 비우며 기다리는 시간.
+const NORMAL_GRACE: Duration = Duration::from_millis(2_000);
+/// kill 한 뒤에는 오래 기다리지 않는다. 손자가 파이프를 물고 있으면 EOF 가 영영 안 온다.
+const KILLED_GRACE: Duration = Duration::from_millis(300);
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellOptions {
@@ -39,6 +47,9 @@ pub struct ShellOptions {
     /// 지정하지 않으면 활성 프로젝트를 사용한다.
     #[serde(default)]
     pub project_path: Option<String>,
+    /// 중단용 토큰. 프론트가 만들어 넘기고, 같은 값으로 `cancel_shell_command` 를 부르면 멈춘다.
+    #[serde(default)]
+    pub cancel_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,9 +63,80 @@ pub struct ShellResult {
     pub exit_code: Option<i32>,
     pub success: bool,
     pub timed_out: bool,
+    /// 사용자가 중단해서 끝난 경우
+    pub cancelled: bool,
     pub truncated: bool,
     pub duration_ms: u64,
 }
+
+// ------------------------------------------------------- 실행 중인 프로세스 레지스트리
+
+/// 돌고 있는 셸 프로세스 하나.
+struct Running {
+    pid: u32,
+    cancelled: Arc<AtomicBool>,
+}
+
+/// `cancelToken` → 프로세스. 중단 버튼이 눌리면 여기서 찾아 트리째 죽인다.
+static RUNNING: OnceLock<Mutex<HashMap<String, Running>>> = OnceLock::new();
+
+fn registry() -> &'static Mutex<HashMap<String, Running>> {
+    RUNNING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 등록을 RAII 로 잡아 둔다 — 어떤 경로로 빠져나가도 레지스트리에 찌꺼기가 남지 않는다.
+struct Registration(Option<String>);
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        if let Some(token) = self.0.take() {
+            if let Ok(mut map) = registry().lock() {
+                map.remove(&token);
+            }
+        }
+    }
+}
+
+/// 자식만 죽이면 손자(예: `cmd /C pnpm dev` 안의 node)가 살아남아 파이프를 계속 물고 있는다.
+/// Windows 는 taskkill 로 트리째 정리한다.
+#[cfg(windows)]
+fn kill_tree(pid: u32) {
+    let _ = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &pid.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// 그 외 OS 는 자식만 정리한다. (프로세스 그룹까지 다루려면 libc 의존성이 필요하다)
+#[cfg(not(windows))]
+fn kill_tree(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// 실행 중인 셸 명령을 취소한다. 없는 토큰이면 false.
+pub fn cancel_token(token: &str) -> bool {
+    let entry = match registry().lock() {
+        Ok(mut map) => map.remove(token),
+        Err(_) => None,
+    };
+
+    match entry {
+        Some(running) => {
+            running.cancelled.store(true, Ordering::Relaxed);
+            kill_tree(running.pid);
+            true
+        }
+        None => false,
+    }
+}
+
+// ------------------------------------------------------------------------- 실행
 
 /// 요청한 쉘 이름을 (실행 프로그램, 명령 문자열 앞에 붙는 인자들)로 변환한다.
 fn resolve_shell(requested: Option<&str>) -> AppResult<(String, Vec<String>)> {
@@ -103,7 +185,53 @@ fn decode(bytes: Vec<u8>) -> (String, bool) {
     (String::from_utf8_lossy(slice).into_owned(), truncated)
 }
 
-/// 실제 실행. 타임아웃 시 자식 프로세스를 kill 한다. (블로킹 — 워커 스레드에서 호출할 것)
+/// 파이프를 청크 단위로 공유 버퍼에 붓는다.
+/// `read_to_end` 로 통째로 받으면 리더가 EOF 를 못 봤을 때 여태 읽은 것까지 버려진다.
+fn pump(mut stream: impl Read + Send + 'static, sink: Arc<Mutex<Vec<u8>>>) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut chunk = [0_u8; 8192];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    if let Ok(mut buffer) = sink.lock() {
+                        if buffer.len() < MAX_OUTPUT_BYTES {
+                            buffer.extend_from_slice(&chunk[..read]);
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// 리더 스레드를 기다리되 영원히 붙잡히지는 않는다.
+/// 손자 프로세스가 파이프를 물려받아 살아 있으면 EOF 가 오지 않는다 —
+/// 예전에는 여기(`join()`)에서 워커가 영구히 멈춰 도구 호출이 끝나지 않았다.
+fn join_with_grace(handle: JoinHandle<()>, grace: Duration) {
+    let deadline = Instant::now() + grace;
+    while Instant::now() < deadline {
+        if handle.is_finished() {
+            let _ = handle.join();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn snapshot(buffer: &Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
+    buffer.lock().map(|guard| guard.clone()).unwrap_or_default()
+}
+
+struct Outcome {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    cancelled: bool,
+}
+
+/// 실제 실행. 타임아웃/취소 시 프로세스 트리를 kill 한다. (블로킹 — 워커 스레드에서 호출할 것)
 fn run(
     program: &str,
     pre_args: &[String],
@@ -111,7 +239,8 @@ fn run(
     cwd: &std::path::Path,
     env: Option<&HashMap<String, String>>,
     timeout: Duration,
-) -> AppResult<(Vec<u8>, Vec<u8>, Option<i32>, bool)> {
+    token: Option<String>,
+) -> AppResult<Outcome> {
     let mut cmd = Command::new(program);
     cmd.args(pre_args)
         .arg(command_line)
@@ -133,33 +262,55 @@ fn run(
         .spawn()
         .map_err(|e| AppError::invalid(format!("쉘 실행 실패 ({program}): {e}")))?;
 
+    let pid = child.id();
+    let cancelled = Arc::new(AtomicBool::new(false));
+
+    // 취소 토큰이 있으면 레지스트리에 올린다. 스코프를 벗어나면 Drop 이 지운다.
+    let _registration = match token {
+        Some(token) => {
+            if let Ok(mut map) = registry().lock() {
+                map.insert(
+                    token.clone(),
+                    Running {
+                        pid,
+                        cancelled: cancelled.clone(),
+                    },
+                );
+            }
+            Registration(Some(token))
+        }
+        None => Registration(None),
+    };
+
     // 파이프 버퍼가 가득 차서 자식이 블로킹되지 않도록 별도 스레드에서 읽는다.
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
-    let out_handle = std::thread::spawn(move || {
-        let mut buffer = Vec::new();
-        if let Some(pipe) = stdout.as_mut() {
-            let _ = pipe.read_to_end(&mut buffer);
-        }
-        buffer
-    });
-    let err_handle = std::thread::spawn(move || {
-        let mut buffer = Vec::new();
-        if let Some(pipe) = stderr.as_mut() {
-            let _ = pipe.read_to_end(&mut buffer);
-        }
-        buffer
-    });
+    let stdout_buffer = Arc::new(Mutex::new(Vec::new()));
+    let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
+    let out_handle = child
+        .stdout
+        .take()
+        .map(|pipe| pump(pipe, stdout_buffer.clone()));
+    let err_handle = child
+        .stderr
+        .take()
+        .map(|pipe| pump(pipe, stderr_buffer.clone()));
 
     let started = Instant::now();
     let mut timed_out = false;
+    let mut was_cancelled = false;
+
     let status = loop {
         match child.try_wait()? {
             Some(status) => break Some(status),
             None => {
+                if cancelled.load(Ordering::Relaxed) {
+                    // 취소 쪽에서 이미 kill 했지만, 놓친 자식이 없도록 한 번 더 확인사살한다.
+                    kill_tree(pid);
+                    let _ = child.wait();
+                    was_cancelled = true;
+                    break None;
+                }
                 if started.elapsed() >= timeout {
-                    // kill 하면 파이프가 닫히고 위의 리더 스레드도 함께 끝난다.
-                    let _ = child.kill();
+                    kill_tree(pid);
                     let _ = child.wait();
                     timed_out = true;
                     break None;
@@ -169,15 +320,28 @@ fn run(
         }
     };
 
-    let stdout_bytes = out_handle.join().unwrap_or_default();
-    let stderr_bytes = err_handle.join().unwrap_or_default();
+    // kill 이 빨라서 위 루프가 status 를 받고 빠져나왔을 수도 있다.
+    was_cancelled = was_cancelled || cancelled.load(Ordering::Relaxed);
 
-    Ok((
-        stdout_bytes,
-        stderr_bytes,
-        status.and_then(|s| s.code()),
+    let grace = if timed_out || was_cancelled {
+        KILLED_GRACE
+    } else {
+        NORMAL_GRACE
+    };
+    if let Some(handle) = out_handle {
+        join_with_grace(handle, grace);
+    }
+    if let Some(handle) = err_handle {
+        join_with_grace(handle, grace);
+    }
+
+    Ok(Outcome {
+        stdout: snapshot(&stdout_buffer),
+        stderr: snapshot(&stderr_buffer),
+        exit_code: status.and_then(|s| s.code()),
         timed_out,
-    ))
+        cancelled: was_cancelled,
+    })
 }
 
 /// 로컬 쉘 명령을 실행한다. (Phase 1 핵심 IPC)
@@ -231,23 +395,24 @@ pub async fn execute_shell_command(
     let worker_program = program.clone();
     let worker_cwd = cwd.clone();
     let worker_env = options.env.clone();
+    let worker_token = options.cancel_token.clone();
 
-    let (stdout_bytes, stderr_bytes, exit_code, timed_out) =
-        tauri::async_runtime::spawn_blocking(move || {
-            run(
-                &worker_program,
-                &pre_args,
-                &command_line,
-                &worker_cwd,
-                worker_env.as_ref(),
-                timeout,
-            )
-        })
-        .await
-        .map_err(|e| AppError::invalid(format!("쉘 워커 스레드 오류: {e}")))??;
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        run(
+            &worker_program,
+            &pre_args,
+            &command_line,
+            &worker_cwd,
+            worker_env.as_ref(),
+            timeout,
+            worker_token,
+        )
+    })
+    .await
+    .map_err(|e| AppError::invalid(format!("쉘 워커 스레드 오류: {e}")))??;
 
-    let (stdout, out_truncated) = decode(stdout_bytes);
-    let (stderr, err_truncated) = decode(stderr_bytes);
+    let (stdout, out_truncated) = decode(outcome.stdout);
+    let (stderr, err_truncated) = decode(outcome.stderr);
 
     Ok(ShellResult {
         command,
@@ -255,10 +420,109 @@ pub async fn execute_shell_command(
         cwd: cwd.to_string_lossy().into_owned(),
         stdout,
         stderr,
-        success: !timed_out && exit_code == Some(0),
-        exit_code,
-        timed_out,
+        success: !outcome.timed_out && !outcome.cancelled && outcome.exit_code == Some(0),
+        exit_code: outcome.exit_code,
+        timed_out: outcome.timed_out,
+        cancelled: outcome.cancelled,
         truncated: out_truncated || err_truncated,
         duration_ms: started.elapsed().as_millis() as u64,
     })
+}
+
+/// 실행 중인 셸 명령을 중단한다. 프론트의 [중단] 이 여기까지 내려온다.
+/// taskkill 자체가 프로세스를 띄우므로 워커 스레드에서 돌린다.
+#[tauri::command]
+pub async fn cancel_shell_command(token: String) -> AppResult<bool> {
+    tauri::async_runtime::spawn_blocking(move || cancel_token(&token))
+        .await
+        .map_err(|e| AppError::invalid(format!("쉘 취소 워커 오류: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shell_for_test() -> (String, Vec<String>) {
+        resolve_shell(None).expect("기본 쉘 해석 실패")
+    }
+
+    /// 오래 걸리는 명령을 취소하면 타임아웃을 기다리지 않고 즉시 끝나야 한다.
+    #[test]
+    fn cancel_stops_a_long_command() {
+        let (program, pre_args) = shell_for_test();
+        let command = if cfg!(windows) {
+            "ping -n 60 127.0.0.1 >nul"
+        } else {
+            "sleep 60"
+        };
+
+        let token = String::from("test-cancel-token");
+        let worker_token = token.clone();
+        let worker_program = program.clone();
+        let worker_args = pre_args.clone();
+        let cwd = std::env::current_dir().expect("cwd");
+
+        let handle = std::thread::spawn(move || {
+            run(
+                &worker_program,
+                &worker_args,
+                command,
+                &cwd,
+                None,
+                Duration::from_secs(60),
+                Some(worker_token),
+            )
+        });
+
+        // 프로세스가 레지스트리에 올라올 때까지 잠깐 기다린다.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if registry().lock().map(|m| m.contains_key(&token)).unwrap_or(false) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        assert!(cancel_token(&token), "취소 대상이 레지스트리에 있어야 한다");
+
+        let started = Instant::now();
+        let outcome = handle.join().expect("워커 조인 실패").expect("실행 실패");
+
+        assert!(outcome.cancelled, "취소로 끝났다고 표시되어야 한다");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "취소 후 곧바로 반환되어야 한다"
+        );
+        assert!(
+            !registry().lock().map(|m| m.contains_key(&token)).unwrap_or(true),
+            "끝난 뒤 레지스트리에서 빠져야 한다"
+        );
+    }
+
+    #[test]
+    fn cancel_unknown_token_is_false() {
+        assert!(!cancel_token("존재하지-않는-토큰"));
+    }
+
+    /// 정상 종료한 명령의 출력은 그대로 잡혀야 한다 (청크 리더 회귀 방지).
+    #[test]
+    fn captures_output_of_a_normal_command() {
+        let (program, pre_args) = shell_for_test();
+        let cwd = std::env::current_dir().expect("cwd");
+        let outcome = run(
+            &program,
+            &pre_args,
+            "echo dongdong",
+            &cwd,
+            None,
+            Duration::from_secs(30),
+            None,
+        )
+        .expect("실행 실패");
+
+        assert_eq!(outcome.exit_code, Some(0));
+        assert!(!outcome.cancelled);
+        assert!(!outcome.timed_out);
+        assert!(String::from_utf8_lossy(&outcome.stdout).contains("dongdong"));
+    }
 }

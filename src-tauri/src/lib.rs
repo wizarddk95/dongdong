@@ -38,6 +38,7 @@ pub fn run() {
             commands::settings::app_settings_path,
             // shell
             commands::shell::execute_shell_command,
+            commands::shell::cancel_shell_command,
             // file system
             commands::fs::read_file,
             commands::fs::write_file,

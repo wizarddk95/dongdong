@@ -196,6 +196,8 @@ export interface ShellOptions {
   env?: Record<string, string>;
   timeoutMs?: number;
   projectPath?: string;
+  /** 중단용 토큰. 같은 값으로 cancelShellCommand 를 부르면 프로세스 트리를 죽인다. */
+  cancelToken?: string;
 }
 
 export interface ShellResult {
@@ -207,6 +209,8 @@ export interface ShellResult {
   exitCode: number | null;
   success: boolean;
   timedOut: boolean;
+  /** 사용자가 중단해서 끝난 경우 */
+  cancelled: boolean;
   truncated: boolean;
   durationMs: number;
 }

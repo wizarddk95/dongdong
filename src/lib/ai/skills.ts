@@ -65,6 +65,12 @@ export interface SkillOptions {
   }) => Promise<DelegateResult>;
 }
 
+/** 셸 실행마다 붙이는 중단 토큰. `crypto.randomUUID` 가 없는 환경(구형 웹뷰)도 대비한다. */
+function newCancelToken(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid ?? `shell-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 /** 도구 하나가 LLM 컨텍스트를 통째로 잡아먹지 않도록 출력에 상한을 둔다. */
 const MAX_TOOL_OUTPUT_CHARS = 20_000;
 const MAX_DIR_ENTRIES = 300;
@@ -201,12 +207,17 @@ export function buildSkills(options: SkillOptions = {}): ToolSet {
         cwd: z.string().optional().describe("작업 디렉터리 (생략 시 프로젝트 루트)"),
         timeoutMs: z.number().int().positive().optional().describe("타임아웃 (기본 120000ms)"),
       }),
-      execute: async ({ command, cwd, timeoutMs }) => {
-        const result = await ipc.executeShellCommand(command, {
-          cwd,
-          timeoutMs,
-          projectPath,
-        });
+      execute: async ({ command, cwd, timeoutMs }, { abortSignal }) => {
+        // 중단을 누르면 프로세스를 실제로 죽여야 한다. 토큰으로 Rust 쪽 실행을 찾아 트리째 정리한다.
+        const cancelToken = newCancelToken();
+        const onAbort = () => {
+          void ipc.cancelShellCommand(cancelToken).catch(() => {});
+        };
+        abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+        const result = await ipc
+          .executeShellCommand(command, { cwd, timeoutMs, projectPath, cancelToken })
+          .finally(() => abortSignal?.removeEventListener("abort", onAbort));
         const stdout = clip(result.stdout);
         const stderr = clip(result.stderr, 4_000);
         return {
@@ -215,6 +226,7 @@ export function buildSkills(options: SkillOptions = {}): ToolSet {
           exitCode: result.exitCode,
           success: result.success,
           timedOut: result.timedOut,
+          cancelled: result.cancelled,
           durationMs: result.durationMs,
           stdout: stdout.text,
           stderr: stderr.text,

@@ -37,6 +37,7 @@ export function ShellConsole() {
           exitCode: null,
           success: false,
           timedOut: false,
+          cancelled: false,
           truncated: false,
           durationMs: 0,
         },

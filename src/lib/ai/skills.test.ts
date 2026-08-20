@@ -12,6 +12,7 @@ vi.mock("@/lib/ipc", () => ({
   deletePath: vi.fn(),
   pathInfo: vi.fn(),
   executeShellCommand: vi.fn(),
+  cancelShellCommand: vi.fn(),
   upsertMemory: vi.fn(),
   listMemories: vi.fn(),
 }));
@@ -131,6 +132,7 @@ describe("도구 실행", () => {
       exitCode: 0,
       success: true,
       timedOut: false,
+      cancelled: false,
       truncated: false,
       durationMs: 42,
     });
@@ -146,6 +148,48 @@ describe("도구 실행", () => {
     expect(result.stdout).toBe("ok");
   });
 
+  it("중단하면 실행 중인 셸 프로세스를 취소 토큰으로 죽인다", async () => {
+    const controller = new AbortController();
+    let sentToken: string | undefined;
+
+    // 끝나지 않는 명령: 취소가 들어와야 풀린다.
+    mocked.executeShellCommand.mockImplementation(async (_command, options) => {
+      sentToken = options?.cancelToken;
+      return new Promise((resolve) => {
+        mocked.cancelShellCommand.mockImplementation(async (token: string) => {
+          resolve({
+            command: "pnpm dev",
+            shell: "cmd",
+            cwd: "C:/p",
+            stdout: "",
+            stderr: "",
+            exitCode: null,
+            success: false,
+            timedOut: false,
+            cancelled: token === sentToken,
+            truncated: false,
+            durationMs: 10,
+          });
+          return true;
+        });
+      });
+    });
+
+    const tool = buildSkills().execute_shell_command as unknown as {
+      execute: (input: unknown, options: unknown) => Promise<{ cancelled: boolean }>;
+    };
+    const pending = tool.execute(
+      { command: "pnpm dev" },
+      { toolCallId: "call-1", messages: [], abortSignal: controller.signal },
+    );
+
+    controller.abort();
+    const result = await pending;
+
+    expect(mocked.cancelShellCommand).toHaveBeenCalledWith(sentToken);
+    expect(result.cancelled).toBe(true);
+  });
+
   it("긴 쉘 출력은 잘라서 컨텍스트를 지킨다", async () => {
     mocked.executeShellCommand.mockResolvedValue({
       command: "cat big",
@@ -156,6 +200,7 @@ describe("도구 실행", () => {
       exitCode: 0,
       success: true,
       timedOut: false,
+      cancelled: false,
       truncated: false,
       durationMs: 1,
     });

@@ -142,6 +142,63 @@ describe("useAgents.spawn", () => {
     expect(useAgents.getState().runs[0].status).toBe("cancelled");
   });
 
+  it("중단을 누르면 실행이 끝나기 전에도 카드가 곧바로 중단으로 바뀐다", async () => {
+    let release: (() => void) | null = null;
+    vi.mocked(runSubagent).mockImplementation(async (options) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { ...finished, aborted: options.abortSignal?.aborted ?? false, text: "" };
+    });
+
+    const pending = useAgents.getState().spawn({ name: "러너", task: "일" });
+    await vi.waitFor(() => expect(release).not.toBeNull());
+
+    useAgents.getState().cancel("r1");
+    // 서브에이전트가 아직 풀리지 않았는데도 화면 상태는 이미 중단이다.
+    expect(useAgents.getState().runs[0].status).toBe("cancelled");
+
+    release!();
+    await expect(pending).resolves.toMatchObject({ status: "cancelled" });
+  });
+
+  it("중단 도중 터진 예외는 실패가 아니라 취소로 남는다", async () => {
+    vi.mocked(runSubagent).mockImplementation(async () => {
+      useAgents.getState().cancel("r1");
+      // 중단되면 도구가 거절되면서 예외로 빠져나온다 (abortableTools).
+      throw new Error("중단되었습니다 (execute_shell_command)");
+    });
+
+    const outcome = await useAgents.getState().spawn({ name: "러너", task: "일" });
+
+    expect(outcome.status).toBe("cancelled");
+    expect(useAgents.getState().runs[0].status).toBe("cancelled");
+  });
+
+  it("실행 중에 삭제하면 즉시 목록에서 빠지고 없는 행에 UPDATE 하지 않는다", async () => {
+    let release: (() => void) | null = null;
+    vi.mocked(runSubagent).mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { ...finished, aborted: true, text: "" };
+    });
+
+    const pending = useAgents.getState().spawn({ name: "러너", task: "일" });
+    await vi.waitFor(() => expect(release).not.toBeNull());
+
+    await useAgents.getState().remove("r1");
+    expect(useAgents.getState().runs).toHaveLength(0);
+    expect(mocked.deleteAgentRun).toHaveBeenCalledWith("r1");
+
+    const writesBefore = mocked.updateAgentRun.mock.calls.length;
+    release!();
+    await pending;
+
+    expect(mocked.updateAgentRun.mock.calls.length).toBe(writesBefore);
+    expect(useAgents.getState().runs).toHaveLength(0);
+  });
+
   it("메인 턴이 중지되면 하위 에이전트도 끊긴다", async () => {
     const turn = new AbortController();
     vi.mocked(runSubagent).mockImplementation(async (options) => {

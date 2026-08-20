@@ -73,6 +73,10 @@ export const appSettingsPath = () => call<string>("app_settings_path");
 export const executeShellCommand = (command: string, options?: ShellOptions) =>
   call<ShellResult>("execute_shell_command", { command, options });
 
+/** 실행 중인 셸 명령을 중단한다 (`ShellOptions.cancelToken` 과 같은 값). */
+export const cancelShellCommand = (token: string) =>
+  call<boolean>("cancel_shell_command", { token });
+
 // -------------------------------------------------------------------- fs
 
 export const readFile = (path: string, projectPath?: string) =>

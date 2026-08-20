@@ -25,6 +25,8 @@ import { useWorkspace } from "@/store/workspace";
 
 interface ChatState {
   running: boolean;
+  /** [중단]을 누른 뒤 턴이 실제로 풀릴 때까지 */
+  stopping: boolean;
   /** 지금 스트리밍 중인 assistant 노드 id */
   streamingMessageId: string | null;
   streamingText: string;
@@ -64,6 +66,7 @@ function summarizeStep(step: StepRecord): string {
 
 export const useChat = create<ChatState>((set, get) => ({
   running: false,
+  stopping: false,
   streamingMessageId: null,
   streamingText: "",
   streamingReasoning: "",
@@ -89,6 +92,7 @@ export const useChat = create<ChatState>((set, get) => ({
 
     set({
       running: true,
+      stopping: false,
       error: null,
       streamingText: "",
       streamingReasoning: "",
@@ -229,6 +233,8 @@ export const useChat = create<ChatState>((set, get) => ({
         });
       }
     } catch (error) {
+      // 중단으로 끊긴 것은 실패가 아니다 — 에러 배너 대신 "중단됨" 으로 남긴다.
+      const aborted = controller?.signal.aborted ?? false;
       const messageText =
         error instanceof MissingApiKeyError
           ? error.message
@@ -236,15 +242,15 @@ export const useChat = create<ChatState>((set, get) => ({
             ? error.message
             : String(error);
 
-      set({ error: messageText });
+      if (!aborted) set({ error: messageText });
 
-      // 빈 껍데기 노드가 트리에 남지 않도록 실패 상태를 기록해 둔다.
+      // 빈 껍데기 노드가 트리에 남지 않도록 상태를 기록해 둔다.
       if (assistantId) {
         try {
           const saved = await ipc.updateMessage(assistantId, {
             content: get().streamingText,
-            status: "error",
-            toolResults: { error: messageText },
+            status: aborted ? "aborted" : "error",
+            ...(aborted ? {} : { toolResults: { error: messageText } }),
           });
           useWorkspace.getState().replaceMessage(saved);
         } catch {
@@ -255,6 +261,7 @@ export const useChat = create<ChatState>((set, get) => ({
       controller = null;
       set({
         running: false,
+        stopping: false,
         streamingMessageId: null,
         streamingText: "",
         streamingReasoning: "",
@@ -264,6 +271,9 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 
   stop: () => {
+    if (!get().running) return;
+    // 도구가 실행 중이면 그 도구가 거절될 때까지 한 박자가 걸린다. 버튼 상태로 알려 준다.
+    set({ stopping: true });
     controller?.abort();
   },
 

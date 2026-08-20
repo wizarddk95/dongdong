@@ -22,6 +22,7 @@ export function ChatPanel() {
 
   const {
     running,
+    stopping,
     streamingMessageId,
     streamingText,
     streamingReasoning,
@@ -173,8 +174,17 @@ export function ChatPanel() {
             className="min-h-0 flex-1 resize-none rounded border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none disabled:opacity-50"
           />
           {running ? (
-            <Button variant="danger" onClick={stop} className="h-9 px-3">
-              중지
+            <Button
+              variant="danger"
+              onClick={stop}
+              className="h-9 px-3"
+              title={
+                stopping
+                  ? "실행 중인 도구가 정리되는 중입니다"
+                  : "이 턴과 딸린 서브에이전트를 모두 중단합니다"
+              }
+            >
+              {stopping ? "중지 중…" : "중지"}
             </Button>
           ) : (
             <Button
