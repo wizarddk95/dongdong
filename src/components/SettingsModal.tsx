@@ -6,7 +6,6 @@ import {
   DEFAULT_LOCAL_BASE_URL,
   buildModelOptions,
   defaultEffortFor,
-  fetchLocalModels,
   type Effort,
 } from "@/lib/ai/providers";
 import { DEFAULT_SKILLS, SKILL_GROUPS, type SkillToggles } from "@/lib/ai/skills";
@@ -41,7 +40,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     settings.useProjectInstructions,
   );
 
-  // 클라우드 카탈로그 + 로컬 프리셋 + 로컬 서버에서 발견한 태그
+  // 클라우드 카탈로그 + 로컬 서버가 실제로 갖고 있는 태그
   const modelOptions = useMemo(
     () => buildModelOptions(settings.localModels),
     [settings.localModels],
@@ -89,15 +88,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     onClose();
   }
 
-  /** 로컬 서버(`GET /v1/models`)에 실제로 깔린 모델을 읽어 드롭다운에 채운다. */
+  /** 로컬 서버(`GET /v1/models`)에 실제로 깔린 모델을 읽어 드롭다운을 그 목록으로 갈아 끼운다. */
   async function refreshLocalModels() {
     setProbe({ state: "loading", message: "" });
     try {
-      const models = await fetchLocalModels(localBaseUrl);
-      await settings.update({
-        localBaseUrl: localBaseUrl.trim() || DEFAULT_LOCAL_BASE_URL,
-        localModels: models,
-      });
+      const models = await settings.refreshLocalModels(localBaseUrl);
       setProbe({
         state: models.length ? "ok" : "error",
         message: models.length
@@ -256,9 +251,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 {probe.state === "loading" ? "확인 중…" : "설치된 모델 불러오기"}
               </Button>
               <span className="text-[10px] text-zinc-600">
-                불러온 태그는 위 모델 드롭다운에 그대로 추가됩니다.
+                위 드롭다운의 로컬 모델은 여기서 불러온 목록이 전부입니다.
               </span>
             </div>
+            <p className="text-[10px] break-all text-zinc-600">
+              {settings.localModels.length
+                ? `현재 목록: ${settings.localModels.join(", ")}`
+                : "발견된 로컬 모델이 없습니다 — 서버를 띄운 뒤 다시 불러오세요."}
+            </p>
             {probe.message && (
               <p
                 className={`text-[10px] break-all ${

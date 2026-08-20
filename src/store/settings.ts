@@ -11,6 +11,7 @@ import {
   DEFAULT_MODEL_ID,
   canonicalModelId,
   defaultEffortFor,
+  fetchLocalModels,
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
@@ -37,8 +38,8 @@ interface SettingsState extends ProviderCredentials {
   /** MCP 서버 실행 설정 목록 */
   mcpServers: McpServerConfig[];
   /**
-   * 로컬 서버에서 마지막으로 발견한 모델 태그.
-   * 서버가 꺼져 있어도 드롭다운이 비지 않게 저장해 둔다.
+   * 로컬 서버가 **실제로 갖고 있다고 답한** 모델 태그. 드롭다운의 로컬 항목은 이게 전부다.
+   * 서버가 꺼져 있어도 드롭다운이 비지 않게 마지막 목록을 저장해 둔다.
    */
   localModels: string[];
 
@@ -48,6 +49,11 @@ interface SettingsState extends ProviderCredentials {
 
   load: () => Promise<void>;
   update: (patch: Partial<PersistedSettings>) => Promise<void>;
+  /**
+   * 로컬 서버에 지금 무엇이 깔려 있는지 다시 묻는다.
+   * 실패하면(서버가 꺼져 있음) 던진다 — 직전 목록은 그대로 두는 게 맞다.
+   */
+  refreshLocalModels: (baseUrl?: string) => Promise<string[]>;
   credentials: () => ProviderCredentials;
 }
 
@@ -142,6 +148,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
         settingsPath: path,
         loaded: true,
       });
+      // 저장된 목록은 지난번 스냅샷일 뿐이다. 그 사이 모델을 지웠을 수도 있으니
+      // 한 번 다시 물어 실제로 있는 것만 남긴다. 서버가 꺼져 있으면 조용히 넘어간다.
+      void get()
+        .refreshLocalModels()
+        .catch(() => undefined);
     } catch {
       // 설정을 못 읽어도 앱은 떠야 한다. 기본값으로 계속 진행.
       set({ loaded: true });
@@ -162,6 +173,19 @@ export const useSettings = create<SettingsState>((set, get) => ({
     } finally {
       set({ saving: false });
     }
+  },
+
+  refreshLocalModels: async (baseUrl) => {
+    const url = baseUrl?.trim() || get().localBaseUrl || DEFAULT_LOCAL_BASE_URL;
+    const models = await fetchLocalModels(url);
+    const state = get();
+    // 앱을 띄울 때마다 도는 경로라, 달라진 게 없으면 디스크를 건드리지 않는다.
+    const changed =
+      url !== state.localBaseUrl ||
+      models.length !== state.localModels.length ||
+      models.some((model, index) => model !== state.localModels[index]);
+    if (changed) await state.update({ localBaseUrl: url, localModels: models });
+    return models;
   },
 
   credentials: () => {

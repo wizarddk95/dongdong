@@ -7,6 +7,12 @@ vi.mock("@/lib/ipc", () => ({
   writeAppSettings: vi.fn(async () => undefined),
 }));
 
+// 로컬 서버 탐색도 Rust(HTTP 플러그인)를 타므로 막아 둔다.
+vi.mock("@tauri-apps/plugin-http", () => ({ fetch: vi.fn() }));
+
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+
+import * as ipc from "@/lib/ipc";
 import { useSettings } from "@/store/settings";
 
 describe("모델을 바꾸면 권장 사고 강도를 따라간다", () => {
@@ -32,5 +38,62 @@ describe("모델을 바꾸면 권장 사고 강도를 따라간다", () => {
   it("모델이 그대로면 effort 를 건드리지 않는다", async () => {
     await useSettings.getState().update({ modelId: "anthropic:claude-opus-5" });
     expect(useSettings.getState().effort).toBe("max");
+  });
+});
+
+describe("로컬 모델 목록 새로고침", () => {
+  const http = vi.mocked(tauriFetch);
+
+  function serverHas(models: string[]) {
+    http.mockReset();
+    http.mockResolvedValue(
+      new Response(JSON.stringify({ data: models.map((id) => ({ id })) }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }) as never,
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(ipc.writeAppSettings).mockClear();
+    useSettings.setState({
+      localBaseUrl: "http://localhost:11434/v1",
+      localModels: [],
+    });
+  });
+
+  it("서버가 알려준 목록으로 갈아 끼운다", async () => {
+    serverHas(["gpt-oss:20b"]);
+    await expect(useSettings.getState().refreshLocalModels()).resolves.toEqual(["gpt-oss:20b"]);
+    expect(useSettings.getState().localModels).toEqual(["gpt-oss:20b"]);
+  });
+
+  it("서버에서 사라진 모델은 목록에서도 빠진다", async () => {
+    useSettings.setState({ localModels: ["gpt-oss:20b", "qwen3:14b"] });
+    serverHas(["gpt-oss:20b"]);
+    await useSettings.getState().refreshLocalModels();
+    expect(useSettings.getState().localModels).toEqual(["gpt-oss:20b"]);
+  });
+
+  it("달라진 게 없으면 디스크를 건드리지 않는다 (앱 뜰 때마다 도는 경로다)", async () => {
+    useSettings.setState({ localModels: ["gpt-oss:20b"] });
+    serverHas(["gpt-oss:20b"]);
+    await useSettings.getState().refreshLocalModels();
+    expect(ipc.writeAppSettings).not.toHaveBeenCalled();
+  });
+
+  it("주소를 함께 넘기면 그 주소를 저장한다", async () => {
+    serverHas(["gpt-oss:20b"]);
+    await useSettings.getState().refreshLocalModels("  http://127.0.0.1:1234/v1  ");
+    expect(useSettings.getState().localBaseUrl).toBe("http://127.0.0.1:1234/v1");
+    expect(http.mock.calls[0][0]).toBe("http://127.0.0.1:1234/v1/models");
+  });
+
+  it("서버가 꺼져 있으면 던지고 직전 목록은 그대로 둔다", async () => {
+    useSettings.setState({ localModels: ["gpt-oss:20b"] });
+    http.mockReset();
+    http.mockRejectedValue(new Error("connection refused"));
+    await expect(useSettings.getState().refreshLocalModels()).rejects.toThrow();
+    expect(useSettings.getState().localModels).toEqual(["gpt-oss:20b"]);
   });
 });

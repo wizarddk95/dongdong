@@ -485,9 +485,11 @@ export const MODEL_CATALOG: ModelOption[] = [
 export const DEFAULT_LOCAL_BASE_URL = "http://localhost:11434/v1";
 
 /**
- * 로컬 오픈소스 모델 프리셋 — 16GB VRAM(RTX 5080) 기준으로 고른 것들.
- * 여기 목록은 "추천"일 뿐이고, 실제로 무엇이 깔려 있는지는
- * `fetchLocalModels()` 가 서버의 `/v1/models` 에서 직접 읽어온다.
+ * 로컬 모델의 **표시용 메타데이터 표**. 목록이 아니라 라벨·설명 사전이다.
+ *
+ * 드롭다운에 무엇이 뜨는지는 여기가 아니라 `fetchLocalModels()` 가 서버의
+ * `/v1/models` 에서 읽어온 결과가 정한다 — 여기 있는 태그를 서버가 갖고 있으면
+ * `localModelOption()` 이 밋밋한 태그 대신 이 라벨을 입혀 준다.
  */
 export const LOCAL_MODEL_PRESETS: ModelOption[] = [
   {
@@ -495,32 +497,11 @@ export const LOCAL_MODEL_PRESETS: ModelOption[] = [
     provider: "local",
     modelId: "gpt-oss:20b",
     label: "gpt-oss 20B (로컬)",
-    note: "MXFP4 14GB · 128K · 함수 호출 기본 탑재 — 16GB 첫 후보",
-  },
-  {
-    id: "local:qwen3-coder:30b",
-    provider: "local",
-    modelId: "qwen3-coder:30b",
-    label: "Qwen3-Coder 30B-A3B (로컬)",
-    note: "Q4 19GB · 256K · 코딩 최강이지만 16GB 는 일부 CPU 오프로드",
-  },
-  {
-    id: "local:devstral:24b",
-    provider: "local",
-    modelId: "devstral:24b",
-    label: "Devstral 24B (로컬)",
-    note: "Q4 ~14GB · 에이전트용으로 학습된 밀집 모델",
-  },
-  {
-    id: "local:qwen3:14b",
-    provider: "local",
-    modelId: "qwen3:14b",
-    label: "Qwen3 14B (로컬)",
-    note: "Q4 ~11GB · VRAM 안에 완전히 들어가 가장 빠름",
+    note: "MXFP4 14GB · 128K · 함수 호출 기본 탑재",
   },
 ];
 
-/** 임의의 로컬 태그(`qwen3-coder:30b`)를 드롭다운에 넣을 수 있는 형태로 감싼다. */
+/** 임의의 로컬 태그(`gpt-oss:20b`)를 드롭다운에 넣을 수 있는 형태로 감싼다. */
 export function localModelOption(modelId: string): ModelOption {
   const preset = LOCAL_MODEL_PRESETS.find((option) => option.modelId === modelId);
   if (preset) return preset;
@@ -534,10 +515,14 @@ export function localModelOption(modelId: string): ModelOption {
 
 /**
  * 드롭다운에 뿌릴 전체 목록.
- * 클라우드 카탈로그 + 로컬 프리셋 + 서버에서 실제로 발견된 태그(중복 제거).
+ * 클라우드 카탈로그 + **로컬 서버가 갖고 있다고 답한 태그**(중복 제거).
+ *
+ * 프리셋은 여기 섞지 않는다. 안 깔린 모델을 고르면 호출이 404 로 죽는데,
+ * 목록만 봐서는 그게 "설치됨" 인지 "추천" 인지 구분할 수 없기 때문이다.
+ * 대신 발견된 태그에 프리셋의 라벨·설명을 입힌다(`localModelOption`).
  */
 export function buildModelOptions(discoveredLocalModels: string[] = []): ModelOption[] {
-  const options = [...MODEL_CATALOG, ...LOCAL_MODEL_PRESETS];
+  const options = [...MODEL_CATALOG];
   const seen = new Set(options.map((option) => option.id));
   for (const modelId of discoveredLocalModels) {
     const option = localModelOption(modelId);

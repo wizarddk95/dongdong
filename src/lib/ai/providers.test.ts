@@ -92,17 +92,35 @@ describe("모델 카탈로그", () => {
 });
 
 describe("로컬 모델 목록 구성", () => {
-  it("클라우드 카탈로그 뒤에 로컬 프리셋을 붙인다", () => {
+  it("서버에서 발견한 것이 없으면 로컬 항목도 없다", () => {
+    // 프리셋을 미리 깔아 두면 안 깔린 모델을 고를 수 있게 되고, 호출은 404 로 죽는다.
     const options = buildModelOptions();
-    expect(options.slice(0, MODEL_CATALOG.length)).toEqual(MODEL_CATALOG);
-    expect(options).toEqual(expect.arrayContaining(LOCAL_MODEL_PRESETS));
+    expect(options).toEqual(MODEL_CATALOG);
+    expect(options.some((option) => option.provider === "local")).toBe(false);
   });
 
-  it("서버에서 발견한 태그를 추가하되 프리셋과 중복되면 한 번만 넣는다", () => {
+  it("서버가 알려준 태그만 클라우드 카탈로그 뒤에 붙인다", () => {
     const options = buildModelOptions(["gpt-oss:20b", "llama3.2:3b"]);
-    const ids = options.map((option) => option.id);
+    expect(options.slice(0, MODEL_CATALOG.length)).toEqual(MODEL_CATALOG);
+    expect(options.filter((option) => option.provider === "local").map((o) => o.id)).toEqual([
+      "local:gpt-oss:20b",
+      "local:llama3.2:3b",
+    ]);
+  });
+
+  it("같은 태그가 두 번 와도 한 번만 넣는다", () => {
+    const ids = buildModelOptions(["gpt-oss:20b", "gpt-oss:20b"]).map((option) => option.id);
     expect(ids.filter((id) => id === "local:gpt-oss:20b")).toHaveLength(1);
-    expect(ids).toContain("local:llama3.2:3b");
+  });
+
+  it("발견된 태그에는 프리셋의 라벨·설명을 입힌다", () => {
+    const [preset] = LOCAL_MODEL_PRESETS;
+    const found = buildModelOptions([preset.modelId]).find((option) => option.id === preset.id);
+    expect(found).toEqual(preset);
+    // 프리셋에 없는 태그는 태그 그대로 보여 준다.
+    const unknown = buildModelOptions(["llama3.2:3b"]).find((o) => o.id === "local:llama3.2:3b");
+    expect(unknown?.label).toBe("llama3.2:3b (로컬)");
+    expect(unknown?.note).toBeUndefined();
   });
 });
 
