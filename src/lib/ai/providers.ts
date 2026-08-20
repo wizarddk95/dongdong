@@ -2,15 +2,18 @@
  * 다중 모델 라우팅 레이어.
  *
  * 모델은 `"<provider>:<modelId>"` 형태의 문자열 하나로 식별한다.
- * 새 공급자를 붙이려면 `PROVIDERS` 에 팩토리를 추가하고,
+ * 새 공급자를 붙이려면 `resolveModel()` 에 분기를 추가하고,
  * `src-tauri/capabilities/default.json` 의 http 스코프에 도메인을 열어주면 된다.
+ *
+ * `local` 은 특정 회사가 아니라 **이 PC 에서 도는 OpenAI 호환 서버**를 가리킨다
+ * (Ollama · LM Studio · llama.cpp server · vLLM). 키가 필요 없고 주소만 있으면 된다.
  */
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { LanguageModel } from "ai";
 
-export type ProviderId = "anthropic" | "openai";
+export type ProviderId = "anthropic" | "openai" | "local";
 
 export interface ModelOption {
   /** `provider:modelId` — 스토어와 DB 에 저장되는 식별자 */
@@ -79,6 +82,100 @@ export const MODEL_CATALOG: ModelOption[] = [
   },
 ];
 
+/**
+ * 로컬 OpenAI 호환 서버의 기본 주소. Ollama 는 11434, LM Studio 는 1234 를 쓴다.
+ * (`src-tauri/capabilities/default.json` 이 localhost/127.0.0.1 을 이미 열어 두었다)
+ */
+export const DEFAULT_LOCAL_BASE_URL = "http://localhost:11434/v1";
+
+/**
+ * 로컬 오픈소스 모델 프리셋 — 16GB VRAM(RTX 5080) 기준으로 고른 것들.
+ * 여기 목록은 "추천"일 뿐이고, 실제로 무엇이 깔려 있는지는
+ * `fetchLocalModels()` 가 서버의 `/v1/models` 에서 직접 읽어온다.
+ */
+export const LOCAL_MODEL_PRESETS: ModelOption[] = [
+  {
+    id: "local:gpt-oss:20b",
+    provider: "local",
+    modelId: "gpt-oss:20b",
+    label: "gpt-oss 20B (로컬)",
+    note: "MXFP4 14GB · 128K · 함수 호출 기본 탑재 — 16GB 첫 후보",
+  },
+  {
+    id: "local:qwen3-coder:30b",
+    provider: "local",
+    modelId: "qwen3-coder:30b",
+    label: "Qwen3-Coder 30B-A3B (로컬)",
+    note: "Q4 19GB · 256K · 코딩 최강이지만 16GB 는 일부 CPU 오프로드",
+  },
+  {
+    id: "local:devstral:24b",
+    provider: "local",
+    modelId: "devstral:24b",
+    label: "Devstral 24B (로컬)",
+    note: "Q4 ~14GB · 에이전트용으로 학습된 밀집 모델",
+  },
+  {
+    id: "local:qwen3:14b",
+    provider: "local",
+    modelId: "qwen3:14b",
+    label: "Qwen3 14B (로컬)",
+    note: "Q4 ~11GB · VRAM 안에 완전히 들어가 가장 빠름",
+  },
+];
+
+/** 임의의 로컬 태그(`qwen3-coder:30b`)를 드롭다운에 넣을 수 있는 형태로 감싼다. */
+export function localModelOption(modelId: string): ModelOption {
+  const preset = LOCAL_MODEL_PRESETS.find((option) => option.modelId === modelId);
+  if (preset) return preset;
+  return {
+    id: `local:${modelId}`,
+    provider: "local",
+    modelId,
+    label: `${modelId} (로컬)`,
+  };
+}
+
+/**
+ * 드롭다운에 뿌릴 전체 목록.
+ * 클라우드 카탈로그 + 로컬 프리셋 + 서버에서 실제로 발견된 태그(중복 제거).
+ */
+export function buildModelOptions(discoveredLocalModels: string[] = []): ModelOption[] {
+  const options = [...MODEL_CATALOG, ...LOCAL_MODEL_PRESETS];
+  const seen = new Set(options.map((option) => option.id));
+  for (const modelId of discoveredLocalModels) {
+    const option = localModelOption(modelId);
+    if (seen.has(option.id)) continue;
+    seen.add(option.id);
+    options.push(option);
+  }
+  return options;
+}
+
+/** 끝의 슬래시만 정리한다. 비어 있으면 기본 주소. */
+export function normalizeBaseUrl(baseUrl?: string): string {
+  const trimmed = baseUrl?.trim();
+  if (!trimmed) return DEFAULT_LOCAL_BASE_URL;
+  return trimmed.replace(/\/+$/, "");
+}
+
+/**
+ * 로컬 서버에 깔린 모델 목록을 읽는다 (OpenAI 호환 `GET /v1/models`).
+ * Ollama · LM Studio · vLLM 모두 같은 모양으로 응답한다.
+ * 서버가 꺼져 있으면 fetch 가 그대로 실패하므로 호출부에서 잡아 안내한다.
+ */
+export async function fetchLocalModels(baseUrl?: string): Promise<string[]> {
+  const response = await localFetch(`${normalizeBaseUrl(baseUrl)}/models`);
+  if (!response.ok) {
+    throw new Error(`로컬 서버가 ${response.status} 를 돌려줬습니다 (${normalizeBaseUrl(baseUrl)})`);
+  }
+  const body = (await response.json()) as { data?: { id?: unknown }[] };
+  return (body.data ?? [])
+    .map((entry) => (typeof entry.id === "string" ? entry.id : ""))
+    .filter(Boolean)
+    .sort();
+}
+
 export const DEFAULT_MODEL_ID = "anthropic:claude-opus-5";
 
 /** Anthropic 만 지원하는 사고 강도. 다른 공급자에서는 무시된다. */
@@ -90,6 +187,10 @@ export interface ProviderCredentials {
   /** 프록시나 로컬 게이트웨이를 쓸 때. 비우면 각 공급자 기본값 */
   anthropicBaseUrl?: string;
   openaiBaseUrl?: string;
+  /** 로컬 OpenAI 호환 서버 주소. 비우면 `DEFAULT_LOCAL_BASE_URL` */
+  localBaseUrl?: string;
+  /** 로컬 서버가 키를 요구할 때만 (대부분 불필요) */
+  localApiKey?: string;
 }
 
 export function parseModelId(id: string): { provider: ProviderId; modelId: string } {
@@ -103,7 +204,7 @@ export function parseModelId(id: string): { provider: ProviderId; modelId: strin
 }
 
 export function findModelOption(id: string): ModelOption | undefined {
-  return MODEL_CATALOG.find((option) => option.id === id);
+  return [...MODEL_CATALOG, ...LOCAL_MODEL_PRESETS].find((option) => option.id === id);
 }
 
 export class MissingApiKeyError extends Error {
@@ -141,6 +242,17 @@ export function resolveModel(id: string, credentials: ProviderCredentials): Lang
         ...(credentials.openaiBaseUrl ? { baseURL: credentials.openaiBaseUrl } : {}),
       })(modelId);
     }
+    case "local": {
+      // 로컬 서버는 대부분 인증이 없다. AI SDK 는 키가 비면 예외를 내므로 자리채움을 넣는다.
+      // `.chat()` 이 중요하다 — 기본 팩토리는 Responses API 로 가는데,
+      // Ollama/LM Studio 가 구현한 건 `/v1/chat/completions` 뿐이다.
+      return createOpenAI({
+        name: "local",
+        apiKey: credentials.localApiKey?.trim() || "local",
+        baseURL: normalizeBaseUrl(credentials.localBaseUrl),
+        fetch: localFetch,
+      }).chat(modelId);
+    }
     default:
       throw new Error(`알 수 없는 공급자입니다: ${provider}`);
   }
@@ -164,6 +276,8 @@ export function providerOptionsFor(id: string, effort: Effort) {
 
 export function hasCredentialFor(id: string, credentials: ProviderCredentials): boolean {
   const { provider } = parseModelId(id);
+  // 로컬 서버는 키가 없는 게 정상이다. 대신 서버가 떠 있는지는 설정에서 확인한다.
+  if (provider === "local") return true;
   const key =
     provider === "anthropic" ? credentials.anthropicApiKey : credentials.openaiApiKey;
   return Boolean(key?.trim());

@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 
 import { Button } from "@/components/Panel";
-import { MODEL_CATALOG, hasCredentialFor, parseModelId } from "@/lib/ai/providers";
+import { buildModelOptions, hasCredentialFor, parseModelId } from "@/lib/ai/providers";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
 
@@ -15,10 +15,19 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
   const modelId = useSettings((state) => state.modelId);
   const updateSettings = useSettings((state) => state.update);
   const credentials = useSettings((state) => state.credentials);
+  const localModels = useSettings((state) => state.localModels);
 
-  const known = MODEL_CATALOG.some((option) => option.id === modelId);
+  const modelOptions = buildModelOptions(localModels);
+  const known = modelOptions.some((option) => option.id === modelId);
   const hasKey = hasCredentialFor(modelId, credentials());
   const provider = parseModelId(modelId).provider;
+  // 로컬 서버는 키를 안 쓰므로 "준비됨" 의 의미가 다르다.
+  const readyHint =
+    provider === "local"
+      ? "로컬 서버로 호출합니다 (키 불필요)"
+      : hasKey
+        ? `${provider} 키가 설정되어 있습니다`
+        : `${provider} 키가 없습니다`;
 
   async function pickFolder() {
     const selected = await open({
@@ -70,7 +79,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
           }}
           className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-200"
         >
-          {MODEL_CATALOG.map((option) => (
+          {modelOptions.map((option) => (
             <option key={option.id} value={option.id}>
               {option.label}
             </option>
@@ -78,7 +87,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
           {!known && <option value="custom">{modelId} (직접 입력)</option>}
         </select>
         <span
-          title={hasKey ? `${provider} 키가 설정되어 있습니다` : `${provider} 키가 없습니다`}
+          title={readyHint}
           className={`text-[10px] ${hasKey ? "text-emerald-400" : "text-amber-400"}`}
         >
           {hasKey ? "●" : "○"}

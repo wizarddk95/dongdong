@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { McpServers } from "@/components/mcp/McpServers";
 import { Button } from "@/components/Panel";
-import { MODEL_CATALOG, type Effort } from "@/lib/ai/providers";
+import {
+  DEFAULT_LOCAL_BASE_URL,
+  buildModelOptions,
+  fetchLocalModels,
+  type Effort,
+} from "@/lib/ai/providers";
 import { DEFAULT_SKILLS, SKILL_GROUPS, type SkillToggles } from "@/lib/ai/skills";
 import { useSettings } from "@/store/settings";
 
@@ -17,6 +22,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const settings = useSettings();
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
+  const [localBaseUrl, setLocalBaseUrl] = useState(DEFAULT_LOCAL_BASE_URL);
+  const [localApiKey, setLocalApiKey] = useState("");
+  const [probe, setProbe] = useState<{ state: "idle" | "loading" | "ok" | "error"; message: string }>(
+    { state: "idle", message: "" },
+  );
   const [systemPrompt, setSystemPrompt] = useState("");
   const [modelId, setModelId] = useState(settings.modelId);
   const [customModel, setCustomModel] = useState("");
@@ -30,11 +40,20 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     settings.useProjectInstructions,
   );
 
+  // 클라우드 카탈로그 + 로컬 프리셋 + 로컬 서버에서 발견한 태그
+  const modelOptions = useMemo(
+    () => buildModelOptions(settings.localModels),
+    [settings.localModels],
+  );
+
   // 모달을 열 때마다 스토어 값으로 폼을 초기화한다.
   useEffect(() => {
     if (!open) return;
     setAnthropicKey(settings.anthropicApiKey ?? "");
     setOpenaiKey(settings.openaiApiKey ?? "");
+    setLocalBaseUrl(settings.localBaseUrl || DEFAULT_LOCAL_BASE_URL);
+    setLocalApiKey(settings.localApiKey ?? "");
+    setProbe({ state: "idle", message: "" });
     setSystemPrompt(settings.systemPrompt);
     setEffort(settings.effort);
     setMaxSteps(settings.maxSteps);
@@ -43,7 +62,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setSubagentMaxSteps(settings.subagentMaxSteps);
     setUseProjectInstructions(settings.useProjectInstructions);
 
-    const known = MODEL_CATALOG.some((option) => option.id === settings.modelId);
+    const known = modelOptions.some((option) => option.id === settings.modelId);
     setModelId(known ? settings.modelId : "custom");
     setCustomModel(known ? "" : settings.modelId);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -55,6 +74,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     await settings.update({
       anthropicApiKey: anthropicKey.trim(),
       openaiApiKey: openaiKey.trim(),
+      localBaseUrl: localBaseUrl.trim() || DEFAULT_LOCAL_BASE_URL,
+      localApiKey: localApiKey.trim(),
       systemPrompt,
       modelId: resolvedModel || settings.modelId,
       effort,
@@ -65,6 +86,29 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       useProjectInstructions,
     });
     onClose();
+  }
+
+  /** 로컬 서버(`GET /v1/models`)에 실제로 깔린 모델을 읽어 드롭다운에 채운다. */
+  async function refreshLocalModels() {
+    setProbe({ state: "loading", message: "" });
+    try {
+      const models = await fetchLocalModels(localBaseUrl);
+      await settings.update({
+        localBaseUrl: localBaseUrl.trim() || DEFAULT_LOCAL_BASE_URL,
+        localModels: models,
+      });
+      setProbe({
+        state: models.length ? "ok" : "error",
+        message: models.length
+          ? `${models.length}개 발견: ${models.join(", ")}`
+          : "서버는 응답했지만 받은 모델이 없습니다. `ollama pull gpt-oss:20b` 로 먼저 내려받으세요.",
+      });
+    } catch (error) {
+      setProbe({
+        state: "error",
+        message: `연결 실패 — 서버가 떠 있는지 확인하세요 (${String(error)})`,
+      });
+    }
   }
 
   return (
@@ -128,7 +172,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               onChange={(event) => setModelId(event.target.value)}
               className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
             >
-              {MODEL_CATALOG.map((option) => (
+              {modelOptions.map((option) => (
                 <option key={option.id} value={option.id}>
                   {option.label}
                   {option.note ? ` — ${option.note}` : ""}
@@ -140,7 +184,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <input
                 value={customModel}
                 onChange={(event) => setCustomModel(event.target.value)}
-                placeholder="anthropic:claude-opus-5 형식으로 입력"
+                placeholder="anthropic:claude-opus-5 / local:gpt-oss:20b 형식으로 입력"
                 className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-100"
               />
             )}
@@ -172,6 +216,56 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 />
               </label>
             </div>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="font-semibold text-zinc-300">로컬 모델 서버 (Ollama · LM Studio)</h3>
+            <p className="text-[10px] text-zinc-600">
+              이 PC 에서 도는 OpenAI 호환 서버입니다. 키가 필요 없고, 대화 내용이 밖으로 나가지
+              않습니다. Ollama 는 <span className="font-mono">http://localhost:11434/v1</span>,
+              LM Studio 는 <span className="font-mono">http://localhost:1234/v1</span>.
+            </p>
+            <label className="block">
+              <span className="text-zinc-500">서버 주소</span>
+              <input
+                value={localBaseUrl}
+                onChange={(event) => setLocalBaseUrl(event.target.value)}
+                placeholder={DEFAULT_LOCAL_BASE_URL}
+                className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-100"
+              />
+            </label>
+            <label className="block">
+              <span className="text-zinc-500">키 (서버가 요구할 때만)</span>
+              <input
+                type={revealKeys ? "text" : "password"}
+                value={localApiKey}
+                onChange={(event) => setLocalApiKey(event.target.value)}
+                placeholder="보통 비워 둡니다"
+                className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-100"
+              />
+            </label>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => void refreshLocalModels()} disabled={probe.state === "loading"}>
+                {probe.state === "loading" ? "확인 중…" : "설치된 모델 불러오기"}
+              </Button>
+              <span className="text-[10px] text-zinc-600">
+                불러온 태그는 위 모델 드롭다운에 그대로 추가됩니다.
+              </span>
+            </div>
+            {probe.message && (
+              <p
+                className={`text-[10px] break-all ${
+                  probe.state === "ok" ? "text-emerald-400" : "text-amber-400"
+                }`}
+              >
+                {probe.message}
+              </p>
+            )}
+            <p className="text-[10px] text-zinc-600">
+              에이전트는 도구 호출을 많이 쓰므로 컨텍스트를 크게 잡아야 합니다. Ollama 는 기본
+              4K 라 <span className="font-mono">OLLAMA_CONTEXT_LENGTH=65536</span> 를 환경 변수로
+              주고 서버를 다시 띄우세요.
+            </p>
           </section>
 
           <section className="space-y-2">
@@ -220,7 +314,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
                 >
                   <option value="">메인 모델과 동일</option>
-                  {MODEL_CATALOG.map((option) => (
+                  {modelOptions.map((option) => (
                     <option key={option.id} value={option.id}>
                       {option.label}
                     </option>

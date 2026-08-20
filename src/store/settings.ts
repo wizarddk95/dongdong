@@ -6,7 +6,12 @@ import { create } from "zustand";
 
 import * as ipc from "@/lib/ipc";
 import type { McpServerConfig } from "@/types/ipc";
-import { DEFAULT_MODEL_ID, type Effort, type ProviderCredentials } from "@/lib/ai/providers";
+import {
+  DEFAULT_LOCAL_BASE_URL,
+  DEFAULT_MODEL_ID,
+  type Effort,
+  type ProviderCredentials,
+} from "@/lib/ai/providers";
 import { DEFAULT_SKILLS, type SkillToggles } from "@/lib/ai/skills";
 
 export const DEFAULT_SYSTEM_PROMPT = `당신은 사용자의 로컬 머신에서 동작하는 코딩 에이전트입니다.
@@ -29,6 +34,11 @@ interface SettingsState extends ProviderCredentials {
   subagentMaxSteps: number;
   /** MCP 서버 실행 설정 목록 */
   mcpServers: McpServerConfig[];
+  /**
+   * 로컬 서버에서 마지막으로 발견한 모델 태그.
+   * 서버가 꺼져 있어도 드롭다운이 비지 않게 저장해 둔다.
+   */
+  localModels: string[];
 
   settingsPath: string | null;
   loaded: boolean;
@@ -46,6 +56,9 @@ type PersistedSettings = Pick<
   | "openaiApiKey"
   | "anthropicBaseUrl"
   | "openaiBaseUrl"
+  | "localBaseUrl"
+  | "localApiKey"
+  | "localModels"
   | "modelId"
   | "systemPrompt"
   | "effort"
@@ -62,6 +75,9 @@ const PERSISTED_KEYS: (keyof PersistedSettings)[] = [
   "openaiApiKey",
   "anthropicBaseUrl",
   "openaiBaseUrl",
+  "localBaseUrl",
+  "localApiKey",
+  "localModels",
   "modelId",
   "systemPrompt",
   "effort",
@@ -87,6 +103,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
   openaiApiKey: "",
   anthropicBaseUrl: "",
   openaiBaseUrl: "",
+  localBaseUrl: DEFAULT_LOCAL_BASE_URL,
+  localApiKey: "",
+  localModels: [],
   modelId: DEFAULT_MODEL_ID,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   effort: "high",
@@ -110,6 +129,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
         // 새 스킬이 추가돼도 예전 settings.json 이 덮어쓰지 않도록 기본값 위에 병합한다.
         skills: { ...DEFAULT_SKILLS, ...(persisted.skills ?? {}) },
         mcpServers: persisted.mcpServers ?? [],
+        localBaseUrl: persisted.localBaseUrl || DEFAULT_LOCAL_BASE_URL,
+        localModels: persisted.localModels ?? [],
         settingsPath: path,
         loaded: true,
       });
@@ -135,6 +156,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       openaiApiKey: state.openaiApiKey,
       anthropicBaseUrl: state.anthropicBaseUrl || undefined,
       openaiBaseUrl: state.openaiBaseUrl || undefined,
+      localBaseUrl: state.localBaseUrl || undefined,
+      localApiKey: state.localApiKey || undefined,
     };
   },
 }));

@@ -5,11 +5,16 @@ vi.mock("@tauri-apps/plugin-http", () => ({ fetch: vi.fn() }));
 import type { LanguageModel } from "ai";
 
 import {
+  DEFAULT_LOCAL_BASE_URL,
   DEFAULT_MODEL_ID,
+  LOCAL_MODEL_PRESETS,
   MODEL_CATALOG,
   MissingApiKeyError,
+  buildModelOptions,
+  fetchLocalModels,
   findModelOption,
   hasCredentialFor,
+  normalizeBaseUrl,
   parseModelId,
   providerOptionsFor,
   resolveModel,
@@ -63,9 +68,46 @@ describe("모델 카탈로그", () => {
   });
 
   it("카탈로그의 id 는 provider 필드와 일치한다", () => {
-    for (const option of MODEL_CATALOG) {
+    for (const option of [...MODEL_CATALOG, ...LOCAL_MODEL_PRESETS]) {
       expect(option.id).toBe(`${option.provider}:${option.modelId}`);
     }
+  });
+
+  it("로컬 프리셋도 findModelOption 으로 찾힌다", () => {
+    expect(findModelOption("local:gpt-oss:20b")?.provider).toBe("local");
+  });
+
+  it("모델 태그 안의 콜론이 있어도 provider 는 local 로 파싱된다", () => {
+    expect(parseModelId("local:gpt-oss:20b")).toEqual({
+      provider: "local",
+      modelId: "gpt-oss:20b",
+    });
+  });
+});
+
+describe("로컬 모델 목록 구성", () => {
+  it("클라우드 카탈로그 뒤에 로컬 프리셋을 붙인다", () => {
+    const options = buildModelOptions();
+    expect(options.slice(0, MODEL_CATALOG.length)).toEqual(MODEL_CATALOG);
+    expect(options).toEqual(expect.arrayContaining(LOCAL_MODEL_PRESETS));
+  });
+
+  it("서버에서 발견한 태그를 추가하되 프리셋과 중복되면 한 번만 넣는다", () => {
+    const options = buildModelOptions(["gpt-oss:20b", "llama3.2:3b"]);
+    const ids = options.map((option) => option.id);
+    expect(ids.filter((id) => id === "local:gpt-oss:20b")).toHaveLength(1);
+    expect(ids).toContain("local:llama3.2:3b");
+  });
+});
+
+describe("normalizeBaseUrl", () => {
+  it("비어 있으면 Ollama 기본 주소", () => {
+    expect(normalizeBaseUrl()).toBe(DEFAULT_LOCAL_BASE_URL);
+    expect(normalizeBaseUrl("   ")).toBe(DEFAULT_LOCAL_BASE_URL);
+  });
+
+  it("끝의 슬래시만 정리한다", () => {
+    expect(normalizeBaseUrl("http://localhost:1234/v1/")).toBe("http://localhost:1234/v1");
   });
 });
 
@@ -83,6 +125,11 @@ describe("자격 증명 게이트", () => {
   it("키 없이 모델을 만들면 MissingApiKeyError", () => {
     expect(() => resolveModel("anthropic:claude-opus-5", {})).toThrow(MissingApiKeyError);
     expect(() => resolveModel("openai:gpt-5.6", {})).toThrow(MissingApiKeyError);
+  });
+
+  it("로컬 서버는 키 없이도 통과한다", () => {
+    expect(hasCredentialFor("local:gpt-oss:20b", {})).toBe(true);
+    expect(resolveModel("local:gpt-oss:20b", {})).toBeTruthy();
   });
 
   it("키가 있으면 모델 인스턴스를 만든다", () => {
@@ -168,5 +215,51 @@ describe("Anthropic 요청 헤더", () => {
     const headers = new Headers(spy.mock.calls[0][1]?.headers as HeadersInit);
     expect(headers.get("anthropic-dangerous-direct-browser-access")).toBe("true");
     expect(headers.get("x-api-key")).toBe("sk-ant-test");
+  });
+});
+
+describe("로컬 서버 호출", () => {
+  it("`/v1/models` 를 읽어 태그만 뽑아 정렬한다", async () => {
+    const { fetch: mockFetch } = await import("@tauri-apps/plugin-http");
+    const spy = vi.mocked(mockFetch);
+    spy.mockReset();
+    spy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "qwen3:14b" }, { id: "gpt-oss:20b" }, {}] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }) as never,
+    );
+
+    await expect(fetchLocalModels("http://localhost:11434/v1/")).resolves.toEqual([
+      "gpt-oss:20b",
+      "qwen3:14b",
+    ]);
+    expect(spy.mock.calls[0][0]).toBe("http://localhost:11434/v1/models");
+  });
+
+  it("Responses API 가 아니라 /chat/completions 로 보낸다 (Ollama 는 이것만 구현한다)", async () => {
+    const { fetch: mockFetch } = await import("@tauri-apps/plugin-http");
+    const spy = vi.mocked(mockFetch);
+    spy.mockReset();
+    spy.mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "stub" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }) as never,
+    );
+
+    const model = resolveModel("local:gpt-oss:20b", {
+      localBaseUrl: "http://127.0.0.1:1234/v1",
+    }) as Exclude<LanguageModel, string>;
+    try {
+      await model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "안녕" }] }],
+      });
+    } catch {
+      // 응답이 stub 이라 파싱에서 실패한다. 여기서는 나간 주소만 본다.
+    }
+
+    expect(spy.mock.calls[0][0]).toBe("http://127.0.0.1:1234/v1/chat/completions");
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body)).model).toBe("gpt-oss:20b");
   });
 });

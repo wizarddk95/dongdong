@@ -190,6 +190,19 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 - Anthropic 4.6+ 모델은 `temperature` 를 거부하므로 보내지 않고, adaptive thinking + `effort` 로 사고량을 조절한다.
 - 토큰마다 DB 를 쓰지 않는다. 스트리밍 중에는 Zustand 에만 쌓고, 턴이 끝날 때 `update_message` 로 한 번만 저장한다.
 
+### 로컬 오픈소스 모델
+
+`local` 공급자는 특정 회사가 아니라 **이 PC 에서 도는 OpenAI 호환 서버**를 가리킨다
+(Ollama · LM Studio · llama.cpp server · vLLM). 키가 필요 없고 대화가 밖으로 나가지 않는다.
+
+- 설정 → **로컬 모델 서버** 에서 주소를 넣고 **[설치된 모델 불러오기]** 를 누르면
+  서버의 `GET /v1/models` 를 읽어 실제 깔린 태그가 모델 드롭다운에 합쳐진다.
+- 모델 식별자는 `local:gpt-oss:20b` 처럼 `local:<태그>`.
+- 호출은 `createOpenAI(...).chat()` — 기본 팩토리는 Responses API 로 가는데
+  Ollama/LM Studio 가 구현한 건 `/v1/chat/completions` 뿐이다.
+- 어떤 모델을 받고 어떻게 띄우는지(16GB VRAM 기준 선택, 컨텍스트 설정, 부분 오프로드)는
+  **[docs/local-llm.md](docs/local-llm.md)** 에 정리해 두었다.
+
 ## Skill (도구)
 
 `lib/ipc.ts` 의 IPC 함수를 그대로 AI SDK 도구로 감싼 것이 Skill 이다 (`lib/ai/skills.ts`).
