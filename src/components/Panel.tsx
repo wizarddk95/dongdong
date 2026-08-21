@@ -135,6 +135,54 @@ export function Tag({
   );
 }
 
+/* ─────────────────────────── 설명 배지 ─────────────────────────── */
+
+/**
+ * `?` 배지 — 커서를 올리거나 키보드 포커스를 주면 설명이 뜬다.
+ *
+ * 라벨 옆에 붙여 **긴 설명을 접어 둔다**. 화면에 늘 펼쳐 두면 정작 조작할 컨트롤이
+ * 문단에 파묻히고, 그렇다고 지우면 처음 보는 사람이 뭘 고르는지 모른다.
+ *
+ * 네이티브 `title` 을 안 쓰는 이유: 뜨는 데 1초쯤 걸리고 줄바꿈·색·위치가 전부 OS 몫이라
+ * 화면과 따로 논다(다크 테마에서 특히). 대신 JS 없이 CSS 만으로 연다 — 상태도 리렌더도 없다.
+ *
+ * `align` 은 말풍선이 나갈 방향이다. 오른쪽 열에 있는 배지는 `right` 로 둬야
+ * 말풍선이 모달 밖으로 삐져나가지 않는다.
+ */
+export function Hint({
+  children,
+  align = "left",
+  className = "",
+}: {
+  children: ReactNode;
+  align?: "left" | "right";
+  className?: string;
+}) {
+  return (
+    // 그룹에 이름을 붙인다 — 바깥에 `group` 이 또 있으면(카드 등) 그걸 스쳐도 열린다.
+    <span className={`group/hint relative inline-flex align-middle ${className}`}>
+      <span
+        tabIndex={0}
+        role="button"
+        aria-label="설명 보기"
+        // `<label>` 안에 있으면 클릭이 라벨의 컨트롤로 넘어간다(셀렉트가 열린다) → 막는다.
+        onClick={(event) => event.preventDefault()}
+        className="flex size-4 cursor-help items-center justify-center rounded-full border border-hairline bg-surface-1 text-caption leading-none text-ink-muted transition-colors group-hover/hint:border-accent group-hover/hint:text-accent"
+      >
+        ?
+      </span>
+      <span
+        role="tooltip"
+        className={`pointer-events-none invisible absolute top-full z-50 mt-1.5 w-60 rounded-md border border-hairline bg-canvas px-3 py-2 text-caption text-ink-muted opacity-0 transition-opacity elevate-lg group-hover/hint:visible group-hover/hint:opacity-100 group-focus-within/hint:visible group-focus-within/hint:opacity-100 ${
+          align === "right" ? "right-0" : "left-0"
+        }`}
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
+
 /* ─────────────────────────── 모달 ─────────────────────────── */
 
 interface ModalProps {

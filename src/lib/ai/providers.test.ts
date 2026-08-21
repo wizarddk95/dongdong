@@ -4,9 +4,13 @@ vi.mock("@tauri-apps/plugin-http", () => ({ fetch: vi.fn() }));
 
 import type { LanguageModel } from "ai";
 
+import type { Effort } from "@/lib/ai/providers";
 import {
+  ANTHROPIC_EFFORTS,
   DEFAULT_LOCAL_BASE_URL,
   DEFAULT_MODEL_ID,
+  GEMINI_BASE_URL,
+  GEMINI_LONG_CONTEXT_THRESHOLD_TOKENS,
   LOCAL_MODEL_PRESETS,
   LONG_CONTEXT_THRESHOLD_TOKENS,
   MODEL_CATALOG,
@@ -22,7 +26,10 @@ import {
   normalizeBaseUrl,
   parseModelId,
   providerOptionsFor,
+  effortOptionsFor,
+  resolveEffort,
   resolveModel,
+  sendsEffort,
   supportedEffortsFor,
 } from "@/lib/ai/providers";
 import { toModelMessages } from "@/lib/ai/runner";
@@ -70,7 +77,7 @@ describe("parseModelId", () => {
 describe("모델 카탈로그", () => {
   it("기본 모델이 카탈로그에 있다", () => {
     expect(findModelOption(DEFAULT_MODEL_ID)).toBeDefined();
-    expect(DEFAULT_MODEL_ID).toBe("anthropic:claude-opus-5");
+    expect(DEFAULT_MODEL_ID).toBe("google:gemini-3.7-flash");
   });
 
   it("카탈로그의 id 는 provider 필드와 일치한다", () => {
@@ -162,11 +169,73 @@ describe("자격 증명 게이트", () => {
   });
 });
 
+describe("resolveEffort · effortOptionsFor", () => {
+  it("모델이 받는 값이면 그대로 나간다", () => {
+    expect(resolveEffort("openai:gpt-5.6-terra", "xhigh")).toBe("xhigh");
+    expect(resolveEffort("google:gemini-3.1-flash-lite", "minimal")).toBe("minimal");
+  });
+
+  it("목록 밖이면 크기 순서상 가장 가까운 값으로 당긴다", () => {
+    // Gemini 3.7 은 low~high 만 받는다.
+    expect(resolveEffort("google:gemini-3.7-flash", "max")).toBe("high");
+    expect(resolveEffort("google:gemini-3.7-flash", "xhigh")).toBe("high");
+    expect(resolveEffort("google:gemini-3.7-flash", "minimal")).toBe("low");
+    expect(resolveEffort("google:gemini-3.7-flash", "none")).toBe("low");
+    // GPT-5 세대는 minimal~high 만 받는다.
+    expect(resolveEffort("openai:gpt-5", "max")).toBe("high");
+    expect(resolveEffort("openai:gpt-5", "none")).toBe("minimal");
+  });
+
+  it("목록이 없는 Anthropic 은 고른 값을 그대로 보낸다", () => {
+    expect(resolveEffort("anthropic:claude-opus-5", "max")).toBe("max");
+  });
+
+  it("안 나가는 모델은 undefined", () => {
+    expect(resolveEffort("local:gpt-oss:20b", "high")).toBeUndefined();
+    expect(resolveEffort("anthropic:claude-haiku-4-5-20251001", "high")).toBeUndefined();
+  });
+
+  it("당긴 값도 그 모델이 받는 값 안에 있다 (카탈로그 전체)", () => {
+    const everyEffort: Effort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+    for (const option of MODEL_CATALOG) {
+      for (const effort of everyEffort) {
+        const resolved = resolveEffort(option.id, effort);
+        if (resolved === undefined) continue;
+        const supported = supportedEffortsFor(option.id);
+        if (supported) expect(supported).toContain(resolved);
+      }
+    }
+  });
+
+  it("드롭다운 목록은 그 모델이 받는 값이다", () => {
+    expect(effortOptionsFor("google:gemini-3.7-flash")).toEqual(["low", "medium", "high"]);
+    expect(effortOptionsFor("openai:gpt-5.6-sol")).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    // Anthropic 은 카탈로그에 목록이 없다 → 공통 범위를 쓴다.
+    expect(effortOptionsFor("anthropic:claude-opus-5")).toEqual(ANTHROPIC_EFFORTS);
+  });
+
+  it("드롭다운에 뿌린 값은 그대로 나간다 (당겨지지 않는다)", () => {
+    for (const option of MODEL_CATALOG) {
+      if (!sendsEffort(option.id)) continue;
+      for (const effort of effortOptionsFor(option.id)) {
+        expect(resolveEffort(option.id, effort)).toBe(effort);
+      }
+    }
+  });
+});
+
 describe("providerOptionsFor", () => {
   it("Anthropic 은 adaptive thinking + effort 를 붙인다", () => {
-    const options = providerOptionsFor("anthropic:claude-opus-5", "xhigh");
-    expect(options?.anthropic.thinking.type).toBe("adaptive");
-    expect(options?.anthropic.effort).toBe("xhigh");
+    expect(providerOptionsFor("anthropic:claude-opus-5", "xhigh")).toEqual({
+      anthropic: { thinking: { type: "adaptive", display: "summarized" }, effort: "xhigh" },
+    });
   });
 
   it("adaptive 를 지원하는 모델에는 모두 붙는다", () => {
@@ -175,7 +244,9 @@ describe("providerOptionsFor", () => {
       "anthropic:claude-opus-5",
       "anthropic:claude-sonnet-5",
     ]) {
-      expect(providerOptionsFor(id, "high")?.anthropic.thinking.type).toBe("adaptive");
+      expect(providerOptionsFor(id, "high")).toMatchObject({
+        anthropic: { thinking: { type: "adaptive" } },
+      });
     }
   });
 
@@ -187,11 +258,77 @@ describe("providerOptionsFor", () => {
   });
 
   it("카탈로그에 없는 Anthropic 모델은 붙이는 쪽이 기본값", () => {
-    expect(providerOptionsFor("anthropic:claude-opus-6", "max")?.anthropic.effort).toBe("max");
+    expect(providerOptionsFor("anthropic:claude-opus-6", "max")).toMatchObject({
+      anthropic: { effort: "max" },
+    });
   });
 
-  it("다른 공급자에는 붙이지 않는다", () => {
-    expect(providerOptionsFor("openai:gpt-5.6", "high")).toBeUndefined();
+  it("OpenAI 는 reasoningEffort 로 붙인다", () => {
+    expect(providerOptionsFor("openai:gpt-5.6-terra", "max")).toEqual({
+      openai: { reasoningEffort: "max" },
+    });
+    // 별칭으로 저장돼 있어도 같은 값이 나가야 한다.
+    expect(providerOptionsFor("openai:gpt-5.6", "none")).toEqual({
+      openai: { reasoningEffort: "none" },
+    });
+  });
+
+  it("Gemini 도 `openai` 키를 쓴다 — SDK 의 chat 모델이 그 키로만 읽는다", () => {
+    // `createOpenAI({ name: "google" })` 의 이름을 따라가지 않는다(@ai-sdk/openai).
+    expect(providerOptionsFor("google:gemini-3.7-flash", "high")).toEqual({
+      openai: { reasoningEffort: "high" },
+    });
+  });
+
+  it("모델이 안 받는 값은 가장 가까운 값으로 당겨서 보낸다", () => {
+    // 설정은 하나뿐인데 모델마다 받는 값이 다르다 → 400 대신 한 칸 옆으로.
+    expect(providerOptionsFor("google:gemini-3.7-flash", "max")).toEqual({
+      openai: { reasoningEffort: "high" },
+    });
+    expect(providerOptionsFor("google:gemini-3.7-flash", "minimal")).toEqual({
+      openai: { reasoningEffort: "low" },
+    });
+  });
+
+  it("로컬 서버와 목록을 모르는 모델에는 붙이지 않는다", () => {
+    expect(providerOptionsFor("local:gpt-oss:20b", "high")).toBeUndefined();
+    // 카탈로그에 없는 OpenAI·Gemini 모델은 받는 값을 모른다 → 안 보낸다.
+    expect(providerOptionsFor("openai:gpt-9-turbo", "high")).toBeUndefined();
+    expect(providerOptionsFor("google:gemini-9-flash", "high")).toBeUndefined();
+  });
+});
+
+describe("sendsEffort", () => {
+  it("adaptive 를 아는 Anthropic 모델만 사고 강도를 실어 보낸다", () => {
+    expect(sendsEffort("anthropic:claude-opus-5")).toBe(true);
+    expect(sendsEffort("anthropic:claude-fable-5")).toBe(true);
+  });
+
+  it("adaptive 를 모르는 Anthropic 모델에는 안 보낸다 (보내면 400)", () => {
+    expect(sendsEffort("anthropic:claude-haiku-4-5-20251001")).toBe(false);
+  });
+
+  it("OpenAI·Gemini 는 카탈로그가 받는 값을 아는 모델에만 보낸다", () => {
+    expect(sendsEffort("openai:gpt-5.6-terra")).toBe(true);
+    expect(sendsEffort("google:gemini-3.7-flash")).toBe(true);
+    // 목록을 모르면 무엇을 보내도 400 이 날 수 있다 → 안 보낸다.
+    expect(supportedEffortsFor("openai:gpt-9-turbo")).toBeUndefined();
+    expect(sendsEffort("openai:gpt-9-turbo")).toBe(false);
+  });
+
+  it("로컬 서버는 사고 강도 개념이 없다", () => {
+    expect(sendsEffort("local:gpt-oss:20b")).toBe(false);
+  });
+
+  it("카탈로그에 없는 Anthropic 모델은 보내는 쪽이 기본값", () => {
+    // Anthropic 은 목록이 아니라 adaptive 지원 여부로 갈린다 — 모르면 붙인다.
+    expect(sendsEffort("anthropic:claude-future-9")).toBe(true);
+  });
+
+  it("providerOptionsFor 와 판정이 어긋나지 않는다 (설정 화면이 이걸 보고 잠근다)", () => {
+    for (const option of [...MODEL_CATALOG, ...LOCAL_MODEL_PRESETS]) {
+      expect(providerOptionsFor(option.id, "high") !== undefined).toBe(sendsEffort(option.id));
+    }
   });
 });
 
@@ -483,6 +620,156 @@ describe("OpenAI 모델 메타데이터", () => {
       expect(findModelOption(id)).toBeUndefined();
       expect(canonicalModelId(id)).toBe(id);
     }
+  });
+});
+
+describe("Google Gemini 모델 메타데이터", () => {
+  const google = MODEL_CATALOG.filter((option) => option.provider === "google");
+
+  it("Gemini 항목은 가격·컨텍스트 정보를 모두 갖는다", () => {
+    expect(google).toHaveLength(7);
+    for (const option of google) {
+      expect(option.inputPrice).toBeGreaterThan(0);
+      expect(option.outputPrice).toBeGreaterThan(0);
+      expect(option.contextWindow).toBe(1_048_576);
+      expect(option.maxOutput).toBe(65_536);
+      expect(option.trainingCutoff).toMatch(/^\d{4}-\d{2}$/);
+      expect(option.batchDiscount).toBe(0.5);
+      expect(option.supportsPromptCaching).toBe(true);
+    }
+  });
+
+  it("캐시 읽기는 입력가의 10%", () => {
+    for (const option of google) {
+      expect(option.cacheRead).toBeCloseTo(option.inputPrice! * 0.1, 10);
+    }
+  });
+
+  it("캐시 쓰기는 입력가와 같다 — Gemini 는 생성 요금이 따로 없고 입력 단가로 받는다", () => {
+    for (const option of google) {
+      // `null`(무료) 로 두면 estimateCost 가 그 토큰을 0 원으로 세어 과소 추정한다.
+      expect(option.cacheWrite).toBeCloseTo(option.inputPrice!, 10);
+    }
+  });
+
+  it("계층 요율은 3.1 Pro 계열만 갖고 문턱은 200K", () => {
+    const tiered = google.filter((option) => option.longContextPricing);
+    expect(tiered.map((option) => option.modelId)).toEqual([
+      "gemini-3.1-pro-preview",
+      "gemini-3.1-pro-preview-customtools",
+    ]);
+    for (const option of tiered) {
+      expect(option.longContextThresholdTokens).toBe(GEMINI_LONG_CONTEXT_THRESHOLD_TOKENS);
+      const long = option.longContextPricing!;
+      expect(long.inputPrice).toBe(4);
+      expect(long.outputPrice).toBe(18);
+      expect(long.cacheRead).toBe(0.4);
+      // 상위 구간에서도 캐시 생성은 그 구간의 입력 단가로 과금된다.
+      expect(long.cacheWrite).toBe(long.inputPrice);
+    }
+  });
+
+  it("customtools 는 별칭이 아니라 별도 항목이다 (엔드포인트가 다르다)", () => {
+    // 별칭으로 두면 canonicalModelId 가 저장된 id 를 3.1 Pro 로 덮어써서 호출이 빗나간다.
+    const id = "google:gemini-3.1-pro-preview-customtools";
+    expect(canonicalModelId(id)).toBe(id);
+    expect(findModelOption(id)?.modelId).toBe("gemini-3.1-pro-preview-customtools");
+  });
+
+  it("제외하기로 한 모델은 카탈로그에 없다", () => {
+    for (const modelId of [
+      "gemini-3.5-flash",
+      "gemini-3-flash-preview",
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+    ]) {
+      expect(findModelOption(`google:${modelId}`)).toBeUndefined();
+    }
+  });
+
+  it("thinking 레벨은 문서가 명시한 모델만 갖는다", () => {
+    // 3.7 Flash 는 `minimal` 을 받지 않는다 — 보내면 에러다.
+    expect(supportedEffortsFor("google:gemini-3.7-flash")).toEqual(["low", "medium", "high"]);
+    expect(supportedEffortsFor("google:gemini-3.1-flash-lite")).toEqual([
+      "minimal",
+      "low",
+      "medium",
+      "high",
+    ]);
+    // 나머지는 공개된 목록이 없다 → undefined (호출부가 제한하지 않는다).
+    expect(supportedEffortsFor("google:gemini-3.6-flash")).toBeUndefined();
+  });
+
+  it("Anthropic 전용 옵션(adaptive thinking)은 붙이지 않는다", () => {
+    const options = providerOptionsFor("google:gemini-3.7-flash", "high");
+    expect(options).toEqual({ openai: { reasoningEffort: "high" } });
+    expect(options?.anthropic).toBeUndefined();
+  });
+
+  it("2.5 Flash-Lite 가 카탈로그 전체 최저가다", () => {
+    const cheapest = [...MODEL_CATALOG].sort((a, b) => a.inputPrice! - b.inputPrice!)[0];
+    expect(cheapest.id).toBe("google:gemini-2.5-flash-lite");
+  });
+});
+
+describe("Gemini 계층 요율", () => {
+  it("문턱 이하면 기본 요율", () => {
+    const pricing = effectivePricing("google:gemini-3.1-pro-preview", { inputTokens: 200_000 })!;
+    expect(pricing.longContext).toBe(false);
+    expect(pricing.inputPrice).toBe(2);
+    expect(pricing.outputPrice).toBe(12);
+    expect(pricing.cacheRead).toBe(0.2);
+  });
+
+  it("200K 를 1 토큰만 넘어도 요청 전체가 상위 구간 요율", () => {
+    const pricing = effectivePricing("google:gemini-3.1-pro-preview", { inputTokens: 200_001 })!;
+    expect(pricing.longContext).toBe(true);
+    expect(pricing.inputPrice).toBe(4);
+    expect(pricing.outputPrice).toBe(18);
+    expect(pricing.cacheRead).toBe(0.4);
+    expect(pricing.longContextRateUnknown).toBe(false);
+  });
+
+  it("Flash 계열은 프롬프트가 아무리 커도 구간이 바뀌지 않는다", () => {
+    const pricing = effectivePricing("google:gemini-3.7-flash", { inputTokens: 1_000_000 })!;
+    expect(pricing.longContext).toBe(false);
+  });
+});
+
+describe("Gemini 호출", () => {
+  it("OpenAI 호환 경로의 /chat/completions 로 보낸다 (구글은 Responses API 가 없다)", async () => {
+    const { fetch: mockFetch } = await import("@tauri-apps/plugin-http");
+    const spy = vi.mocked(mockFetch);
+    spy.mockReset();
+    spy.mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "stub" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }) as never,
+    );
+
+    const model = resolveModel("google:gemini-3.7-flash", {
+      googleApiKey: "AIza-test",
+    }) as Exclude<LanguageModel, string>;
+    try {
+      await model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "안녕" }] }],
+      });
+    } catch {
+      // 응답이 stub 이라 파싱에서 실패한다. 여기서는 나간 주소·모델만 본다.
+    }
+
+    expect(spy.mock.calls[0][0]).toBe(`${GEMINI_BASE_URL}/chat/completions`);
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body)).model).toBe("gemini-3.7-flash");
+    const headers = new Headers(spy.mock.calls[0][1]?.headers as HeadersInit);
+    expect(headers.get("authorization")).toBe("Bearer AIza-test");
+  });
+
+  it("키가 없으면 MissingApiKeyError 를 던진다", () => {
+    expect(() => resolveModel("google:gemini-3.7-flash", {})).toThrow(MissingApiKeyError);
+    expect(() => resolveModel("google:gemini-3.7-flash", {})).toThrow(/Google Gemini/);
+    expect(hasCredentialFor("google:gemini-3.7-flash", { openaiApiKey: "sk-test" })).toBe(false);
+    expect(hasCredentialFor("google:gemini-3.7-flash", { googleApiKey: "AIza-test" })).toBe(true);
   });
 });
 

@@ -16,6 +16,7 @@ vi.mock("@/lib/ipc", () => ({
   reapAgentRuns: vi.fn(),
 }));
 
+import { DEFAULT_MODEL_ID } from "@/lib/ai/providers";
 import { runSubagent } from "@/lib/ai/subagent";
 import * as ipc from "@/lib/ipc";
 import { useAgents } from "@/store/agents";
@@ -274,7 +275,7 @@ describe("useAgents.spawn", () => {
       cacheReadTokens: 400,
       outputTokens: 300,
       // 서브에이전트 모델이 따로 설정돼 있지 않으면 메인 모델을 쓴다.
-      modelId: "anthropic:claude-opus-5",
+      modelId: DEFAULT_MODEL_ID,
     });
   });
 

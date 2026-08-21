@@ -4,6 +4,7 @@ import { JsonTree } from "@/components/inspect/JsonTree";
 import { Button, Modal, Tag, type TagTone } from "@/components/Panel";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { buildMcpTools } from "@/lib/ai/mcp";
+import { resolveEffort } from "@/lib/ai/providers";
 import { buildTurnContext, type TurnContext } from "@/lib/ai/runner";
 import { skillNames } from "@/lib/ai/skills";
 import { pathTo } from "@/lib/tree";
@@ -86,6 +87,9 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
   const json = useMemo(() => JSON.stringify(context, null, 2), [context]);
 
   // 토큰 수는 공급자마다 달라 정확히 알 수 없으므로 문자 수만 정직하게 보여준다.
+  // 설정에 적힌 강도가 아니라 이 모델에 실제로 나간 강도 (없으면 undefined).
+  const sentEffort = resolveEffort(context.modelId, context.effort);
+
   const totalChars = useMemo(
     () => context.system.length + json.length,
     [context.system.length, json.length],
@@ -125,7 +129,17 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
         <div className="flex flex-wrap items-center gap-2 text-caption text-ink-muted">
           <Tag tone={badge.tone}>{badge.text}</Tag>
           <span className="font-mono text-ink">{context.modelId}</span>
-          <span>effort {context.effort}</span>
+          {/* 안 보낸 값을 보낸 것처럼 적지 않는다 — 이 화면의 존재 이유가 그거다.
+              설정값이 아니라 **그 모델에 실제로 나간 값**을 같은 함수로 다시 구한다. */}
+          {sentEffort === undefined ? (
+            <span title="이 모델에는 사고 강도가 나가지 않습니다">effort 미전송</span>
+          ) : sentEffort === context.effort ? (
+            <span>effort {sentEffort}</span>
+          ) : (
+            <span title={`설정은 ${context.effort} 지만 이 모델이 받는 값이 아니라 가장 가까운 값으로 나갔습니다`}>
+              effort {sentEffort} (설정 {context.effort})
+            </span>
+          )}
           <span>최대 {context.maxSteps} 스텝</span>
           <span className="font-mono">{context.createdAt}</span>
         </div>

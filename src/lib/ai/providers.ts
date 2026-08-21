@@ -7,13 +7,17 @@
  *
  * `local` 은 특정 회사가 아니라 **이 PC 에서 도는 OpenAI 호환 서버**를 가리킨다
  * (Ollama · LM Studio · llama.cpp server · vLLM). 키가 필요 없고 주소만 있으면 된다.
+ *
+ * `google` 은 Gemini Developer API(ai.google.dev)다. 스택에 `@ai-sdk/google` 을 새로 들이지 않고
+ * 구글이 함께 제공하는 **OpenAI 호환 엔드포인트**를 `@ai-sdk/openai` 로 부른다(`GEMINI_BASE_URL`).
  */
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { LanguageModel } from "ai";
 
-export type ProviderId = "anthropic" | "openai" | "local";
+export type ProviderId = "anthropic" | "openai" | "google" | "local";
 
 /**
  * 롱컨텍스트 구간 요율 (USD / 1M tokens).
@@ -78,9 +82,13 @@ export interface ModelOption {
   // --- 아래는 OpenAI 쪽 개념. Anthropic 항목에서는 비워 둔다 ---
 
   /**
-   * 캐시 TTL 티어가 없는 공급자(OpenAI)의 캐시 쓰기 단가 (= 입력가 × 1.25).
+   * 캐시 TTL 티어가 없는 공급자(OpenAI · Google)의 캐시 쓰기 단가 (OpenAI 는 입력가 × 1.25).
    * `null` 은 **그 세대에 캐시 쓰기 과금이 없다(무료)** 는 뜻이고,
    * 비워 두면 "모른다" 는 뜻이다 — 0 으로 두면 둘이 구분되지 않는다.
+   *
+   * Gemini 는 캐시 **생성 요금**이 따로 없고 생성 시점 토큰을 그냥 입력 단가로 받는다 →
+   * `null`(무료)이 아니라 **입력가와 같은 값**을 넣는다. 대신 Gemini 만 있는 시간당
+   * 캐시 저장 비용(per 1M tokens per hour)은 이 스키마에 담을 칸이 없다(카탈로그 주석 참고).
    */
   cacheWrite?: number | null;
   /**
@@ -123,11 +131,20 @@ const ANTHROPIC_DIRECT_HEADERS: Record<string, string> = {
  */
 export const LONG_CONTEXT_THRESHOLD_TOKENS = 272_000;
 
+/**
+ * Gemini 3.1 Pro 의 계층 요율 문턱. 프롬프트가 이 수를 넘으면 입력·출력·캐시 단가가
+ * 모두 상위 구간으로 바뀐다 — OpenAI 의 272K 와 같은 "요청 전체" 규칙이다.
+ */
+export const GEMINI_LONG_CONTEXT_THRESHOLD_TOKENS = 200_000;
+
 /** 추론 강도 지원값은 세대마다 다르다. 목록에 없는 값을 보내면 공급자가 거절한다. */
 const EFFORTS_GPT_5_6: Effort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const EFFORTS_GPT_5_4: Effort[] = ["none", "low", "medium", "high", "xhigh"];
 const EFFORTS_GPT_5_3_CODEX: Effort[] = ["low", "medium", "high", "xhigh"];
 const EFFORTS_GPT_5: Effort[] = ["minimal", "low", "medium", "high"];
+/** Gemini 3.7 Flash 는 `minimal` 을 받지 않는다 — 지정하면 에러다. */
+const EFFORTS_GEMINI_3_7: Effort[] = ["low", "medium", "high"];
+const EFFORTS_GEMINI_3_1_LITE: Effort[] = ["minimal", "low", "medium", "high"];
 
 /** 공급자별 모델 목록. 라벨만 표시용이고 실제 호출에는 `modelId` 를 쓴다. */
 export const MODEL_CATALOG: ModelOption[] = [
@@ -160,7 +177,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     provider: "anthropic",
     modelId: "claude-opus-5",
     label: "Claude Opus 5",
-    note: "기본값 · 1M 컨텍스트",
+    note: "Anthropic 최상위급 · 1M 컨텍스트",
     inputPrice: 5,
     outputPrice: 25,
     cacheWrite5m: 6.25,
@@ -476,7 +493,194 @@ export const MODEL_CATALOG: ModelOption[] = [
     batchDiscount: 0.5,
     supportedEfforts: EFFORTS_GPT_5,
   },
+
+  // --- Google Gemini (Gemini Developer API · ai.google.dev) ---
+  //
+  // 가격은 전부 **Standard 티어 · 유료(Paid) 기준, USD / 1M tokens** 이며
+  // 출력 단가에는 thinking(추론) 토큰이 포함된다. (출처: ai.google.dev/gemini-api/docs/pricing, 2026-08-21 확인)
+  //
+  // 스키마에 자리가 없어 여기 주석으로만 남기는 것들:
+  //
+  // 1) **캐시 저장 비용(per 1M tokens per hour)**. Gemini 의 캐싱은 Anthropic/OpenAI 와 구조가 다르다 —
+  //    캐시를 **만들 때 따로 받는 쓰기 요금이 없고**(생성 시점 토큰은 그냥 입력 단가로 과금),
+  //    대신 캐시를 **들고 있는 시간**에 요금이 붙는다. 명시적(explicit) 캐시만 저장비가 나가고
+  //    암묵적(implicit) 캐시는 저장비 없이 히트 할인만 받는다.
+  //      gemini-3.7-flash · 3.6-flash                             $0.50 /1M/hr
+  //      gemini-3.5-flash-lite · 3.1-flash-lite · 2.5-flash-lite  $1.00 /1M/hr
+  //      gemini-3.1-pro-preview(+customtools)                     $4.50 /1M/hr
+  //    특히 Pro 계열의 $4.50/1M/hr 는 **장시간 에이전트 세션에서 무시할 수 없다** —
+  //    200K 프롬프트를 한 시간 물고 있으면 그것만으로 $0.90 이다. 토큰 수가 아니라 시간에 붙는
+  //    과금이라 이 앱의 사용량 집계(토큰 기반)로는 절대 잡히지 않는다.
+  //    → 그래서 `cacheWrite` 는 `null`("무료") 이 아니라 **입력가와 같은 값**을 넣는다.
+  //      캐시 생성 토큰이 입력 단가로 과금되는 실제 규칙과 맞고, `null` 로 두면
+  //      `estimateCost()` 가 그 토큰을 0 원으로 세어 과소 추정한다.
+  //
+  // 2) **프로모션 가격 만료일과 예정가**. 3.7 Flash · 3.6 Flash 의 아래 값은 프로모션이며
+  //    **2026-12-31 까지만** 유효하다. 2027-01-01 부터 두 모델 모두 정상가로 오른다:
+  //      입력 $0.75 → $1.50 · 출력 $3.75 → $7.50 · 캐시읽기 $0.075 → $0.15 · 캐시저장 $0.50 → $1.00 /1M/hr
+  //    (카탈로그에 가격 유효기간 필드가 없다 — 그날이 오면 이 값들을 손으로 갈아야 한다)
+  //
+  // 3) **서비스 티어 배수**. `SERVICE_TIER_MULTIPLIERS` 는 batch 0.5 · flex 0.5 까지는 Gemini 와 같지만
+  //    priority 는 Gemini 가 **1.8x**, 표에는 2 로 박혀 있다(OpenAI 기준). 모델별 티어 배수를 두는
+  //    필드가 없어 그대로 둔다 — Gemini 를 priority 로 부르면 요금이 약 11% 과대 추정된다.
+  //
+  // 4) 지원 thinking 레벨이 문서에 명시된 모델만 `supportedEfforts` 를 채웠다(추측 금지).
+  //
+  // 목록에서 뺀 모델: gemini-3.5-flash · gemini-3-flash-preview · gemini-2.5-pro · gemini-2.5-flash
+  // (가격 대비 매력이 없거나 상위 모델로 대체됐다. 카탈로그에 넣은 적이 없어 deprecated 표시할 대상도 없다)
+  {
+    id: "google:gemini-3.7-flash",
+    provider: "google",
+    modelId: "gemini-3.7-flash",
+    label: "Gemini 3.7 Flash",
+    note: "기본값 · 1M 컨텍스트 · 프로모션가(2026-12-31까지)",
+    inputPrice: 0.75,
+    outputPrice: 3.75,
+    cacheRead: 0.075,
+    // 캐시 생성 토큰은 입력 단가로 과금된다(별도 쓰기 요금 없음). 시간당 저장비는 위 주석 참고.
+    cacheWrite: 0.75,
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    // 일부 도메인은 2025-01 기준이다 — 카탈로그가 기준일을 하나만 들고 있어 최신 쪽을 적는다.
+    trainingCutoff: "2026-03",
+    supportsPromptCaching: true,
+    supportsVision: true,
+    supportsToolUse: true,
+    batchDiscount: 0.5,
+    // `minimal` 을 지정하면 에러를 돌려준다 — 목록에 넣으면 안 된다.
+    supportedEfforts: EFFORTS_GEMINI_3_7,
+  },
+  {
+    id: "google:gemini-3.6-flash",
+    provider: "google",
+    modelId: "gemini-3.6-flash",
+    label: "Gemini 3.6 Flash",
+    note: "이전 세대 Flash · 1M 컨텍스트 · 프로모션가(2026-12-31까지)",
+    inputPrice: 0.75,
+    outputPrice: 3.75,
+    cacheRead: 0.075,
+    cacheWrite: 0.75,
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    // 3.7 Flash 와 같다 — 일부 도메인은 2025-01.
+    trainingCutoff: "2026-03",
+    supportsPromptCaching: true,
+    supportsVision: true,
+    supportsToolUse: true,
+    batchDiscount: 0.5,
+    // supportedEfforts 없음 — 문서가 이 모델의 thinking 레벨을 명시하지 않는다.
+  },
+  {
+    id: "google:gemini-3.1-pro-preview",
+    provider: "google",
+    modelId: "gemini-3.1-pro-preview",
+    label: "Gemini 3.1 Pro (preview)",
+    note: "프리뷰 · 프롬프트 200K 초과 시 전 항목 단가 2배 이상",
+    inputPrice: 2,
+    outputPrice: 12,
+    cacheRead: 0.2,
+    cacheWrite: 2,
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    trainingCutoff: "2025-01",
+    supportsPromptCaching: true,
+    supportsVision: true,
+    supportsToolUse: true,
+    batchDiscount: 0.5,
+    // OpenAI 의 272K 문턱과 같은 규칙이다 — 프롬프트가 200K 를 넘으면 **그 요청 전체**가 상위 구간 요율.
+    longContextThresholdTokens: GEMINI_LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 4, cacheRead: 0.4, cacheWrite: 4, outputPrice: 18 },
+  },
+  {
+    id: "google:gemini-3.1-pro-preview-customtools",
+    provider: "google",
+    modelId: "gemini-3.1-pro-preview-customtools",
+    label: "Gemini 3.1 Pro customtools (preview)",
+    note: "커스텀 툴(view_file · search_code) + bash 에이전틱 워크플로 특화",
+    // 3.1 Pro 와 가격·컨텍스트·출력·기준일이 전부 같지만 **별도 엔드포인트**라 항목을 따로 둔다.
+    // 별칭(`MODEL_ID_ALIASES`)으로 두면 `canonicalModelId()` 가 저장된 id 를 3.1 Pro 로 덮어써서
+    // 정작 이 엔드포인트로는 영영 호출되지 않는다. 커스텀 툴 이점이 없는 작업에서는 품질이 흔들릴 수 있다.
+    inputPrice: 2,
+    outputPrice: 12,
+    cacheRead: 0.2,
+    cacheWrite: 2,
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    trainingCutoff: "2025-01",
+    supportsPromptCaching: true,
+    supportsVision: true,
+    supportsToolUse: true,
+    batchDiscount: 0.5,
+    longContextThresholdTokens: GEMINI_LONG_CONTEXT_THRESHOLD_TOKENS,
+    longContextPricing: { inputPrice: 4, cacheRead: 0.4, cacheWrite: 4, outputPrice: 18 },
+  },
+  {
+    id: "google:gemini-3.5-flash-lite",
+    provider: "google",
+    modelId: "gemini-3.5-flash-lite",
+    label: "Gemini 3.5 Flash-Lite",
+    note: "경량 · 1M 컨텍스트",
+    inputPrice: 0.3,
+    outputPrice: 2.5,
+    cacheRead: 0.03,
+    cacheWrite: 0.3,
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    trainingCutoff: "2026-03",
+    supportsPromptCaching: true,
+    supportsVision: true,
+    supportsToolUse: true,
+    batchDiscount: 0.5,
+  },
+  {
+    id: "google:gemini-3.1-flash-lite",
+    provider: "google",
+    modelId: "gemini-3.1-flash-lite",
+    label: "Gemini 3.1 Flash-Lite",
+    note: "경량 · 1M 컨텍스트",
+    inputPrice: 0.25,
+    outputPrice: 1.5,
+    cacheRead: 0.025,
+    cacheWrite: 0.25,
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    trainingCutoff: "2025-01",
+    supportsPromptCaching: true,
+    supportsVision: true,
+    supportsToolUse: true,
+    batchDiscount: 0.5,
+    supportedEfforts: EFFORTS_GEMINI_3_1_LITE,
+  },
+  {
+    id: "google:gemini-2.5-flash-lite",
+    provider: "google",
+    modelId: "gemini-2.5-flash-lite",
+    label: "Gemini 2.5 Flash-Lite",
+    note: "카탈로그 전체 최저가 · 대량 분류 · 서브에이전트용",
+    inputPrice: 0.1,
+    outputPrice: 0.4,
+    cacheRead: 0.01,
+    cacheWrite: 0.1,
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    trainingCutoff: "2025-01",
+    supportsPromptCaching: true,
+    supportsVision: true,
+    supportsToolUse: true,
+    batchDiscount: 0.5,
+  },
 ];
+
+/**
+ * Gemini Developer API 의 **OpenAI 호환** 베이스 주소.
+ *
+ * `@ai-sdk/google` 을 새로 들이는 대신 이 경로를 `@ai-sdk/openai` 로 부른다(스택 고정).
+ * 네이티브 `v1beta/models/...:streamGenerateContent` 가 아니라 `/chat/completions` 라
+ * `resolveModel()` 에서도 `.chat()` 을 쓴다 — 구글은 Responses API 를 구현하지 않았다.
+ *
+ * 이 도메인은 `src-tauri/capabilities/default.json` 의 `http:default` 스코프에도 열려 있어야 한다.
+ */
+export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 
 /**
  * 로컬 OpenAI 호환 서버의 기본 주소. Ollama 는 11434, LM Studio 는 1234 를 쓴다.
@@ -557,7 +761,7 @@ export async function fetchLocalModels(baseUrl?: string): Promise<string[]> {
     .sort();
 }
 
-export const DEFAULT_MODEL_ID = "anthropic:claude-opus-5";
+export const DEFAULT_MODEL_ID = "google:gemini-3.7-flash";
 
 /**
  * 사고 강도. Anthropic 은 `providerOptionsFor()` 가 실제 요청에 실어 보낸다.
@@ -569,9 +773,13 @@ export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | 
 export interface ProviderCredentials {
   anthropicApiKey?: string;
   openaiApiKey?: string;
+  /** Gemini Developer API 키 (Google AI Studio 에서 발급) */
+  googleApiKey?: string;
   /** 프록시나 로컬 게이트웨이를 쓸 때. 비우면 각 공급자 기본값 */
   anthropicBaseUrl?: string;
   openaiBaseUrl?: string;
+  /** 비우면 `GEMINI_BASE_URL` (OpenAI 호환 경로) */
+  googleBaseUrl?: string;
   /** 로컬 OpenAI 호환 서버 주소. 비우면 `DEFAULT_LOCAL_BASE_URL` */
   localBaseUrl?: string;
   /** 로컬 서버가 키를 요구할 때만 (대부분 불필요) */
@@ -703,13 +911,16 @@ export function supportedEffortsFor(id: string): Effort[] | undefined {
   return findModelOption(id)?.supportedEfforts;
 }
 
+/** 안내 문구에 쓰는 공급자 이름. `local` 은 키를 요구하지 않아 목록에 없다. */
+const PROVIDER_LABELS: Partial<Record<ProviderId, string>> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google Gemini",
+};
+
 export class MissingApiKeyError extends Error {
   constructor(public readonly provider: ProviderId) {
-    super(
-      provider === "anthropic"
-        ? "Anthropic API 키가 없습니다. 우측 상단 설정에서 입력하세요."
-        : "OpenAI API 키가 없습니다. 우측 상단 설정에서 입력하세요.",
-    );
+    super(`${PROVIDER_LABELS[provider] ?? provider} API 키가 없습니다. 우측 상단 설정에서 입력하세요.`);
     this.name = "MissingApiKeyError";
   }
 }
@@ -737,6 +948,18 @@ export function resolveModel(id: string, credentials: ProviderCredentials): Lang
         fetch: localFetch,
         ...(credentials.openaiBaseUrl ? { baseURL: credentials.openaiBaseUrl } : {}),
       })(modelId);
+    }
+    case "google": {
+      const apiKey = credentials.googleApiKey?.trim();
+      if (!apiKey) throw new MissingApiKeyError("google");
+      // `.chat()` 이 중요하다 — 기본 팩토리는 Responses API 로 가는데
+      // Gemini 의 호환 계층은 `/chat/completions` 만 구현했다(로컬 서버와 같은 이유).
+      return createOpenAI({
+        name: "google",
+        apiKey,
+        baseURL: credentials.googleBaseUrl?.trim() || GEMINI_BASE_URL,
+        fetch: localFetch,
+      }).chat(modelId);
     }
     case "local": {
       // 로컬 서버는 대부분 인증이 없다. AI SDK 는 키가 비면 예외를 내므로 자리채움을 넣는다.
@@ -775,17 +998,92 @@ export function defaultEffortFor(id: string): Effort | undefined {
   return findModelOption(id)?.defaultEffort;
 }
 
-export function providerOptionsFor(id: string, effort: Effort) {
+/**
+ * 이 모델에 사고 강도를 **실제로 실어 보내는가**.
+ *
+ * - Anthropic: adaptive thinking 을 아는 모델만. 모르는 모델(Haiku 4.5)에 보내면 400 이다.
+ * - OpenAI · Gemini: 카탈로그가 `supportedEfforts` 로 받는 값을 아는 모델만.
+ *   세대마다 받는 값이 달라서, 목록을 모르는 모델(사용자가 직접 적은 신모델)에
+ *   임의로 보내면 그 역시 400 이다 — 모르면 안 보내는 쪽이 안전하다.
+ * - 로컬 서버: 개념 자체가 없다.
+ *
+ * 설정 화면은 이 값을 보고 드롭다운을 잠그고, 인스펙터는 "미전송" 으로 적는다 —
+ * 안 그러면 아무 데도 안 가는 값을 고르게 하고, 간 적 없는 값을 갔다고 보여 준다.
+ * `providerOptionsFor()` 가 같은 함수를 쓰므로 화면과 실제 요청이 어긋날 수 없다.
+ */
+export function sendsEffort(id: string): boolean {
   const { provider } = parseModelId(id);
-  if (provider !== "anthropic") return undefined;
-  if (findModelOption(id)?.supportsAdaptiveThinking === false) return undefined;
+  if (provider === "local") return false;
+  if (provider === "anthropic") return findModelOption(id)?.supportsAdaptiveThinking !== false;
+  return supportedEffortsFor(id) !== undefined;
+}
 
-  return {
-    anthropic: {
-      thinking: { type: "adaptive" as const, display: "summarized" as const },
-      effort,
-    },
-  };
+/** 강도의 크기 순서. "가장 가까운 값" 을 찾을 때의 기준자다. */
+const EFFORT_ORDER: Effort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * Anthropic 항목에는 `supportedEfforts` 가 없다(문서가 목록을 못박지 않는다).
+ * 드롭다운에는 이 범위를 뿌린다 — `none`·`minimal` 은 Anthropic 쪽 값이 아니다.
+ */
+export const ANTHROPIC_EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
+/** 설정 드롭다운에 뿌릴 값 목록. 카탈로그가 아는 모델은 그 모델이 받는 값만 보여 준다. */
+export function effortOptionsFor(id: string): Effort[] {
+  return supportedEffortsFor(id) ?? ANTHROPIC_EFFORTS;
+}
+
+/** 목록 밖 값이면 크기 순서상 가장 가까운 값. 같은 거리면 낮은 쪽(덜 쓰는 쪽)으로 당긴다. */
+function nearestEffort(effort: Effort, supported: Effort[]): Effort | undefined {
+  const target = EFFORT_ORDER.indexOf(effort);
+  let best: Effort | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of supported) {
+    const distance = Math.abs(EFFORT_ORDER.indexOf(candidate) - target);
+    if (distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/**
+ * 이 모델에 **실제로 나가는** 강도. `undefined` 는 안 나간다는 뜻이다.
+ *
+ * 설정의 강도는 하나인데 모델마다 받는 값이 다르다(GPT-5.6 은 `max` 까지, Gemini 3.7 은
+ * `low~high`, 3.7 에 `minimal` 을 보내면 에러). 그래서 목록 밖 값은 **가장 가까운 값으로
+ * 당겨서** 보낸다 — 400 으로 턴을 통째로 날리는 것보다 한 칸 옆의 강도로 답을 받는 게 낫다.
+ * 무엇으로 당겼는지는 인스펙터가 그대로 보여 준다(같은 함수로 다시 계산한다).
+ */
+export function resolveEffort(id: string, effort: Effort): Effort | undefined {
+  if (!sendsEffort(id)) return undefined;
+  const supported = supportedEffortsFor(id);
+  if (!supported) return effort;
+  return supported.includes(effort) ? effort : nearestEffort(effort, supported);
+}
+
+/**
+ * 공급자별 사고 옵션. 키가 갈린다:
+ * - Anthropic: adaptive thinking + `effort` (`temperature` 는 4.6+ 가 거부한다)
+ * - OpenAI · **Gemini**: `openai.reasoningEffort`. Gemini 도 OpenAI 호환 계층(`.chat()`)을
+ *   타는데, `@ai-sdk/openai` 의 chat 모델은 providerOptions 를 **`"openai"` 고정 키**로
+ *   읽는다(`createOpenAI({ name })` 를 따라가지 않는다). 그래서 `google:` 도 같은 키다.
+ *   대신 SDK 가 모델 id 로 추론 모델 여부를 판정하는데(`^gpt-`) `gemini-*` 는 거기 안 걸려
+ *   "reasoningEffort is not supported" 경고를 남긴다 — 값은 그대로 실려 나가므로 무해하다.
+ */
+export function providerOptionsFor(id: string, effort: Effort): ProviderOptions | undefined {
+  const resolved = resolveEffort(id, effort);
+  if (!resolved) return undefined;
+
+  if (parseModelId(id).provider === "anthropic") {
+    return {
+      anthropic: {
+        thinking: { type: "adaptive" as const, display: "summarized" as const },
+        effort: resolved,
+      },
+    };
+  }
+  return { openai: { reasoningEffort: resolved } };
 }
 
 export function hasCredentialFor(id: string, credentials: ProviderCredentials): boolean {
@@ -793,6 +1091,10 @@ export function hasCredentialFor(id: string, credentials: ProviderCredentials): 
   // 로컬 서버는 키가 없는 게 정상이다. 대신 서버가 떠 있는지는 설정에서 확인한다.
   if (provider === "local") return true;
   const key =
-    provider === "anthropic" ? credentials.anthropicApiKey : credentials.openaiApiKey;
+    provider === "anthropic"
+      ? credentials.anthropicApiKey
+      : provider === "google"
+        ? credentials.googleApiKey
+        : credentials.openaiApiKey;
   return Boolean(key?.trim());
 }

@@ -19,6 +19,7 @@ vi.mock("@/lib/ipc", () => ({
   renameSession: vi.fn(),
 }));
 
+import { DEFAULT_MODEL_ID } from "@/lib/ai/providers";
 import { runTurn } from "@/lib/ai/runner";
 import * as ipc from "@/lib/ipc";
 import { useChat } from "@/store/chat";
@@ -255,7 +256,7 @@ describe("useChat.send — 도구 스텝", () => {
       outputTokens: 5,
       reasoningTokens: 0,
       totalTokens: 15,
-      modelId: "anthropic:claude-opus-5",
+      modelId: DEFAULT_MODEL_ID,
     });
     // 첫 assistant 노드에는 그때 보낸 컨텍스트 원문이 남아 있어야 한다 (인스펙터용).
     expect(messages[1].contextSnapshot).toMatchObject({ toolNames: expect.any(Array) });

@@ -35,9 +35,34 @@ describe("모델을 바꾸면 권장 사고 강도를 따라간다", () => {
     expect(useSettings.getState().effort).toBe("max");
   });
 
+  it("권장값이 없고 그 모델이 안 받는 값이면 가장 가까운 값으로 당긴다", async () => {
+    // Gemini 3.7 Flash 는 low~high 만 받는다. "max" 가 그대로 남으면
+    // 드롭다운에 없는 값이 저장돼 셀렉트가 빈칸처럼 보인다.
+    await useSettings.getState().update({ modelId: "google:gemini-3.7-flash" });
+    expect(useSettings.getState().effort).toBe("high");
+  });
+
   it("모델이 그대로면 effort 를 건드리지 않는다", async () => {
     await useSettings.getState().update({ modelId: "anthropic:claude-opus-5" });
     expect(useSettings.getState().effort).toBe("max");
+  });
+});
+
+describe("Gemini 자격 증명", () => {
+  beforeEach(() => {
+    vi.mocked(ipc.writeAppSettings).mockClear();
+    useSettings.setState({ googleApiKey: "", googleBaseUrl: "" });
+  });
+
+  it("키가 디스크에 함께 저장되고 credentials() 로도 나간다", async () => {
+    await useSettings.getState().update({ googleApiKey: "AIza-test" });
+    const saved = vi.mocked(ipc.writeAppSettings).mock.calls.at(-1)?.[0];
+    expect(saved).toMatchObject({ googleApiKey: "AIza-test" });
+    expect(useSettings.getState().credentials().googleApiKey).toBe("AIza-test");
+  });
+
+  it("베이스 주소가 비어 있으면 undefined 로 넘겨 공급자 기본값을 쓰게 한다", () => {
+    expect(useSettings.getState().credentials().googleBaseUrl).toBeUndefined();
   });
 });
 

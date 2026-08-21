@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 235 / cargo 40. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 268 / cargo 40. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -49,6 +49,14 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - Tauri HTTP 플러그인은 그래도 요청마다 웹뷰 주소로 **`Origin` 헤더를 강제로 붙인다**(플러그인 Rust 쪽 `commands.rs`). Anthropic 은 `Origin` 이 있으면 브라우저 직접 호출로 보고 `CORS requests must set 'anthropic-dangerous-direct-browser-access' header` 로 거부한다 → `createAnthropic({ headers: { "anthropic-dangerous-direct-browser-access": "true" } })` 로 켜 준다. 키가 로컬 밖으로 안 나가므로 안전하다.
 - **AI SDK 의 중단은 "청크가 흐를 때만" 관측된다**. `streamText` 는 스트림에서 청크를 하나 읽은 뒤에 `abortSignal.aborted` 를 확인한다. 도구가 실행 중이면 청크가 없으므로 [중단]을 눌러도 아무 일도 일어나지 않는다 → 도구 자체를 중단 시그널과 경주시킨다(`lib/ai/abort.ts`). 도구가 거절되면 tool-error 청크가 흐르고 그때 스트림이 닫힌다.
 - **Windows 에서 자식만 kill 하면 파이프가 안 닫힌다**. `cmd /C pnpm dev` 처럼 손자가 생기는 명령은 cmd 를 죽여도 손자가 stdout 을 물고 있어 리더 스레드의 `read` 가 EOF 를 못 본다 → `join()` 이 영구 대기하고 도구 호출이 영영 안 끝난다. `taskkill /T /F` 로 트리째 죽이고, 리더 조인에도 유예 시간을 둔다(`commands/shell.rs`).
+- **사고 강도는 공급자마다 키가 다르고, 모델마다 받는 값이 다르다**. Anthropic 은
+  `anthropic.effort`, OpenAI·Gemini 는 `openai.reasoningEffort` 다 — Gemini 도 OpenAI 호환
+  계층을 타는데 `@ai-sdk/openai` 의 chat 모델이 providerOptions 를 **`"openai"` 고정 키**로
+  읽기 때문이다(`createOpenAI({ name })` 를 따라가지 않는다). 설정의 강도는 하나뿐인데
+  GPT-5.6 은 `max` 까지, Gemini 3.7 은 `low~high` 만 받는다 → `resolveEffort()` 가 목록 밖
+  값을 가장 가까운 값으로 당겨서 보낸다(400 으로 턴을 날리지 않게). 무엇이 실제로 나갔는지는
+  인스펙터가 같은 함수로 다시 계산해 보여 준다. **화면(잠금·목록)도 `sendsEffort()` /
+  `effortOptionsFor()` 로 같은 판정을 쓴다** — 판정을 UI 에 따로 적으면 반드시 어긋난다.
 - Anthropic 4.6+ 는 `temperature` 를 거부한다 → adaptive thinking + `effort`(`providerOptionsFor()`).
   **단 이건 모델마다 다르다** — Haiku 4.5 같은 구형은 adaptive 를 모르고 `effort` 도 안 받아서 그대로 보내면 400 이다.
   `providerOptionsFor()` 가 `MODEL_CATALOG` 의 `supportsAdaptiveThinking` 을 보고 붙일지 말지 정한다.
@@ -59,6 +67,13 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
   PowerShell 5 는 코드 페이지와 무관하게 OEM 코드 페이지(한국어면 CP949)로 쓴다 → 받는 쪽에서 되돌린다.
   `commands/shell.rs` 의 `decode_text()` 가 **줄 단위로** UTF-8 을 시도하고 실패한 줄만 `MultiByteToWideChar(GetOEMCP())`
   로 디코딩한다(한 스트림에 UTF-8 도구 출력과 CP949 가 섞여 나오기 때문). `chcp 65001` 선행은 그대로 두되 보조 수단일 뿐이다.
+- **Gemini(`google:` 공급자)도 `@ai-sdk/openai` 로 부른다**. `@ai-sdk/google` 을 새로 들이지 않고
+  구글의 **OpenAI 호환 엔드포인트**(`GEMINI_BASE_URL`)를 쓴다. 로컬 서버와 같은 이유로 `.chat()` 이어야
+  한다 — 호환 계층에 Responses API 가 없다. 캐시 과금 구조도 다르다: **캐시 생성 요금이 따로 없고**
+  (생성 토큰은 입력 단가로 과금) 대신 **시간당 저장 비용**이 붙는데 이건 토큰 기반 집계로는 안 잡힌다.
+  그래서 카탈로그의 `cacheWrite` 는 `null`(무료)이 아니라 입력가와 같은 값이다. 3.1 Pro 는
+  프롬프트 200K 초과 시 요청 전체가 상위 구간 요율 — OpenAI 272K 와 같은 규칙이라
+  `longContextThresholdTokens` 를 그대로 쓴다.
 - **로컬 모델(`local:` 공급자)은 `createOpenAI(...).chat()` 로 부른다**. 기본 팩토리(`createOpenAI(...)(id)`)는
   Responses API 로 가는데 Ollama/LM Studio 는 `/v1/chat/completions` 만 구현했다. 키가 비면 SDK 가 예외를 내므로
   자리채움 키를 넣는다. 자세한 운용은 `docs/local-llm.md`.
@@ -108,7 +123,7 @@ src/
   components/           chat · flow(턴 그래프) · sessions(세션 맵) · agents · mcp · inspect
                         ErrorBoundary.tsx — 렌더 예외로 창이 새까매지는 것을 막는다
                         UsageMeter.tsx — 토큰·요금·컨텍스트 게이지 (채팅/턴/세션 공용)
-                        Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·입력 크롬). 새 UI 는 여기서 가져다 쓴다
+                        Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·Hint·입력 크롬). 새 UI 는 여기서 가져다 쓴다
 src-tauri/src/
   lib.rs                command 등록 지점
   state.rs              프로젝트별 SQLite 커넥션 (with_conn)

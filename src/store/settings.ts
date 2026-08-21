@@ -12,6 +12,7 @@ import {
   canonicalModelId,
   defaultEffortFor,
   fetchLocalModels,
+  resolveEffort,
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
@@ -65,8 +66,10 @@ type PersistedSettings = Pick<
   SettingsState,
   | "anthropicApiKey"
   | "openaiApiKey"
+  | "googleApiKey"
   | "anthropicBaseUrl"
   | "openaiBaseUrl"
+  | "googleBaseUrl"
   | "localBaseUrl"
   | "localApiKey"
   | "localModels"
@@ -85,8 +88,10 @@ type PersistedSettings = Pick<
 const PERSISTED_KEYS: (keyof PersistedSettings)[] = [
   "anthropicApiKey",
   "openaiApiKey",
+  "googleApiKey",
   "anthropicBaseUrl",
   "openaiBaseUrl",
+  "googleBaseUrl",
   "localBaseUrl",
   "localApiKey",
   "localModels",
@@ -114,8 +119,10 @@ function pickPersisted(state: SettingsState): PersistedSettings {
 export const useSettings = create<SettingsState>((set, get) => ({
   anthropicApiKey: "",
   openaiApiKey: "",
+  googleApiKey: "",
   anthropicBaseUrl: "",
   openaiBaseUrl: "",
+  googleBaseUrl: "",
   localBaseUrl: DEFAULT_LOCAL_BASE_URL,
   localApiKey: "",
   localModels: [],
@@ -174,7 +181,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
     // 같은 patch 에 effort 가 들어 있으면(설정 모달의 저장) 사용자가 고른 값이 우선이다.
     if (next.modelId && next.modelId !== get().modelId && next.effort === undefined) {
       const recommended = defaultEffortFor(next.modelId);
-      if (recommended) next.effort = recommended;
+      // 권장값이 없으면 지금 강도를 그 모델이 받는 값으로 당겨 둔다. 안 그러면
+      // 드롭다운에 없는 값이 저장된 채로 남아 셀렉트가 빈칸처럼 보인다
+      // (요청 자체는 `resolveEffort` 가 다시 당기므로 400 은 나지 않는다).
+      next.effort = recommended ?? resolveEffort(next.modelId, get().effort) ?? get().effort;
     }
     set({ ...next, saving: true });
     // 저장을 기다리지 않고 바로 칠한다. 디스크가 느려도 클릭이 즉시 반응해야 한다.
@@ -204,8 +214,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
     return {
       anthropicApiKey: state.anthropicApiKey,
       openaiApiKey: state.openaiApiKey,
+      googleApiKey: state.googleApiKey,
       anthropicBaseUrl: state.anthropicBaseUrl || undefined,
       openaiBaseUrl: state.openaiBaseUrl || undefined,
+      googleBaseUrl: state.googleBaseUrl || undefined,
       localBaseUrl: state.localBaseUrl || undefined,
       localApiKey: state.localApiKey || undefined,
     };
