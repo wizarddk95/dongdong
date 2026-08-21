@@ -254,6 +254,86 @@ export interface ContextStatus {
   /** 0~1. 창 크기를 모르면 null */
   ratio: number | null;
   level: ContextLevel;
+  /** 창의 주인 = **다음 턴에 쓸 모델**. 게이지의 분모는 이 모델의 것이다 */
+  modelId: string | null;
+  /** `used` 를 실제로 센 모델. 다음 턴에 쓸 모델과 다를 수 있다 */
+  measuredModelId: string | null;
+  /** 잰 모델과 쓸 모델이 달라 토크나이저가 어긋난다 → 근사치 */
+  approximate: boolean;
+  /** `used` 중 공급자가 실제로 세어 준 몫 */
+  measuredTokens: number;
+  /** 그 호출 이후 늘어난(양수) · 분기로 줄어든(음수) 만큼의 환산 몫 */
+  projectedTokens: number;
+  /** 환산분이 섞여 있다 — 그만큼은 아직 아무도 세지 않았다 */
+  estimated: boolean;
+  /** 다음 턴에 나갈 페이로드의 문자 수. 인스펙터가 적는 "N자" 와 같은 수 */
+  chars: number | null;
+  /** 그 페이로드의 LLM 메시지 수. 인스펙터의 "메시지 N개" 와 같은 수 */
+  messageCount: number | null;
+  /** 이 대화가 실측으로 만들어 낸 자/토큰 비율 */
+  charsPerToken: number | null;
+}
+
+/** 다음 턴에 나갈 페이로드의 크기. 이게 있어야 "지금" 을 말할 수 있다. */
+export interface ContextPayload {
+  /** 다음 턴에 나갈 페이로드의 문자 수 (`payloadChars()`) */
+  chars: number;
+  /** 그 페이로드의 LLM 메시지 수 */
+  messageCount: number;
+  /** 마지막 호출이 **받았던** 페이로드의 문자 수. 이게 있어야 비율이 나온다 */
+  measuredChars: number | null;
+}
+
+/** `projectTokens()` 의 결과. */
+export interface TokenProjection {
+  used: number;
+  /** 공급자가 세어 준 몫 */
+  measured: number;
+  /** 환산한 몫 (부호 있음) */
+  projected: number;
+  charsPerToken: number | null;
+}
+
+/**
+ * **지금 보내면** 몇 토큰이 나가는지.
+ *
+ * 마지막 호출은 공급자가 정확히 세어 줬지만, 그 뒤에 붙은 것(그 답변, 새 사용자 메시지)은
+ * 아직 아무도 센 적이 없다. 그렇다고 전체를 자/토큰 어림으로 갈아 끼우면 정확한 수를
+ * 버리고 어림으로 바꾸는 꼴이다 → **실측에 못을 박고 늘어난 만큼만** 환산한다.
+ *
+ * 비율도 일반론("4자당 1토큰")이 아니라 이 대화가 방금 만들어 낸 값이다 —
+ * 마지막 호출이 받은 페이로드의 문자 수 ÷ 그 호출의 입력 토큰. 매 턴 다시 보정된다.
+ *
+ * 그래프에서 앞쪽 노드로 분기하면 페이로드가 **줄어든다** — 그때는 환산분이 음수다.
+ *
+ * 페이로드를 모르면(세션 카드는 DB 집계만 갖고 있어 다시 만들 수 없다) 옛 어림으로
+ * 물러난다: 마지막 호출의 입력+출력. 답변이 다음 턴엔 입력으로 바뀌므로 대략 맞지만,
+ * 다시 실리지 않는 사고 토큰까지 함께 세는 만큼 조금 크게 잡힌다.
+ */
+export function projectTokens(
+  usage: Usage | null,
+  payload: ContextPayload | null,
+): TokenProjection {
+  if (!usage) return { used: 0, measured: 0, projected: 0, charsPerToken: null };
+
+  if (
+    !payload ||
+    payload.measuredChars == null ||
+    payload.measuredChars <= 0 ||
+    usage.inputTokens <= 0
+  ) {
+    const used = usage.inputTokens + usage.outputTokens;
+    return { used, measured: used, projected: 0, charsPerToken: null };
+  }
+
+  const charsPerToken = payload.measuredChars / usage.inputTokens;
+  const projected = Math.round((payload.chars - payload.measuredChars) / charsPerToken);
+  return {
+    used: Math.max(0, usage.inputTokens + projected),
+    measured: usage.inputTokens,
+    projected,
+    charsPerToken,
+  };
 }
 
 export const CONTEXT_WARN_RATIO = 0.7;
@@ -267,11 +347,33 @@ function contextLevel(ratio: number | null): ContextLevel {
 }
 
 /**
- * 컨텍스트 잔량. **마지막 LLM 호출**의 입력+출력을 쓴 것으로 본다.
- * 도구 결과가 붙으면 실제로는 조금 더 늘지만, 다음 호출 전까지는 알 수 없다.
+ * 컨텍스트 잔량 — **지금 보내면 얼마가 나가는가**.
+ *
+ * 분자는 `projectTokens()` 가 만든다: 마지막 호출의 실측값에 못을 박고, 그 뒤로
+ * 페이로드가 늘거나 준 만큼만 환산해 더한다. `payload` 를 안 주면 마지막 호출의
+ * 입력+출력으로 물러난다(세션 카드).
+ *
+ * 넘겨받는 `usage` 는 반드시 **호출 하나**의 것이어야 한다. 여러 호출을
+ * 더한 값을 넣으면(도구를 쓴 턴은 스텝마다 대화 전체가 다시 올라간다) 겹쳐 센
+ * 앞부분까지 "지금 차 있는 양"으로 보여 게이지가 몇 배로 부푼다.
+ * 2026-08 이전에 저장된 노드는 턴 누적이 마지막 노드에 몰려 있어 이 값이 부풀어 있다.
+ *
+ * 분모는 **다음 턴에 쓸 모델**(`modelId`)의 창이다 — 지금 차 있는 양이 궁금한 이유가
+ * "이 대화를 이어서 보낼 수 있나" 이기 때문이다. 창 크기는 모델마다 200K~1M 로
+ * 다섯 배씩 차이가 나므로, 모델을 바꾸면 같은 대화라도 여유가 완전히 달라진다.
+ *
+ * 분자는 `measuredModelId` 가 실제로 세어 준 값이다. 둘이 다르면 토크나이저가 달라
+ * 실제로는 ±10% 안팎에서 어긋난다 → `approximate` 로 표시만 하고 값을 지어내지 않는다.
+ * 그 모델로 한 턴만 돌리면 실측값으로 저절로 갈아 끼워진다.
  */
-export function contextStatus(modelId: string | null, usage: Usage | null): ContextStatus {
-  const used = usage ? usage.inputTokens + usage.outputTokens : 0;
+export function contextStatus(
+  modelId: string | null,
+  usage: Usage | null,
+  measuredModelId: string | null = modelId,
+  payload: ContextPayload | null = null,
+): ContextStatus {
+  const projection = projectTokens(usage, payload);
+  const used = projection.used;
   const window = (modelId ? findModelOption(modelId)?.contextWindow : undefined) ?? null;
   const ratio = window ? Math.min(1, used / window) : null;
 
@@ -283,6 +385,15 @@ export function contextStatus(modelId: string | null, usage: Usage | null): Cont
     remaining: window ? Math.max(0, window - used) : null,
     ratio,
     level: contextLevel(ratio),
+    modelId,
+    measuredModelId,
+    approximate: used > 0 && measuredModelId != null && measuredModelId !== modelId,
+    measuredTokens: projection.measured,
+    projectedTokens: projection.projected,
+    estimated: projection.projected !== 0,
+    chars: payload?.chars ?? null,
+    messageCount: payload?.messageCount ?? null,
+    charsPerToken: projection.charsPerToken,
   };
 }
 
@@ -330,13 +441,21 @@ export function readChainUsage(messages: Message[], fallbackModelId?: string | n
   };
 }
 
-/** 활성 경로에서 **가장 최근** LLM 호출만 골라낸다 (컨텍스트 잔량 기준점). */
-export function lastCallUsage(messages: Message[], fallbackModelId?: string | null): NodeUsage | null {
+/**
+ * 활성 경로에서 **가장 최근** LLM 호출 노드 (컨텍스트 잔량의 기준점).
+ * 그 호출이 받은 페이로드를 트리에서 다시 만들려면 usage 말고 노드 자체가 필요하다.
+ */
+export function lastCallNode(messages: Message[]): Message | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const node = readNodeUsage(messages[index], fallbackModelId);
-    if (node) return node;
+    if (readUsage(messages[index].tokenUsage)) return messages[index];
   }
   return null;
+}
+
+/** 활성 경로에서 **가장 최근** LLM 호출만 골라낸다 (컨텍스트 잔량 기준점). */
+export function lastCallUsage(messages: Message[], fallbackModelId?: string | null): NodeUsage | null {
+  const node = lastCallNode(messages);
+  return node ? readNodeUsage(node, fallbackModelId) : null;
 }
 
 /** 세션(또는 프로젝트) 누적 사용량. */
@@ -469,12 +588,16 @@ export function summarizeProjectUsage(overviews: SessionOverview[]): UsageSummar
   );
 }
 
-/** 세션 카드의 컨텍스트 게이지 — 그 세션의 가장 최근 호출이 기준. */
-export function sessionContextStatus(overview: SessionOverview): ContextStatus {
-  return contextStatus(
-    overview.lastUsageModel ?? overview.model,
-    readUsage(overview.lastUsage),
-  );
+/**
+ * 세션 카드의 컨텍스트 게이지 — 그 세션의 가장 최근 호출이 분자,
+ * **지금 선택된 모델**의 창이 분모다("이 세션을 지금 이어서 쓰면 얼마나 차 있나").
+ */
+export function sessionContextStatus(
+  overview: SessionOverview,
+  modelId: string | null,
+): ContextStatus {
+  const measured = overview.lastUsageModel ?? overview.model;
+  return contextStatus(modelId ?? measured, readUsage(overview.lastUsage), measured);
 }
 
 // -------------------------------------------------------------------- 표시
@@ -486,6 +609,12 @@ export function formatUsd(value: number): string {
   if (value < 0.01) return `$${value.toFixed(4)}`;
   if (value < 1) return `$${value.toFixed(3)}`;
   return `$${value.toFixed(2)}`;
+}
+
+/** 화면에 짧게 적을 모델 이름. 카탈로그에 없는 모델(직접 입력)은 공급자 접두어만 뗀다. */
+export function formatModelLabel(modelId: string | null): string {
+  if (!modelId) return "모델 미상";
+  return findModelOption(modelId)?.label ?? parseModelId(modelId).modelId;
 }
 
 /** 카드처럼 좁은 자리에 쓰는 짧은 토큰 수. */

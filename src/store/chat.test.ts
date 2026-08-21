@@ -21,6 +21,7 @@ vi.mock("@/lib/ipc", () => ({
 
 import { DEFAULT_MODEL_ID } from "@/lib/ai/providers";
 import { runTurn } from "@/lib/ai/runner";
+import { lastCallUsage, readChainUsage } from "@/lib/ai/usage";
 import * as ipc from "@/lib/ipc";
 import { useChat } from "@/store/chat";
 import { useWorkspace } from "@/store/workspace";
@@ -103,17 +104,28 @@ beforeEach(() => {
   useChat.setState({ running: false, error: null, pendingToolCalls: [] });
 });
 
+/** 스텝 하나가 쓴 토큰. 노드 하나 = LLM 호출 하나이므로 노드에도 이 모양이 남는다. */
+function stepUsage(inputTokens: number, outputTokens: number) {
+  return {
+    inputTokens,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens,
+    reasoningTokens: 0,
+    totalTokens: inputTokens + outputTokens,
+  };
+}
+
+// 도구 스텝은 프롬프트가 짧고, 도구 결과가 붙은 다음 스텝은 그만큼 길어진다.
+const TOOL_STEP_USAGE = stepUsage(8, 3);
+const LAST_STEP_USAGE = stepUsage(10, 5);
+
 const finalResult: RunTurnResult = {
   text: "다 읽었습니다",
   reasoning: "",
-  usage: {
-    inputTokens: 10,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    outputTokens: 5,
-    reasoningTokens: 0,
-    totalTokens: 15,
-  },
+  // 턴 누적(= 두 스텝의 합). 노드에는 이 값이 아니라 스텝별 값이 남는다.
+  usage: stepUsage(18, 8),
+  lastStepUsage: LAST_STEP_USAGE,
   finishReason: "stop",
   aborted: false,
   steps: 2,
@@ -128,6 +140,7 @@ describe("useChat.send — 도구 스텝", () => {
         reasoning: "",
         toolCalls: [{ toolCallId: "c1", toolName: "read_file", input: { path: "a.ts" } }],
         toolResults: [{ toolCallId: "c1", toolName: "read_file", output: { content: "x" } }],
+        usage: TOOL_STEP_USAGE,
       });
       await options.onStepFinish?.({
         index: 1,
@@ -135,6 +148,7 @@ describe("useChat.send — 도구 스텝", () => {
         reasoning: "",
         toolCalls: [],
         toolResults: [],
+        usage: LAST_STEP_USAGE,
       });
       return finalResult;
     });
@@ -170,6 +184,47 @@ describe("useChat.send — 도구 스텝", () => {
     expect(useWorkspace.getState().activeParentId).toBe(last.id);
   });
 
+  it("스텝마다 자기 호출의 토큰만 자기 노드에 남는다", async () => {
+    // 컨텍스트 잔량은 "마지막 호출"이 기준이다. 턴 누적을 마지막 노드에 몰아 적으면
+    // 도구를 많이 쓴 턴일수록 잔량이 실제보다 몇 배로 부풀어 보인다(스텝마다 대화
+    // 전체가 다시 올라가므로 앞부분이 겹쳐 세어진다). 그래서 스텝 = 노드로 쪼갠다.
+    vi.mocked(runTurn).mockImplementation(async (options: RunTurnOptions) => {
+      await options.onStepFinish?.({
+        index: 0,
+        text: "파일을 읽어볼게요",
+        reasoning: "",
+        toolCalls: [{ toolCallId: "c1", toolName: "read_file", input: { path: "a.ts" } }],
+        toolResults: [{ toolCallId: "c1", toolName: "read_file", output: { content: "x" } }],
+        usage: TOOL_STEP_USAGE,
+      });
+      await options.onStepFinish?.({
+        index: 1,
+        text: "다 읽었습니다",
+        reasoning: "",
+        toolCalls: [],
+        toolResults: [],
+        usage: LAST_STEP_USAGE,
+      });
+      return finalResult;
+    });
+
+    await useChat.getState().send("a.ts 봐줘");
+
+    const [, first, toolNode, last] = useWorkspace.getState().messages;
+    expect(first.tokenUsage).toEqual({ ...TOOL_STEP_USAGE, modelId: DEFAULT_MODEL_ID });
+    // 도구 결과 노드는 LLM 호출이 아니다 — 토큰을 갖지 않는다.
+    expect(toolNode.tokenUsage).toBeNull();
+    expect(last.tokenUsage).toEqual({ ...LAST_STEP_USAGE, modelId: DEFAULT_MODEL_ID });
+
+    // 노드를 더하면 턴 누적(= runTurn 이 돌려준 합계)과 맞아떨어진다.
+    const chain = readChainUsage(useWorkspace.getState().messages);
+    expect(chain.usage.inputTokens).toBe(finalResult.usage?.inputTokens);
+    expect(chain.usage.outputTokens).toBe(finalResult.usage?.outputTokens);
+
+    // 컨텍스트 잔량은 누적(18)이 아니라 마지막 호출(10 + 5)이 기준이다.
+    expect(lastCallUsage(useWorkspace.getState().messages)?.usage).toEqual(LAST_STEP_USAGE);
+  });
+
   it("도구 스텝 직후 턴이 끝나면 빈 응답 노드를 남기지 않는다", async () => {
     vi.mocked(runTurn).mockImplementation(async (options: RunTurnOptions) => {
       await options.onStepFinish?.({
@@ -178,6 +233,7 @@ describe("useChat.send — 도구 스텝", () => {
         reasoning: "",
         toolCalls: [{ toolCallId: "c1", toolName: "execute_shell_command", input: { command: "ls" } }],
         toolResults: [{ toolCallId: "c1", toolName: "execute_shell_command", output: { exitCode: 0 } }],
+        usage: TOOL_STEP_USAGE,
       });
       // 최대 스텝에 걸려 텍스트 없이 끝난 상황
       return { ...finalResult, text: "", finishReason: "tool-calls", steps: 1 };
@@ -239,8 +295,9 @@ describe("useChat.send — 도구 스텝", () => {
         reasoning: "",
         toolCalls: [],
         toolResults: [],
+        usage: LAST_STEP_USAGE,
       });
-      return { ...finalResult, text: "안녕하세요", steps: 1 };
+      return { ...finalResult, text: "안녕하세요", usage: LAST_STEP_USAGE, steps: 1 };
     });
 
     await useChat.getState().send("안녕");

@@ -15,7 +15,8 @@ import {
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
-import { readUsage, type Usage } from "@/lib/ai/usage";
+import { lastCallNode, readUsage, type ContextPayload, type Usage } from "@/lib/ai/usage";
+import { pathTo } from "@/lib/tree";
 import type { Message } from "@/types/ipc";
 
 /** LLM 으로 실제 전송되는 페이로드. Context Inspector 가 그대로 렌더링한다. */
@@ -52,6 +53,13 @@ export interface StepRecord {
   reasoning: string;
   toolCalls: StoredToolCall[];
   toolResults: StoredToolResult[];
+  /**
+   * **이 호출 하나**가 쓴 토큰. 턴 누적이 아니다.
+   * 대화는 매 스텝 전체가 다시 올라가므로 스텝을 더하면 앞부분이 몇 번이고 겹쳐 세어진다
+   * — 요금은 그게 맞지만(스텝마다 실제로 청구된다) 컨텍스트 잔량은 아니다.
+   * 그래서 스텝의 값은 그 스텝의 노드에만 남기고, 합계는 노드를 더해서 만든다.
+   */
+  usage: Usage | null;
 }
 
 export interface RunTurnOptions {
@@ -71,8 +79,17 @@ export interface RunTurnResult {
   /** 마지막 스텝의 텍스트 (= 최종 assistant 노드에 남을 내용) */
   text: string;
   reasoning: string;
-  /** 턴 전체(모든 스텝)의 합계. 공급자별 모양 차이는 여기서 이미 접혀 있다 */
+  /**
+   * 턴 전체(모든 스텝)의 합계. 공급자별 모양 차이는 여기서 이미 접혀 있다.
+   * 노드를 남기지 않는 실행(서브에이전트)만 이 값을 저장한다 — 대화 트리는
+   * 스텝마다 자기 노드에 자기 사용량을 남기므로 이걸 또 쓰면 이중으로 세어진다.
+   */
   usage: Usage | null;
+  /**
+   * 마지막 스텝 하나의 사용량 = 최종 assistant 노드에 남길 값이자 컨텍스트 잔량의 기준.
+   * 도구 스텝의 몫은 `onStepFinish` 가 이미 그 노드에 남겼으므로 여기서는 빠진다.
+   */
+  lastStepUsage: Usage | null;
   finishReason: string | null;
   aborted: boolean;
   steps: number;
@@ -192,6 +209,46 @@ export function toModelMessages(chain: Message[]): ModelMessage[] {
   return out;
 }
 
+/**
+ * 이 페이로드가 몇 **자**인지.
+ *
+ * 들여쓰기 없는 원문 기준이다 — 인스펙터가 화면에 뿌리는 `JSON.stringify(…, null, 2)` 를
+ * 재면 실제보다 30% 가까이 부푼다. 컨텍스트 게이지와 인스펙터가 **같은 수**를 말해야
+ * 하므로 세는 곳을 여기 하나로 둔다. `system` 은 한 번만 센다(따로 더하면 두 번 세어진다).
+ */
+export function payloadChars(context: Pick<TurnContext, "system" | "messages">): number {
+  return JSON.stringify({ system: context.system, messages: context.messages }).length;
+}
+
+/**
+ * 컨텍스트 게이지가 쓸 페이로드 크기 — "지금 나갈 것" 과 "마지막 호출이 받았던 것".
+ *
+ * 채팅창 위 게이지와 인스펙터가 **같은 수**를 말해야 하므로 만드는 곳을 여기 하나로 둔다.
+ * 기준점 호출의 페이로드는 그 노드의 부모까지의 체인으로 되만든다(인스펙터가 도구 스텝
+ * 노드를 복원할 때와 같은 방식이다). system 은 그 노드의 스냅샷에 적힌 것을 그대로 쓴다 —
+ * 그 사이 AGENTS.md 가 커졌다면 그 증가분도 환산 대상이어야 한다.
+ */
+export function contextPayloadOf(
+  chain: Message[],
+  allMessages: Message[],
+  system: string,
+): ContextPayload {
+  const next = { system, messages: toModelMessages(chain) };
+  const anchorNode = lastCallNode(chain);
+  const anchor = anchorNode
+    ? {
+        system: (anchorNode.contextSnapshot as Partial<TurnContext> | null)?.system ?? system,
+        messages: toModelMessages(pathTo(allMessages, anchorNode.parentId)),
+      }
+    : null;
+
+  return {
+    chars: payloadChars(next),
+    messageCount: next.messages.length,
+    measuredChars: anchor ? payloadChars(anchor) : null,
+  };
+}
+
 export function buildTurnContext(options: {
   modelId: string;
   system: string;
@@ -239,6 +296,7 @@ export async function runTurn({
   let stepReasoning = "";
   let stepCalls: StoredToolCall[] = [];
   let stepResults: StoredToolResult[] = [];
+  let stepUsage: Usage | null = null;
   let steps = 0;
 
   let usage: Usage | null = null;
@@ -253,6 +311,7 @@ export async function runTurn({
         stepReasoning = "";
         stepCalls = [];
         stepResults = [];
+        stepUsage = null;
         break;
       case "text-delta":
         stepText += part.text;
@@ -287,6 +346,8 @@ export async function runTurn({
         });
         break;
       case "finish-step":
+        // 공급자·SDK 버전마다 모양이 다르므로 들어오는 자리에서 한 번만 접는다.
+        stepUsage = readUsage(part.usage);
         // 도구를 쓴 스텝이면 여기서 노드가 갈라진다. DB 쓰기는 이 경계에서만 일어난다.
         await onStepFinish?.({
           index: steps,
@@ -294,18 +355,19 @@ export async function runTurn({
           reasoning: stepReasoning,
           toolCalls: stepCalls,
           toolResults: stepResults,
+          usage: stepUsage,
         });
         steps += 1;
-        // 도구 스텝의 텍스트는 콜백이 이미 저장했다. 여기서 비워 두지 않으면
+        // 도구 스텝의 텍스트·사용량은 콜백이 이미 저장했다. 여기서 비워 두지 않으면
         // 턴이 곧바로 끝났을 때(최대 스텝 도달) 다음 노드에 같은 내용이 또 들어간다.
         if (stepCalls.length > 0) {
           stepText = "";
           stepReasoning = "";
+          stepUsage = null;
         }
         break;
       case "finish":
         finishReason = part.finishReason;
-        // 공급자·SDK 버전마다 모양이 다르므로 들어오는 자리에서 한 번만 접는다.
         usage = readUsage(part.totalUsage);
         break;
       case "abort":
@@ -330,5 +392,14 @@ export async function runTurn({
   }
 
   // 마지막 스텝의 내용이 곧 최종 assistant 노드의 내용이다.
-  return { text: stepText, reasoning: stepReasoning, usage, finishReason, aborted, steps };
+  return {
+    text: stepText,
+    reasoning: stepReasoning,
+    usage,
+    // 콜백이 가져간 스텝은 위에서 비워졌다 — 남아 있으면 그게 마지막 스텝의 몫이다.
+    lastStepUsage: stepUsage,
+    finishReason,
+    aborted,
+    steps,
+  };
 }

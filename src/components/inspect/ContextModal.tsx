@@ -5,8 +5,14 @@ import { Button, Modal, Tag, type TagTone } from "@/components/Panel";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { buildMcpTools } from "@/lib/ai/mcp";
 import { resolveEffort } from "@/lib/ai/providers";
-import { buildTurnContext, type TurnContext } from "@/lib/ai/runner";
+import {
+  buildTurnContext,
+  contextPayloadOf,
+  payloadChars,
+  type TurnContext,
+} from "@/lib/ai/runner";
 import { skillNames } from "@/lib/ai/skills";
+import { formatExact, lastCallUsage, projectTokens, readNodeUsage } from "@/lib/ai/usage";
 import { pathTo } from "@/lib/tree";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
@@ -86,14 +92,53 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
 
   const json = useMemo(() => JSON.stringify(context, null, 2), [context]);
 
-  // 토큰 수는 공급자마다 달라 정확히 알 수 없으므로 문자 수만 정직하게 보여준다.
   // 설정에 적힌 강도가 아니라 이 모델에 실제로 나간 강도 (없으면 undefined).
   const sentEffort = resolveEffort(context.modelId, context.effort);
 
-  const totalChars = useMemo(
-    () => context.system.length + json.length,
-    [context.system.length, json.length],
-  );
+  /**
+   * 이 페이로드의 크기 — **문자** 수다.
+   *
+   * 화면에 보여 주는 `json` 은 읽으라고 들여쓴 것이라 실제보다 한참 부푼다.
+   * 여기서는 들여쓰기 없는 원문 길이를 센다(system 은 json 안에 이미 들어 있으므로
+   * 따로 더하지 않는다 — 더하면 시스템 프롬프트가 두 번 세어진다).
+   */
+  const chars = useMemo(() => payloadChars(context), [context]);
+
+  /**
+   * 같은 페이로드가 실제로 몇 토큰이었는지 — 추정이 아니라 공급자가 세어 준 값이다.
+   *
+   * 노드를 보고 있으면 그 노드의 실측값이 곧 이 페이로드의 토큰 수다 — 스냅샷을 그대로
+   * 띄웠든 트리에서 재구성했든, 노드 하나가 호출 하나이므로 잰 대상이 같다.
+   *
+   * 아직 보낸 적이 없는 미리보기만 환산한다: 마지막 호출의 실측값에 못을 박고 그 뒤로
+   * 늘어난 만큼만 이 대화의 실측 자/토큰 비율로 더한다 — 채팅창 위 컨텍스트 링이 쓰는
+   * 바로 그 계산이다(두 화면이 같은 수를 말해야 한다).
+   */
+  const measured = useMemo(() => {
+    const node = messageId ? messages.find((message) => message.id === messageId) : null;
+    const own = node ? readNodeUsage(node) : null;
+    if (own) return { tokens: own.usage.inputTokens, exact: true };
+
+    const chain = pathTo(messages, node ? node.parentId : activeParentId);
+    const previous = lastCallUsage(chain);
+    if (!previous) return null;
+
+    const projection = projectTokens(
+      previous.usage,
+      contextPayloadOf(chain, messages, context.system),
+    );
+    return { tokens: projection.used, exact: projection.projected === 0 };
+  }, [messageId, messages, activeParentId, context.system]);
+
+  // 자 ↔ 토큰은 서로 다른 자다. 나란히 놓되 어긋나는 이유를 붙여 둔다.
+  const countsTooltip = [
+    "자 = 이 페이로드의 문자 수(들여쓰기 제외). 토큰 수와 다릅니다.",
+    "한글·코드가 섞이면 대체로 3자 안팎이 1토큰입니다.",
+    "도구 스키마는 문자 수에 안 잡히지만 토큰에는 잡힙니다 — 그래서 토큰 쪽이 조금 더 큽니다.",
+    measured?.exact
+      ? "토큰 수는 이 호출에 공급자가 세어 준 실측값입니다."
+      : "이 페이로드는 아직 보낸 적이 없습니다 — 마지막 호출의 실측값에 그 뒤 늘어난 만큼만 환산해 더했습니다.",
+  ].join("\n");
 
   const badge = SOURCE_LABEL[source];
 
@@ -112,8 +157,10 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
       widthClass="max-w-3xl"
       footer={
         <>
-          <span className="mr-auto text-caption text-ink-muted">
-            총 {totalChars.toLocaleString()}자 (토큰 아님) · 메시지 {context.messages.length}개
+          <span className="mr-auto text-caption tabular-nums text-ink-muted" title={countsTooltip}>
+            {formatExact(chars)}자 · 메시지 {context.messages.length}개
+            {measured &&
+              ` · ${measured.exact ? "실측" : "약"} ${formatExact(measured.tokens)}토큰`}
           </span>
           <Button onClick={() => void copyRaw()}>{copied ? "복사됨" : "JSON 복사"}</Button>
           <Button onClick={() => setRaw((value) => !value)}>

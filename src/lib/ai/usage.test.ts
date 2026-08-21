@@ -211,6 +211,94 @@ describe("contextStatus", () => {
     expect(status.remaining).toBe(1_000_000);
     expect(status.level).toBe("ok");
   });
+
+  it("분모는 다음 턴에 쓸 모델의 창이다 — 모델을 바꾸면 여유가 달라진다", () => {
+    const measured = usage({ inputTokens: 150_000, outputTokens: 2_000 });
+
+    // 200K 짜리 haiku 로 재고 haiku 로 계속 쓰면 4분의 3이 찼다.
+    const staying = contextStatus("anthropic:claude-haiku-4-5", measured);
+    expect(staying.ratio).toBeCloseTo(0.76);
+    expect(staying.level).toBe("warn");
+    expect(staying.approximate).toBe(false);
+
+    // 같은 대화를 1M 짜리 모델로 이어 보내면 같은 토큰이라도 한참 여유롭다.
+    const switched = contextStatus("anthropic:claude-opus-5", measured, "anthropic:claude-haiku-4-5");
+    expect(switched.used).toBe(152_000);
+    expect(switched.window).toBe(1_000_000);
+    expect(switched.ratio).toBeCloseTo(0.152);
+    expect(switched.level).toBe("ok");
+  });
+
+  it("실측에 못을 박고 늘어난 만큼만 환산한다", () => {
+    // 마지막 호출: 78,000자 페이로드를 27,000 토큰으로 실측 → 2.888…자/토큰
+    // 지금 나갈 페이로드는 81,000자 = 3,000자가 늘었다 → 약 1,038 토큰.
+    const status = contextStatus(
+      "anthropic:claude-opus-5",
+      usage({ inputTokens: 27_000, outputTokens: 600 }),
+      "anthropic:claude-opus-5",
+      { chars: 81_000, messageCount: 26, measuredChars: 78_000 },
+    );
+
+    expect(status.measuredTokens).toBe(27_000);
+    expect(status.projectedTokens).toBe(1_038);
+    expect(status.used).toBe(28_038);
+    expect(status.estimated).toBe(true);
+    expect(status.charsPerToken).toBeCloseTo(2.889, 3);
+    // 인스펙터와 대조할 수 있게 페이로드 크기를 그대로 들고 다닌다.
+    expect(status.chars).toBe(81_000);
+    expect(status.messageCount).toBe(26);
+  });
+
+  it("앞쪽 노드로 분기하면 페이로드가 줄어 환산분이 음수가 된다", () => {
+    const status = contextStatus(
+      "anthropic:claude-opus-5",
+      usage({ inputTokens: 27_000, outputTokens: 600 }),
+      "anthropic:claude-opus-5",
+      { chars: 39_000, messageCount: 12, measuredChars: 78_000 },
+    );
+
+    expect(status.projectedTokens).toBe(-13_500);
+    expect(status.used).toBe(13_500);
+  });
+
+  it("페이로드가 그대로면 환산분이 없어 실측값 그대로다", () => {
+    const status = contextStatus(
+      "anthropic:claude-opus-5",
+      usage({ inputTokens: 27_000, outputTokens: 600 }),
+      "anthropic:claude-opus-5",
+      { chars: 78_000, messageCount: 25, measuredChars: 78_000 },
+    );
+
+    expect(status.used).toBe(27_000);
+    expect(status.estimated).toBe(false);
+  });
+
+  it("페이로드를 모르면(세션 카드) 마지막 호출의 입력+출력으로 물러난다", () => {
+    const status = contextStatus(
+      "anthropic:claude-opus-5",
+      usage({ inputTokens: 27_000, outputTokens: 600 }),
+    );
+
+    expect(status.used).toBe(27_600);
+    expect(status.estimated).toBe(false);
+    expect(status.charsPerToken).toBeNull();
+  });
+
+  it("잰 모델과 쓸 모델이 다르면 근사치라고 표시한다 (토크나이저가 다르다)", () => {
+    const measured = usage({ inputTokens: 27_000, outputTokens: 500 });
+
+    expect(contextStatus("google:gemini-3.7-flash", measured, "anthropic:claude-haiku-4-5").approximate).toBe(
+      true,
+    );
+    // 같은 모델로 한 턴 돌리고 나면 실측값이므로 근사 표시가 사라진다.
+    expect(
+      contextStatus("google:gemini-3.7-flash", measured, "google:gemini-3.7-flash").approximate,
+    ).toBe(false);
+    // 아직 아무 호출도 없으면 어긋날 값 자체가 없다.
+    expect(contextStatus("google:gemini-3.7-flash", null, "anthropic:claude-haiku-4-5").approximate).toBe(
+      false,
+    );
+  });
 });
 
 describe("readNodeUsage", () => {

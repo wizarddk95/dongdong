@@ -28,6 +28,7 @@ const done: RunTurnResult = {
   text: "3건 실패, 타임존 문제",
   reasoning: "",
   usage: null,
+  lastStepUsage: null,
   finishReason: "stop",
   aborted: false,
   steps: 2,
@@ -60,6 +61,7 @@ describe("runSubagent", () => {
         reasoning: "",
         toolCalls: [{ toolCallId: "c1", toolName: "execute_shell_command", input: {} }],
         toolResults: [{ toolCallId: "c1", toolName: "execute_shell_command", output: {} }],
+        usage: null,
       });
       await options.onStepFinish?.({
         index: 1,
@@ -67,6 +69,7 @@ describe("runSubagent", () => {
         reasoning: "",
         toolCalls: [],
         toolResults: [],
+        usage: null,
       });
       return done;
     });
@@ -91,6 +94,7 @@ describe("runSubagent", () => {
           reasoning: "",
           toolCalls: [],
           toolResults: [],
+          usage: null,
         });
       }
       return done;

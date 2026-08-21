@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { readToolCalls, readToolResults, toModelMessages } from "@/lib/ai/runner";
+import {
+  contextPayloadOf,
+  payloadChars,
+  readToolCalls,
+  readToolResults,
+  toModelMessages,
+} from "@/lib/ai/runner";
 import type { Message } from "@/types/ipc";
 
 function node(partial: Partial<Message> & Pick<Message, "role" | "content">): Message {
@@ -182,5 +188,53 @@ describe("readToolCalls / readToolResults", () => {
     ]);
     expect(calls).toHaveLength(1);
     expect(calls[0].toolName).toBe("read_file");
+  });
+});
+
+
+describe("contextPayloadOf — 게이지가 쓸 페이로드 크기", () => {
+  const usage = { inputTokens: 1_000, outputTokens: 50, totalTokens: 1_050 };
+
+  /** user → assistant(실측 있음) → user 로 이어지는 흐름. */
+  const chain = [
+    node({ id: "u1", role: "user", content: "안녕", seq: 1 }),
+    node({
+      id: "a1",
+      parentId: "u1",
+      role: "assistant",
+      content: "반갑습니다",
+      seq: 2,
+      tokenUsage: usage,
+      contextSnapshot: { modelId: "anthropic:claude-opus-5", system: "SYS", messages: [] },
+    }),
+    node({ id: "u2", parentId: "a1", role: "user", content: "하나 더", seq: 3 }),
+  ];
+
+  it("기준점 호출이 받았던 페이로드를 조상 체인으로 되만든다", () => {
+    const payload = contextPayloadOf(chain, chain, "SYS");
+
+    // 지금 나갈 것 = 세 메시지 전부.
+    expect(payload.messageCount).toBe(3);
+    expect(payload.chars).toBe(payloadChars({ system: "SYS", messages: toModelMessages(chain) }));
+
+    // 기준점(a1)이 받았던 것 = 그 앞의 user 하나뿐. 답변과 새 질문은 그 뒤에 붙었다.
+    expect(payload.measuredChars).toBe(
+      payloadChars({ system: "SYS", messages: toModelMessages(chain.slice(0, 1)) }),
+    );
+    expect(payload.measuredChars!).toBeLessThan(payload.chars);
+  });
+
+  it("기준점의 system 은 그 노드의 스냅샷을 쓴다 (그 뒤 지침이 커졌으면 증가분이 잡힌다)", () => {
+    const payload = contextPayloadOf(chain, chain, "SYS + 새로 커진 AGENTS.md");
+
+    // 지금 나갈 쪽만 길어진 system 을 싣는다 → 그 차이가 환산 대상으로 남는다.
+    expect(payload.measuredChars).toBe(
+      payloadChars({ system: "SYS", messages: toModelMessages(chain.slice(0, 1)) }),
+    );
+  });
+
+  it("실측 호출이 하나도 없으면 비율을 만들 수 없다", () => {
+    const fresh = [node({ id: "u1", role: "user", content: "안녕" })];
+    expect(contextPayloadOf(fresh, fresh, "SYS").measuredChars).toBeNull();
   });
 });

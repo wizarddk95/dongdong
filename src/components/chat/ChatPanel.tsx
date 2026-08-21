@@ -4,8 +4,10 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ContextModal } from "@/components/inspect/ContextModal";
 import { MemoryModal } from "@/components/inspect/MemoryModal";
 import { Button } from "@/components/Panel";
-import { ContextGauge, UsageBreakdown } from "@/components/UsageMeter";
+import { ContextRing, UsageBreakdown } from "@/components/UsageMeter";
+import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { findModelOption } from "@/lib/ai/providers";
+import { contextPayloadOf } from "@/lib/ai/runner";
 import { summarizeToolCall } from "@/lib/ai/skills";
 import {
   contextStatus,
@@ -45,6 +47,7 @@ export function ChatPanel() {
   } = useChat();
   const modelId = useSettings((state) => state.modelId);
   const useProjectInstructions = useSettings((state) => state.useProjectInstructions);
+  const systemPrompt = useSettings((state) => state.systemPrompt);
 
   const [draft, setDraft] = useState("");
   const [usageOpen, setUsageOpen] = useState(false);
@@ -73,18 +76,25 @@ export function ChatPanel() {
    *   - 경로 비용: 지금 보고 있는 대화 줄기만.
    *   - 세션 비용: 버려진 분기와 서브에이전트까지 포함한 이 세션의 실제 지출.
    */
-  const { context, contextModelId, pathUsage, sessionUsage } = useMemo(() => {
+  const { context, pathUsage, sessionUsage } = useMemo(() => {
+    // 지금 [전송]을 누르면 실제로 나갈 페이로드. 인스펙터의 "다음 턴 미리보기" 와
+    // 같은 함수를 써야 두 화면이 같은 수를 말한다.
+    const payload = contextPayloadOf(
+      path,
+      messages,
+      composeSystemPrompt(systemPrompt, useProjectInstructions ? instructions : null),
+    );
+
     const last = lastCallUsage(path, modelId);
-    // 창 크기는 **그 호출에 쓴 모델** 기준이다. 지금 설정된 모델과 다를 수 있다.
-    const contextModelId = last?.modelId ?? modelId;
+    // 창 크기는 **지금 선택한 모델** 기준이다 — 다음 턴을 보낼 모델이 그것이므로.
+    // 잰 모델(마지막 호출)이 다르면 `contextStatus` 가 근사치로 표시해 준다.
     return {
-      context: contextStatus(contextModelId, last?.usage ?? null),
-      contextModelId,
+      context: contextStatus(modelId, last?.usage ?? null, last?.modelId ?? null, payload),
       pathUsage: readChainUsage(path, modelId),
       // 세션 합계는 활성 경로가 아니라 세션의 **모든** 노드를 센다.
       sessionUsage: summarizeLiveUsage(messages, agentRuns, modelId),
     };
-  }, [path, messages, agentRuns, modelId]);
+  }, [path, messages, agentRuns, modelId, systemPrompt, useProjectInstructions, instructions]);
 
   const modelLabel = findModelOption(modelId)?.label ?? modelId;
   const canSend = Boolean(project && activeSessionId) && !running;
@@ -159,7 +169,7 @@ export function ChatPanel() {
 
       <div className="shrink-0 border-t border-hairline p-3">
         <div className="mb-2 space-y-1.5">
-          <ContextGauge status={context} modelId={contextModelId} variant="full" />
+          <ContextRing status={context} size={44} variant="full" />
 
           <div className="flex flex-wrap items-center gap-3 text-caption text-ink-muted">
             <span title="지금 보고 있는 대화 줄기(활성 경로)에 든 비용입니다.">

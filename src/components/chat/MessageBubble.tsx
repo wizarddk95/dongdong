@@ -76,7 +76,8 @@ export function MessageBubble({
   const errorText = isTool
     ? undefined
     : (message.toolResults as { error?: string } | null)?.error;
-  // 사용량은 턴을 마무리한 assistant 노드에만 붙는다 (그 턴 전체의 합계).
+  // 사용량은 LLM 호출이 있었던 assistant 노드에만 붙는다 (그 호출 하나의 몫).
+  // 도구를 쓴 턴은 스텝마다 노드가 갈라지므로 말풍선마다 자기 호출의 값이 뜬다.
   const usage = readNodeUsage(message);
 
   // 도구 호출은 assistant 노드에, 결과는 그 아래 tool 노드에 나뉘어 저장된다.
@@ -95,7 +96,12 @@ export function MessageBubble({
         <span className="text-body-emphasis text-ink">{style.label}</span>
         {siblingCount > 1 && <Tag title="같은 부모에서 갈라진 형제 턴이 있습니다">⑂ 분기 {siblingCount}</Tag>}
         {usage && (
-          <UsageTag usage={usage.usage} cost={usage.cost} modelId={usage.modelId} />
+          <UsageTag
+            usage={usage.usage}
+            cost={usage.cost}
+            modelId={usage.modelId}
+            showModel
+          />
         )}
         {message.status === "aborted" && <span className="text-warning">중단됨</span>}
 

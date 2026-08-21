@@ -164,11 +164,13 @@ export const useChat = create<ChatState>((set, get) => ({
           // 도구를 안 쓴 스텝이면 마지막 스텝이다 — 저장은 아래 5번에서 한 번에.
           if (step.toolCalls.length === 0 || !assistantId) return;
 
-          // (a) 지금까지의 assistant 노드를 도구 호출과 함께 확정
+          // (a) 지금까지의 assistant 노드를 도구 호출과 함께 확정.
+          //     이 스텝이 쓴 토큰은 이 노드에만 적는다 — 노드 하나가 LLM 호출 하나다.
           const savedAssistant = await ipc.updateMessage(assistantId, {
             content: step.text,
             status: "complete",
             toolCalls: step.toolCalls,
+            tokenUsage: toStoredUsage(context.modelId, step.usage) ?? undefined,
             ...(step.reasoning ? { toolResults: { reasoning: step.reasoning } } : {}),
           });
           useWorkspace.getState().replaceMessage(savedAssistant);
@@ -221,9 +223,11 @@ export const useChat = create<ChatState>((set, get) => ({
         const saved = await ipc.updateMessage(assistantId, {
           content: result.text,
           status: result.aborted ? "aborted" : "complete",
-          // 어떤 모델로 부른 턴인지 함께 남긴다 — 나중에 모델을 바꿔도
+          // 마지막 **스텝 하나**의 사용량이다(턴 누적이 아니다). 앞 스텝의 몫은
+          // 이미 자기 노드에 적혀 있고, 턴 합계는 노드를 더해서 만든다.
+          // 어떤 모델로 부른 호출인지 함께 남긴다 — 나중에 모델을 바꿔도
           // 이 턴의 요금 추정이 흔들리지 않는다.
-          tokenUsage: toStoredUsage(context.modelId, result.usage) ?? undefined,
+          tokenUsage: toStoredUsage(context.modelId, result.lastStepUsage) ?? undefined,
           ...(result.reasoning ? { toolResults: { reasoning: result.reasoning } } : {}),
         });
         useWorkspace.getState().replaceMessage(saved);
