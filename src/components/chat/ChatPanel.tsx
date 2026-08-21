@@ -172,11 +172,12 @@ export function ChatPanel() {
           <ContextRing status={context} size={44} variant="full" />
 
           <div className="flex flex-wrap items-center gap-3 text-caption text-ink-muted">
-            <span title="지금 보고 있는 대화 줄기(활성 경로)에 든 비용입니다.">
-              이 경로 <span className="text-ink">{formatCost(pathUsage.cost, pathUsage.modelId)}</span>
+            <span title="지금 보고 있는 분기(루트에서 활성 노드까지의 줄기)에 든 비용입니다.">
+              현재 분기{" "}
+              <span className="text-ink">{formatCost(pathUsage.cost, pathUsage.modelId)}</span>
             </span>
             <span title="버려진 분기와 서브에이전트까지 포함한 이 세션 전체의 비용입니다.">
-              세션{" "}
+              전체 세션{" "}
               <span className="text-ink">
                 {formatCost(sessionUsage.cost, sessionUsage.primaryModelId)}
               </span>

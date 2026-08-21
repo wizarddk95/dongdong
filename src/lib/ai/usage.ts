@@ -336,8 +336,10 @@ export function projectTokens(
   };
 }
 
-export const CONTEXT_WARN_RATIO = 0.7;
-export const CONTEXT_DANGER_RATIO = 0.9;
+// 창이 꽉 차기 전에 미리 갈아타라고 문턱을 낮게 잡았다 —
+// 앞부분이 길수록 매 턴 다시 올라가는 양이 늘어 값도 품질도 같이 나빠진다.
+export const CONTEXT_WARN_RATIO = 0.25;
+export const CONTEXT_DANGER_RATIO = 0.4;
 
 function contextLevel(ratio: number | null): ContextLevel {
   if (ratio === null) return "unknown";

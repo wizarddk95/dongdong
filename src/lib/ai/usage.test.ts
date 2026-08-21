@@ -188,7 +188,19 @@ describe("contextStatus", () => {
     expect(status.window).toBe(1_000_000);
     expect(status.remaining).toBe(250_000);
     expect(status.ratio).toBeCloseTo(0.75);
-    expect(status.level).toBe("warn");
+    expect(status.level).toBe("danger");
+  });
+
+  // 문턱을 낮게 잡았다 — 창이 꽉 차기 한참 전에 갈아타라고 미리 말한다.
+  it("4분의 1을 넘기면 주의, 5분의 2를 넘기면 위험", () => {
+    const window = 200_000; // haiku 4.5
+    const levelAt = (ratio: number) =>
+      contextStatus("anthropic:claude-haiku-4-5", usage({ inputTokens: window * ratio })).level;
+
+    expect(levelAt(0.24)).toBe("ok");
+    expect(levelAt(0.25)).toBe("warn");
+    expect(levelAt(0.39)).toBe("warn");
+    expect(levelAt(0.4)).toBe("danger");
   });
 
   it("거의 가득 차면 danger", () => {
@@ -218,7 +230,7 @@ describe("contextStatus", () => {
     // 200K 짜리 haiku 로 재고 haiku 로 계속 쓰면 4분의 3이 찼다.
     const staying = contextStatus("anthropic:claude-haiku-4-5", measured);
     expect(staying.ratio).toBeCloseTo(0.76);
-    expect(staying.level).toBe("warn");
+    expect(staying.level).toBe("danger");
     expect(staying.approximate).toBe(false);
 
     // 같은 대화를 1M 짜리 모델로 이어 보내면 같은 토큰이라도 한참 여유롭다.

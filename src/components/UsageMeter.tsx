@@ -124,7 +124,7 @@ interface ContextRingProps {
  * 막대와 달리 자리를 가로로 먹지 않아 카드 구석과 입력칸 위에 같은 모양으로 놓을 수 있다.
  * 12시에서 시계 방향으로 채우고, 호는 두 도막이다 — 옅은 쪽이 캐시에서 읽히는 몫,
  * 진한 쪽이 새로 청구되는 몫. 겹쳐 그리면 같은 색이라 구분이 사라지므로 이어 붙인다.
- * 70%·90% 자리에는 눈금을 새겨 "얼마나 남았나" 를 각도만으로 읽게 한다.
+ * 주의·위험 문턱 자리에는 눈금을 새겨 "얼마나 남았나" 를 각도만으로 읽게 한다.
  * 창 크기를 모르는 모델(로컬 등)은 비율이 없어 점선 링으로만 둔다.
  */
 export function ContextRing({
@@ -214,12 +214,11 @@ export function ContextRing({
       <div className="flex min-w-0 flex-col gap-0.5">
         <div className="flex items-baseline gap-1.5 text-caption">
           {/* "다음 턴에 나갈 양" 을 적어 두지 않으면 마지막 노드 하나의 몫으로 읽힌다.
-              메시지 수·자 수는 [현재 컨텍스트 보기] 와 같은 수 — 나란히 대조하라고 붙인다. */}
+              자 수는 토큰과 자가 달라 나란히 두면 오히려 헷갈려서 툴팁으로만 남긴다
+              (인스펙터와 대조할 값은 툴팁에 그대로 있다). */}
           <span className="text-ink-muted">다음 턴에 나갈 양</span>
           {status.chars !== null && (
-            <span className="tabular-nums text-ink-subtle">
-              메시지 {status.messageCount}개 · {formatExact(status.chars)}자
-            </span>
+            <span className="tabular-nums text-ink-subtle">메시지 {status.messageCount}개</span>
           )}
           <span className={`ml-auto ${style.text}`}>
             {status.window ? `${percent(ratio)} · ${style.label}` : "창 크기 미상"}
@@ -233,7 +232,6 @@ export function ContextRing({
             {status.window ? ` / ${formatExact(status.window)}` : " 사용"}
             <span className="text-ink-subtle"> 토큰</span>
           </span>
-          {status.remaining !== null && <span>· 남음 {formatExact(status.remaining)}</span>}
         </div>
       </div>
     </div>
