@@ -209,7 +209,7 @@ function InlineNodeView({ node }: { node: InlineNode }) {
 
     case "code":
       return (
-        <code className="rounded-xs bg-surface-2 px-1.5 py-[1px] font-mono text-caption text-ink">
+        <code className="rounded-xs border border-code-rule bg-code-surface px-1.5 py-[1px] font-mono text-caption text-code">
           {node.value}
         </code>
       );

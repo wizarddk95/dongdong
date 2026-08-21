@@ -172,6 +172,15 @@
   --color-warning-subtle: #fbf1de;
   --color-error-subtle: #fceaee;
 
+  /* 인라인 코드(`백틱`). 화면이 이미 청록 일색이라 같은 계열로는 구분이 안 되고
+   * 채도만 쌓인다 → 보색인 따뜻한 테라코타로 뗀다. 액센트를 대신하는 두 번째
+   * 브랜드 색이 아니라 **인라인 코드 한 자리에만** 쓰는 예외다.
+   * 경고(`warning`)의 노란 호박색과 헷갈리지 않게 색상을 붉은 쪽으로 더 민다.
+   * 채움만으로는 흰 바탕에서 칩이 안 보여서 테두리를 한 겹 두른다. */
+  --color-code: #b5460f;
+  --color-code-surface: #fdf1ea;
+  --color-code-rule: #f4dfd2;
+
   --color-inverse-canvas: #16211f;
   --color-inverse-surface: #223330;
   --color-inverse-ink: #f1f5f4;
@@ -228,6 +237,11 @@
   --color-success-subtle: #0f2e26;
   --color-warning-subtle: #33280f;
   --color-error-subtle: #361a21;
+
+  /* 어두운 바탕에서는 방향이 뒤집힌다 — 밝은 주황 글자에 짙은 갈색 면. */
+  --color-code: #fdb27f;
+  --color-code-surface: #33201a;
+  --color-code-rule: #4a2f22;
 
   --color-inverse-canvas: #e6edeb;
   --color-inverse-surface: #cbd8d5;
