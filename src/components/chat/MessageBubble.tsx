@@ -22,8 +22,6 @@ interface MessageBubbleProps {
   liveText?: string;
   liveReasoning?: string;
   siblingCount: number;
-  onBranchHere: () => void;
-  onBranchSession: () => void;
   /** 이 노드가 LLM 에 보낸 컨텍스트를 인스펙터로 연다 */
   onInspectContext?: () => void;
 }
@@ -58,8 +56,6 @@ export function MessageBubble({
   liveText,
   liveReasoning,
   siblingCount,
-  onBranchHere,
-  onBranchSession,
   onInspectContext,
 }: MessageBubbleProps) {
   const [showReasoning, setShowReasoning] = useState(false);
@@ -115,20 +111,6 @@ export function MessageBubble({
               컨텍스트
             </button>
           )}
-          <button
-            className={ACTION}
-            title="이 노드의 부모로 돌아가 다른 답을 시도합니다 (같은 세션 안에서 분기)"
-            onClick={onBranchHere}
-          >
-            여기서 다시
-          </button>
-          <button
-            className={ACTION}
-            title="이 시점까지를 복제한 새 세션을 만듭니다"
-            onClick={onBranchSession}
-          >
-            ⑂ 새 세션
-          </button>
         </span>
       </div>
 

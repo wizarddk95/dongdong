@@ -17,7 +17,7 @@ import {
   summarizeLiveUsage,
 } from "@/lib/ai/usage";
 import { buildIndex, pathTo, siblingsOf } from "@/lib/tree";
-import { toBubbles } from "@/lib/turns";
+import { buildTurns, toBubbles, turnLabel } from "@/lib/turns";
 import { useAgents } from "@/store/agents";
 import { useChat } from "@/store/chat";
 import { useSettings } from "@/store/settings";
@@ -26,8 +26,6 @@ import { useWorkspace } from "@/store/workspace";
 export function ChatPanel() {
   const messages = useWorkspace((state) => state.messages);
   const activeParentId = useWorkspace((state) => state.activeParentId);
-  const setActiveParent = useWorkspace((state) => state.setActiveParent);
-  const branchFrom = useWorkspace((state) => state.branchFrom);
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const project = useWorkspace((state) => state.project);
   const instructions = useWorkspace((state) => state.instructions);
@@ -67,6 +65,22 @@ export function ChatPanel() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [path.length, streamingText]);
+
+  /**
+   * 다음 메시지가 붙을 자리를 **턴 이름**으로 말한다.
+   *
+   * 활성 부모는 노드 하나지만, 사람이 그래프에서 고르는 단위는 턴이다 —
+   * 카드가 부르는 이름(턴을 여는 앵커 노드 id)과 다른 자를 여기 적으면
+   * 같은 자리를 두 화면이 서로 다른 이름으로 부르게 된다. 정확한 노드 id 는 툴팁에 남긴다.
+   */
+  const target = useMemo(() => {
+    if (!activeParentId) return null;
+    const turns = buildTurns(messages);
+    const turn = turns.byId.get(turns.turnOfMessage.get(activeParentId) ?? "");
+    // 턴을 못 찾는 건 트리가 꼬였을 때뿐이다. 그때는 노드 id 라도 보여준다.
+    if (!turn) return { label: activeParentId.slice(0, 8), midway: false };
+    return { label: turnLabel(turn), midway: turn.leafId !== activeParentId };
+  }, [messages, activeParentId]);
 
   /**
    * 비용·컨텍스트는 DB 집계가 아니라 스토어의 노드에서 바로 센다 —
@@ -131,8 +145,6 @@ export function ChatPanel() {
             liveText={message.id === streamingMessageId ? streamingText : undefined}
             liveReasoning={message.id === streamingMessageId ? streamingReasoning : undefined}
             siblingCount={siblingsOf(index, message).length}
-            onBranchHere={() => setActiveParent(message.parentId)}
-            onBranchSession={() => void branchFrom(message.id)}
             onInspectContext={
               message.role === "assistant"
                 ? () => {
@@ -204,12 +216,21 @@ export function ChatPanel() {
 
         <div className="mb-2 flex flex-wrap items-center gap-3 text-caption text-ink-muted">
           <span className="text-ink">{modelLabel}</span>
-          {activeParentId ? (
-            <span>
-              부모 노드 <code className="font-mono">{activeParentId.slice(0, 8)}</code>
+          {target ? (
+            <span
+              title={`다음 메시지는 노드 ${activeParentId} 뒤에 붙습니다.${
+                target.midway
+                  ? " 이 턴의 마지막 노드가 아니라 중간 스텝이라 형제 턴이 생깁니다."
+                  : ""
+              }`}
+            >
+              턴 <code className="font-mono">{target.label}</code>{" "}
+              {target.midway ? "중간 스텝 뒤" : "뒤에 이어짐"}
             </span>
           ) : (
-            <span>새 루트 노드로 시작</span>
+            <span title="이 세션에는 아직 노드가 없습니다. 보내는 메시지가 대화의 뿌리 턴이 됩니다.">
+              대화의 뿌리로 시작
+            </span>
           )}
 
           {instructions && useProjectInstructions && (

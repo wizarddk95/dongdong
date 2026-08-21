@@ -3,7 +3,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { Tag } from "@/components/Panel";
 import { UsageTag } from "@/components/UsageMeter";
 import { hasTokens } from "@/lib/ai/usage";
-import type { Turn } from "@/lib/turns";
+import { turnLabel, type Turn } from "@/lib/turns";
 
 /**
  * 카드 치수는 12px 활자 + 넉넉한 행간에 맞춰 잡혀 있다.
@@ -55,7 +55,16 @@ export function TurnNode({ data }: NodeProps<TurnFlowNode>) {
       <Handle type="target" position={Position.Left} />
 
       <div className="flex items-center gap-1.5 text-caption text-ink-muted">
-        <span className="text-body-emphasis text-ink">턴 #{turn.seq}</span>
+        {/*
+          * 순번 대신 앵커 노드의 id 를 쓴다 — 순번은 삽입 순서라 분기·붙여넣기 뒤에
+          * 그래프의 자리와 어긋난다. id 는 채팅 입력칸이 부르는 이름과 같은 자다.
+          */}
+        <span
+          className="font-mono text-body-emphasis text-ink"
+          title={`이 턴을 여는 노드의 id 입니다 (전체 ${turn.id}). 턴은 노드 ${turn.nodes.length}개로 이루어져 있습니다.`}
+        >
+          {turnLabel(turn)}
+        </span>
         {mark && <span className={mark.className}>{mark.text}</span>}
         <span className="ml-auto flex items-center gap-1">
           {agentCount > 0 && <Tag title="이 턴에서 위임된 서브에이전트">위임 {agentCount}</Tag>}

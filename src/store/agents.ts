@@ -9,6 +9,7 @@
  */
 import { create } from "zustand";
 
+import { isRunActive } from "@/lib/agentRuns";
 import { instructionBlock } from "@/lib/ai/instructions";
 import { MissingApiKeyError } from "@/lib/ai/providers";
 import { buildSkills } from "@/lib/ai/skills";
@@ -46,8 +47,8 @@ interface AgentsState {
   }) => Promise<DelegateOutcome>;
   cancel: (runId: string) => void;
   remove: (runId: string) => Promise<void>;
-  /** 지워진 노드에 매달려 있던 실행 기록을 함께 정리한다 (턴 삭제용). */
-  removeForMessages: (messageIds: string[]) => Promise<void>;
+  /** 지워진 노드에 매달려 돌고 있던 실행을 멈춘다 (턴 삭제용). 기록은 남긴다. */
+  cancelForMessages: (messageIds: string[]) => void;
   clearFinished: () => Promise<void>;
 }
 
@@ -233,25 +234,14 @@ export const useAgents = create<AgentsState>((set, get) => {
       }
     },
 
-    removeForMessages: async (messageIds) => {
+    cancelForMessages: (messageIds) => {
+      // 기록 자체는 지우지 않는다 — 실제로 쓴 토큰이라 지우면 세션 비용이 조용히 줄어든다.
+      // 노드가 사라지면 DB 가 링크만 끊고(ON DELETE SET NULL), 삭제를 되돌리면 다시 붙는다.
       const doomed = new Set(messageIds);
-      const targets = get().runs.filter(
-        (run) => run.parentMessageId && doomed.has(run.parentMessageId),
-      );
-      if (targets.length === 0) return;
-
-      for (const run of targets) {
-        removedRuns.add(run.id);
-        cancelledRuns.add(run.id);
-        controllers.get(run.id)?.abort();
-      }
-
-      const removed = new Set(targets.map((run) => run.id));
-      set({ runs: get().runs.filter((run) => !removed.has(run.id)) });
-      try {
-        await Promise.all(targets.map((run) => ipc.deleteAgentRun(run.id)));
-      } finally {
-        for (const run of targets) forget(run.id);
+      for (const run of get().runs) {
+        if (run.parentMessageId && doomed.has(run.parentMessageId) && isRunActive(run)) {
+          get().cancel(run.id);
+        }
       }
     },
 

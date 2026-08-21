@@ -5,11 +5,12 @@ use serde_json::Value;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::models::{
-    AgentRun, AgentRunPatch, Memory, Message, MessagePatch, NewAgentRun, NewMemory, NewMessage,
-    Project, Session, SessionModelUsage, SessionOverview,
+    AgentRun, AgentRunPatch, DeleteOutcome, DetachedRun, Memory, Message, MessagePatch,
+    NewAgentRun, NewMemory, NewMessage, Project, Reattachment, Session, SessionModelUsage,
+    SessionOverview,
 };
 use crate::error::{AppError, AppResult};
 
@@ -437,6 +438,342 @@ pub fn update_message(conn: &Connection, id: &str, patch: &MessagePatch) -> AppR
 pub fn delete_message(conn: &Connection, id: &str) -> AppResult<()> {
     conn.execute("DELETE FROM messages WHERE id = ?1", params![id])?;
     Ok(())
+}
+
+/// 세션 안에서 "부모가 없거나 부모 행이 사라진" 노드 = 루트.
+/// (`lib/tree.ts` 의 `buildIndex` 와 같은 판정 — 두 곳이 어긋나면 화면과 DB 가 다른 말을 한다.)
+fn is_root(message: &Message, by_id: &HashMap<&str, &Message>) -> bool {
+    match message.parent_id.as_deref() {
+        None => true,
+        Some(parent) => !by_id.contains_key(parent),
+    }
+}
+
+/// 노드를 지운다.
+///
+/// `cascade` 가 false 면 **넘어온 노드만** 지우고, 그 아래 대화는 살아남은 조상에
+/// 이어 붙인다(중간에 낀 실패한 턴 하나만 도려내는 용도).
+/// true 면 예전처럼 후손까지 통째로 지운다.
+///
+/// 어느 쪽이든 되돌리기에 필요한 원문을 [`DeleteOutcome`] 으로 돌려준다.
+/// 한 세션에 루트가 둘 이상 생기는 삭제는 거절한다 — 대화 트리는 세션당 뿌리 하나가 규칙이다.
+pub fn delete_messages(
+    conn: &mut Connection,
+    ids: &[String],
+    cascade: bool,
+) -> AppResult<DeleteOutcome> {
+    let mut anchors = Vec::new();
+    for id in ids {
+        if let Some(message) = get_message(conn, id)? {
+            anchors.push(message);
+        }
+    }
+    let first = anchors
+        .first()
+        .ok_or_else(|| AppError::not_found("지울 노드"))?;
+    let session_id = first.session_id.clone();
+    if anchors.iter().any(|m| m.session_id != session_id) {
+        return Err(AppError::invalid(
+            "한 번에 한 세션의 노드만 지울 수 있습니다.",
+        ));
+    }
+
+    let all = list_messages(conn, &session_id)?;
+    let by_id: HashMap<&str, &Message> = all.iter().map(|m| (m.id.as_str(), m)).collect();
+    let mut children: HashMap<&str, Vec<&Message>> = HashMap::new();
+    for message in &all {
+        if let Some(parent) = message.parent_id.as_deref() {
+            children.entry(parent).or_default().push(message);
+        }
+    }
+
+    // 지울 집합을 확정한다. cascade 면 후손까지 훑어 내려간다.
+    let mut doomed: HashSet<String> = anchors.iter().map(|m| m.id.clone()).collect();
+    if cascade {
+        let mut stack: Vec<&str> = anchors.iter().map(|m| m.id.as_str()).collect();
+        while let Some(current) = stack.pop() {
+            for child in children.get(current).into_iter().flatten() {
+                if doomed.insert(child.id.clone()) {
+                    stack.push(child.id.as_str());
+                }
+            }
+        }
+    }
+
+    // 지워질 조상을 건너뛰고 처음 만나는 살아남는 노드. 없으면 루트가 된다.
+    let survivor_of = |parent: Option<&str>| -> Option<String> {
+        let mut cursor = parent;
+        while let Some(id) = cursor {
+            match by_id.get(id) {
+                None => return None,
+                Some(message) if doomed.contains(id) => cursor = message.parent_id.as_deref(),
+                Some(_) => return Some(id.to_string()),
+            }
+        }
+        None
+    };
+
+    let survivors: Vec<&Message> = all.iter().filter(|m| !doomed.contains(&m.id)).collect();
+
+    // 루트가 늘어나는 삭제는 막는다. 이미 여러 개인 옛 세션은 그대로 두되 더 늘리지는 않는다.
+    let roots_before = all.iter().filter(|m| is_root(m, &by_id)).count().max(1);
+    let roots_after = survivors
+        .iter()
+        .filter(|m| survivor_of(m.parent_id.as_deref()).is_none())
+        .count();
+    if roots_after > roots_before {
+        return Err(AppError::invalid(
+            "이 턴만 지우면 세션의 루트 노드가 둘 이상 됩니다. 아래 턴까지 함께 지우세요.",
+        ));
+    }
+
+    let reattached: Vec<Reattachment> = survivors
+        .iter()
+        .filter(|m| {
+            m.parent_id
+                .as_deref()
+                .is_some_and(|parent| doomed.contains(parent))
+        })
+        .map(|m| Reattachment {
+            message_id: m.id.clone(),
+            from_parent_id: m.parent_id.clone(),
+            to_parent_id: survivor_of(m.parent_id.as_deref()),
+        })
+        .collect();
+
+    // 서브에이전트 기록은 지우지 않는다 — 링크가 끊길 뿐이라 되돌리면 다시 붙는다.
+    let mut detached_runs = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, parent_message_id FROM agent_runs
+              WHERE session_id = ?1 AND parent_message_id IS NOT NULL",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (run_id, parent_message_id) = row?;
+            if doomed.contains(&parent_message_id) {
+                detached_runs.push(DetachedRun {
+                    run_id,
+                    parent_message_id,
+                });
+            }
+        }
+    }
+
+    // seq 오름차순 — 되돌릴 때 부모가 자식보다 먼저 들어가야 한다.
+    let removed: Vec<Message> = all
+        .iter()
+        .filter(|m| doomed.contains(&m.id))
+        .cloned()
+        .collect();
+
+    let ts = now();
+    let tx = conn.transaction()?;
+    // 자식을 먼저 옮긴다. 순서가 뒤집히면 CASCADE 가 자식까지 데려가 버린다.
+    for item in &reattached {
+        tx.execute(
+            "UPDATE messages SET parent_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params![item.message_id, item.to_parent_id, ts],
+        )?;
+    }
+    for message in &removed {
+        tx.execute("DELETE FROM messages WHERE id = ?1", params![message.id])?;
+    }
+    tx.execute(
+        "UPDATE sessions SET updated_at = ?2 WHERE id = ?1",
+        params![session_id, ts],
+    )?;
+    tx.commit()?;
+
+    Ok(DeleteOutcome {
+        removed,
+        reattached,
+        detached_runs,
+    })
+}
+
+/// [`delete_messages`] 를 되돌린다. 원래 id·seq·시각 그대로 되살린다 —
+/// id 가 바뀌면 서브에이전트 링크도, 되돌린 자식의 부모도 다시 이어 붙일 수 없다.
+pub fn restore_messages(conn: &mut Connection, outcome: &DeleteOutcome) -> AppResult<usize> {
+    if outcome.removed.is_empty() {
+        return Ok(0);
+    }
+
+    let mut removed: Vec<&Message> = outcome.removed.iter().collect();
+    removed.sort_by_key(|m| m.seq);
+    let restoring: HashSet<&str> = removed.iter().map(|m| m.id.as_str()).collect();
+
+    let tx = conn.transaction()?;
+    for message in &removed {
+        let exists: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM messages WHERE id = ?1",
+            params![message.id],
+            |row| row.get(0),
+        )?;
+        if exists > 0 {
+            return Err(AppError::invalid("이미 되돌린 삭제입니다."));
+        }
+        // 부모가 그 사이에 다른 삭제로 사라졌으면 되돌릴 자리가 없다.
+        if let Some(parent) = message.parent_id.as_deref() {
+            if !restoring.contains(parent) {
+                let alive: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM messages WHERE id = ?1",
+                    params![parent],
+                    |row| row.get(0),
+                )?;
+                if alive == 0 {
+                    return Err(AppError::invalid(
+                        "부모 노드가 이미 사라져 되돌릴 수 없습니다.",
+                    ));
+                }
+            }
+        }
+
+        tx.execute(
+            "INSERT INTO messages
+               (id, session_id, parent_id, role, content, tool_calls, tool_results,
+                context_snapshot, token_usage, status, agent_id, seq, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                message.id,
+                message.session_id,
+                message.parent_id,
+                message.role,
+                message.content,
+                to_text(&message.tool_calls),
+                to_text(&message.tool_results),
+                to_text(&message.context_snapshot),
+                to_text(&message.token_usage),
+                message.status,
+                message.agent_id,
+                message.seq,
+                message.created_at,
+                message.updated_at,
+            ],
+        )?;
+    }
+
+    let ts = now();
+    for item in &outcome.reattached {
+        tx.execute(
+            "UPDATE messages SET parent_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params![item.message_id, item.from_parent_id, ts],
+        )?;
+    }
+    for run in &outcome.detached_runs {
+        tx.execute(
+            "UPDATE agent_runs SET parent_message_id = ?2 WHERE id = ?1",
+            params![run.run_id, run.parent_message_id],
+        )?;
+    }
+    tx.commit()?;
+
+    Ok(removed.len())
+}
+
+/// 노드 묶음(보통 턴 하나)을 복제해 다른 노드 뒤에 이어 붙인다. 세션을 넘나들 수 있다.
+///
+/// **토큰 사용량과 컨텍스트 스냅샷은 복제하지 않는다** — 복사본은 LLM 을 부른 적이
+/// 없으므로 그대로 옮기면 세션 비용이 이중으로 잡히고, 스냅샷은 붙여넣은 자리와
+/// 어긋난 거짓 원문이 된다. `agent_id` 도 같은 이유로 비운다.
+pub fn copy_messages(
+    conn: &mut Connection,
+    source_ids: &[String],
+    target_parent_id: Option<&str>,
+    session_id: &str,
+) -> AppResult<Vec<Message>> {
+    let mut sources = Vec::new();
+    for id in source_ids {
+        let message =
+            get_message(conn, id)?.ok_or_else(|| AppError::not_found(format!("메시지 {id}")))?;
+        sources.push(message);
+    }
+    if sources.is_empty() {
+        return Err(AppError::invalid("복사할 노드가 없습니다."));
+    }
+    sources.sort_by_key(|m| m.seq);
+
+    match target_parent_id {
+        Some(parent_id) => {
+            let parent = get_message(conn, parent_id)?
+                .ok_or_else(|| AppError::not_found(format!("메시지 {parent_id}")))?;
+            if parent.session_id != session_id {
+                return Err(AppError::invalid("붙여넣을 노드가 다른 세션에 있습니다."));
+            }
+        }
+        // 붙일 자리를 안 주면 새 루트가 된다 — 이미 대화가 있는 세션에는 만들 수 없다.
+        None => {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )?;
+            if count > 0 {
+                return Err(AppError::invalid(
+                    "붙여넣을 노드를 먼저 고르세요. 세션의 루트 노드는 하나뿐입니다.",
+                ));
+            }
+        }
+    }
+
+    let members: HashSet<&str> = sources.iter().map(|m| m.id.as_str()).collect();
+    let mut id_map: HashMap<String, String> = HashMap::new();
+    let mut seq = next_seq(conn, session_id)?;
+    let ts = now();
+
+    let tx = conn.transaction()?;
+    for message in &sources {
+        let copy_id = new_id();
+        // 묶음 안에 부모가 있으면 그 복사본에, 없으면(=묶음의 머리) 붙여넣을 자리에 매단다.
+        let parent = match message.parent_id.as_deref() {
+            Some(parent) if members.contains(parent) => id_map.get(parent).cloned(),
+            _ => target_parent_id.map(str::to_string),
+        };
+        // 흐르다 만 노드를 복사하면 영원히 "생성 중" 으로 남는다 → 중단으로 굳혀 둔다.
+        let status = if message.status == "streaming" {
+            "aborted"
+        } else {
+            message.status.as_str()
+        };
+
+        tx.execute(
+            "INSERT INTO messages
+               (id, session_id, parent_id, role, content, tool_calls, tool_results,
+                context_snapshot, token_usage, status, agent_id, seq, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, NULL, ?9, ?10, ?10)",
+            params![
+                copy_id,
+                session_id,
+                parent,
+                message.role,
+                message.content,
+                to_text(&message.tool_calls),
+                to_text(&message.tool_results),
+                status,
+                seq,
+                ts,
+            ],
+        )?;
+        id_map.insert(message.id.clone(), copy_id);
+        seq += 1;
+    }
+    tx.execute(
+        "UPDATE sessions SET updated_at = ?2 WHERE id = ?1",
+        params![session_id, ts],
+    )?;
+    tx.commit()?;
+
+    let mut copies = Vec::new();
+    for message in &sources {
+        if let Some(copy_id) = id_map.get(&message.id) {
+            if let Some(copy) = get_message(conn, copy_id)? {
+                copies.push(copy);
+            }
+        }
+    }
+    Ok(copies)
 }
 
 /// 타임머신: 특정 메시지 시점까지의 대화를 복제한 새 세션(브랜치)을 만든다.

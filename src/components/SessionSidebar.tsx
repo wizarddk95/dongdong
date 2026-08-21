@@ -1,29 +1,47 @@
-import { Button, Tag } from "@/components/Panel";
-import { formatCost, summarizeSessionUsage } from "@/lib/ai/usage";
+import { useState } from "react";
+
+import { Button, FIELD_SM, Tag } from "@/components/Panel";
+import { ContextRing } from "@/components/UsageMeter";
+import { formatCost, sessionContextStatus, summarizeProjectUsage, summarizeSessionUsage } from "@/lib/ai/usage";
+import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
 
-interface SessionSidebarProps {
-  /** 채팅 앞단의 세션 맵으로 돌아가기 */
-  onBackToMap: () => void;
-}
-
-export function SessionSidebar({ onBackToMap }: SessionSidebarProps) {
+/**
+ * 세션 목록 — 이 프로젝트의 대화를 고르고, 만들고, 이름을 바꾸고, 지우는 유일한 자리.
+ *
+ * 예전에는 채팅 앞단에 세션 맵(분기 트리)이 따로 있었지만, 세션 분기를 만드는 길이
+ * 사라지면서 그릴 나무도 사라졌다 → 목록 하나로 합쳤다.
+ */
+export function SessionSidebar() {
   const project = useWorkspace((state) => state.project);
   const sessions = useWorkspace((state) => state.sessions);
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const newSession = useWorkspace((state) => state.newSession);
   const selectSession = useWorkspace((state) => state.selectSession);
   const removeSession = useWorkspace((state) => state.removeSession);
+  const renameSession = useWorkspace((state) => state.renameSession);
+  // 컨텍스트 링의 분모는 **지금 선택한 모델**의 창이다 — "이 대화를 지금 이어서 쓰면 얼마나 차 있나".
+  const modelId = useSettings((state) => state.modelId);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+
+  // 이 프로젝트가 지금까지 쓴 총량. 모델별로 요금을 매긴 뒤 더한 값이다.
+  const total = summarizeProjectUsage(sessions);
+
+  function startRename(sessionId: string, title: string) {
+    setEditingId(sessionId);
+    setDraft(title);
+  }
+
+  function commitRename() {
+    const title = draft.trim();
+    if (editingId && title) void renameSession(editingId, title);
+    setEditingId(null);
+  }
 
   return (
     <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-hairline bg-surface-1">
-      <button
-        className="shrink-0 border-b border-hairline px-3 py-2 text-left text-caption text-accent hover:bg-hover"
-        onClick={onBackToMap}
-      >
-        ← 세션 맵
-      </button>
-
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-hairline px-3 py-2">
         <span className="text-body-emphasis text-ink">
           세션 {sessions.length > 0 && `(${sessions.length})`}
@@ -33,10 +51,29 @@ export function SessionSidebar({ onBackToMap }: SessionSidebarProps) {
         </Button>
       </div>
 
-      <ul className="min-h-0 flex-1 overflow-auto">
+      <ul className="min-h-0 flex-1 overflow-auto py-1">
         {sessions.map((session) => {
           const summary = summarizeSessionUsage(session);
           const active = session.id === activeSessionId;
+
+          if (session.id === editingId) {
+            return (
+              <li key={session.id} className="mx-2 px-1 py-1.5">
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") commitRename();
+                    if (event.key === "Escape") setEditingId(null);
+                  }}
+                  className={FIELD_SM}
+                />
+              </li>
+            );
+          }
+
           return (
             <li
               key={session.id}
@@ -71,13 +108,29 @@ export function SessionSidebar({ onBackToMap }: SessionSidebarProps) {
                   </span>
                 </span>
               </button>
-              <button
-                className="shrink-0 rounded-sm px-1.5 py-0.5 text-ink-subtle opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-hover hover:text-error"
-                title="세션 삭제"
-                onClick={() => void removeSession(session.id)}
-              >
-                ✕
-              </button>
+
+              <ContextRing status={sessionContextStatus(session, modelId)} size={18} />
+
+              <span className="flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                <button
+                  className="rounded-sm px-1.5 py-0.5 text-ink-subtle transition-colors hover:bg-hover hover:text-ink"
+                  title="이름 변경"
+                  onClick={() => startRename(session.id, session.title)}
+                >
+                  ✎
+                </button>
+                <button
+                  className="rounded-sm px-1.5 py-0.5 text-ink-subtle transition-colors hover:bg-hover hover:text-error"
+                  title="세션 삭제"
+                  onClick={() => {
+                    if (window.confirm(`세션 "${session.title}" 을(를) 삭제합니다.`)) {
+                      void removeSession(session.id);
+                    }
+                  }}
+                >
+                  ✕
+                </button>
+              </span>
             </li>
           );
         })}
@@ -88,6 +141,17 @@ export function SessionSidebar({ onBackToMap }: SessionSidebarProps) {
           </li>
         )}
       </ul>
+
+      {total.calls > 0 && (
+        <div
+          className="shrink-0 border-t border-hairline px-3 py-2 text-caption text-ink-muted"
+          title="이 프로젝트의 모든 세션(버려진 분기와 서브에이전트 포함)이 쓴 합계입니다."
+        >
+          프로젝트 합계{" "}
+          <span className="text-ink">{formatCost(total.cost, total.primaryModelId)}</span> · LLM
+          호출 {total.calls}회
+        </div>
+      )}
     </aside>
   );
 }

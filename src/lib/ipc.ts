@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentRun,
   AgentRunPatch,
+  DeleteOutcome,
   DirEntry,
   FileContent,
   McpServerConfig,
@@ -154,6 +155,28 @@ export const updateMessage = (messageId: string, patch: MessagePatch, projectPat
 
 export const deleteMessage = (messageId: string, projectPath?: string) =>
   call<void>("delete_message", { messageId, projectPath });
+
+/**
+ * 노드 묶음(보통 턴 하나)을 지운다.
+ * `cascade` 가 false 면 넘어온 노드만 지우고 그 아래 대화는 살아남은 조상에 이어 붙는다.
+ * 돌려받은 값을 그대로 들고 있다가 `restoreMessages()` 에 넘기면 되돌아간다.
+ */
+export const deleteMessages = (
+  messageIds: string[],
+  cascade: boolean,
+  projectPath?: string,
+) => call<DeleteOutcome>("delete_messages", { messageIds, cascade, projectPath });
+
+export const restoreMessages = (outcome: DeleteOutcome, projectPath?: string) =>
+  call<number>("restore_messages", { outcome, projectPath });
+
+/** 노드 묶음을 복제해 다른 노드 뒤에 이어 붙인다. 세션을 넘나들 수 있다. */
+export const copyMessages = (
+  sourceIds: string[],
+  targetParentId: string | null,
+  sessionId: string,
+  projectPath?: string,
+) => call<Message[]>("copy_messages", { sourceIds, targetParentId, sessionId, projectPath });
 
 /** 타임머신: 해당 노드 시점까지를 복제한 새 브랜치 세션을 만든다. */
 export const branchSession = (messageId: string, title?: string, projectPath?: string) =>

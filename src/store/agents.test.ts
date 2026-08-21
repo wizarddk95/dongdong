@@ -351,27 +351,38 @@ describe("useAgents.refresh / 정리", () => {
   });
 });
 
-describe("useAgents.removeForMessages", () => {
-  it("지워진 노드에 매달린 실행만 정리한다", async () => {
+describe("useAgents.cancelForMessages", () => {
+  it("지워진 노드에 매달려 돌던 실행만 멈추고 기록은 남긴다", async () => {
     vi.mocked(runSubagent).mockResolvedValue(finished);
 
-    await useAgents.getState().spawn({ name: "삭제될 턴", task: "일", parentMessageId: "m1" });
-    await useAgents.getState().spawn({ name: "남을 턴", task: "일", parentMessageId: "m2" });
-    await useAgents.getState().spawn({ name: "부모 없음", task: "일" });
+    await useAgents.getState().spawn({ name: "끝난 것", task: "일", parentMessageId: "m1" });
+    // 아직 돌고 있는 실행 하나를 같은 노드에 매단다.
+    useAgents.setState({
+      runs: [
+        { ...useAgents.getState().runs[0], id: "r-running", status: "running" },
+        ...useAgents.getState().runs,
+      ],
+    });
 
-    await useAgents.getState().removeForMessages(["m1", "m9"]);
+    useAgents.getState().cancelForMessages(["m1"]);
 
-    expect(mocked.deleteAgentRun).toHaveBeenCalledTimes(1);
-    expect(useAgents.getState().runs.map((run) => run.name)).toEqual(["부모 없음", "남을 턴"]);
+    // 기록은 실제로 쓴 토큰이라 지우지 않는다 — 상태만 중단으로 바뀐다.
+    expect(mocked.deleteAgentRun).not.toHaveBeenCalled();
+    expect(useAgents.getState().runs).toHaveLength(2);
+    expect(useAgents.getState().runs.find((run) => run.id === "r-running")?.status).toBe(
+      "cancelled",
+    );
   });
 
-  it("지울 게 없으면 DB 를 건드리지 않는다", async () => {
+  it("다른 노드의 실행은 건드리지 않는다", async () => {
     vi.mocked(runSubagent).mockResolvedValue(finished);
     await useAgents.getState().spawn({ name: "무관", task: "일", parentMessageId: "m2" });
+    useAgents.setState({
+      runs: useAgents.getState().runs.map((run) => ({ ...run, status: "running" })),
+    });
 
-    await useAgents.getState().removeForMessages(["m1"]);
+    useAgents.getState().cancelForMessages(["m1"]);
 
-    expect(mocked.deleteAgentRun).not.toHaveBeenCalled();
-    expect(useAgents.getState().runs).toHaveLength(1);
+    expect(useAgents.getState().runs[0].status).toBe("running");
   });
 });

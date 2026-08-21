@@ -4,7 +4,6 @@ import { AgentDashboard } from "@/components/agents/AgentDashboard";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { FileExplorer } from "@/components/FileExplorer";
 import { FlowCanvas } from "@/components/flow/FlowCanvas";
-import { SessionMap } from "@/components/sessions/SessionMap";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SettingsModal } from "@/components/SettingsModal";
 import { ShellConsole } from "@/components/ShellConsole";
@@ -12,12 +11,10 @@ import { TopBar } from "@/components/TopBar";
 import { clampRightWidth, defaultRightWidth } from "@/lib/panelSize";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import { useAgents } from "@/store/agents";
+import { useChat } from "@/store/chat";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
-
-/** 세션 맵(채팅 앞단) ↔ 채팅 화면 */
-type View = "map" | "chat";
 
 type RightTab = "tree" | "agents" | "files" | "shell";
 
@@ -40,13 +37,14 @@ export default function App() {
 
   const project = useWorkspace((state) => state.project);
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
-  const selectSession = useWorkspace((state) => state.selectSession);
+  const refreshSessions = useWorkspace((state) => state.refreshSessions);
   const refreshAgents = useAgents((state) => state.refresh);
+  // 턴이 끝나면 사이드바의 집계(노드 수·비용)를 다시 읽는다.
+  const running = useChat((state) => state.running);
   const settingsLoaded = useSettings((state) => state.loaded);
   const theme = useSettings((state) => state.theme);
   const connectMcp = useMcp((state) => state.connectEnabled);
 
-  const [view, setView] = useState<View>("map");
   const [tab, setTab] = useState<RightTab>("tree");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -65,11 +63,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (view !== "chat") return;
     fitToContainer();
     window.addEventListener("resize", fitToContainer);
     return () => window.removeEventListener("resize", fitToContainer);
-  }, [view, fitToContainer]);
+  }, [fitToContainer]);
 
   // 드래그 중에는 커서가 패널 밖으로 나가도 따라오도록 window 에 건다.
   useEffect(() => {
@@ -100,10 +97,10 @@ export default function App() {
   // "시스템 설정" 을 고른 사용자는 OS 가 밤낮을 바꿀 때 앱도 같이 따라가야 한다.
   useEffect(() => watchSystemTheme(() => applyTheme(theme)), [theme]);
 
-  // 폴더를 새로 열면 어떤 세션으로 들어갈지 먼저 고르게 한다.
+  // 집계는 DB 를 다시 읽어야 갱신된다 — 프로젝트를 열 때와 턴이 끝날 때 맞춘다.
   useEffect(() => {
-    if (project) setView("map");
-  }, [project?.rootPath]);
+    if (!running) void refreshSessions();
+  }, [running, refreshSessions, project?.rootPath]);
 
   // 서브에이전트 기록은 트리 노드에도 그려지므로 탭과 무관하게 세션마다 읽어 둔다.
   useEffect(() => {
@@ -136,110 +133,97 @@ export default function App() {
       )}
 
       <main className="flex min-h-0 flex-1">
-        {view === "map" ? (
+        <SessionSidebar />
+
+        <div
+          ref={splitRef}
+          className={`flex min-w-0 flex-1 ${dragging ? "cursor-col-resize select-none" : ""}`}
+        >
+          {/* 좌: 챗봇 UI — 남는 폭을 모두 가져간다 */}
           <section className="flex min-w-0 flex-1 flex-col">
-            <SessionMap
-              onOpenSession={(sessionId) => {
-                void selectSession(sessionId);
-                setView("chat");
-              }}
-            />
+            <ChatPanel />
           </section>
-        ) : (
-          <>
-            <SessionSidebar onBackToMap={() => setView("map")} />
 
-            <div
-              ref={splitRef}
-              className={`flex min-w-0 flex-1 ${dragging ? "cursor-col-resize select-none" : ""}`}
+          {/* 분할선 — 끌어서 채팅 폭을 넓힌다 */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            title="드래그해서 채팅 폭 조절 · 더블클릭하면 기본값"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              setDragging(true);
+            }}
+            onDoubleClick={() => {
+              const box = splitRef.current?.getBoundingClientRect();
+              if (box) setRightWidth(defaultRightWidth(box.width));
+            }}
+            className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
+              dragging ? "bg-accent" : "bg-hairline hover:bg-accent"
+            }`}
+          >
+            {/* 1px 선은 집기 어려워 잡히는 영역만 좌우로 넓힌다 */}
+            <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+          </div>
+
+          {/* 우: 노드 트리 시각화 (+ Phase 1 도구들) */}
+          <section
+            className="flex min-h-0 shrink-0 flex-col"
+            style={{ width: rightWidth ?? "40%" }}
+          >
+            {/*
+             * 탭은 배경으로 고르지 않는다. 선택된 것만 잉크색 글자에 2px 청록 밑줄이
+             * 붙고, 나머지는 1px 헤어라인 위에 흐리게 남는다.
+             */}
+            <nav
+              role="tablist"
+              className="flex shrink-0 border-b border-hairline bg-canvas px-2"
             >
-              {/* 좌: 챗봇 UI — 남는 폭을 모두 가져간다 */}
-              <section className="flex min-w-0 flex-1 flex-col">
-                <ChatPanel />
-              </section>
+              {TABS.map((item) => {
+                const selected = tab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => setTab(item.id)}
+                    /*
+                     * 크기는 고정하고 **웨이트와 밑줄만** 바꾼다 — 선택에 따라 글자
+                     * 크기가 달라지면 탭 폭이 흔들려서 누를 때마다 줄이 출렁인다.
+                     */
+                    className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-body-sm transition-colors ${
+                      selected
+                        ? "border-accent font-semibold text-ink"
+                        : "border-transparent text-ink-muted hover:bg-hover hover:text-ink"
+                    }`}
+                  >
+                    {item.label}
+                    {item.id === "agents" && activeAgents > 0 && (
+                      // 채움색은 accent 가 아니라 primary — 다크에서 흰 글자와의 대비가 여기서만 충분하다.
+                      <span className="rounded-full bg-primary px-1.5 text-caption text-on-primary">
+                        {activeAgents}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
 
-              {/* 분할선 — 끌어서 채팅 폭을 넓힌다 */}
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                title="드래그해서 채팅 폭 조절 · 더블클릭하면 기본값"
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  setDragging(true);
-                }}
-                onDoubleClick={() => {
-                  const box = splitRef.current?.getBoundingClientRect();
-                  if (box) setRightWidth(defaultRightWidth(box.width));
-                }}
-                className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
-                  dragging ? "bg-accent" : "bg-hairline hover:bg-accent"
-                }`}
-              >
-                {/* 1px 선은 집기 어려워 잡히는 영역만 좌우로 넓힌다 */}
-                <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
-              </div>
-
-              {/* 우: 노드 트리 시각화 (+ Phase 1 도구들) */}
-              <section
-                className="flex min-h-0 shrink-0 flex-col"
-                style={{ width: rightWidth ?? "40%" }}
-              >
-                {/*
-                 * 탭은 배경으로 고르지 않는다. 선택된 것만 잉크색 글자에 2px 청록 밑줄이
-                 * 붙고, 나머지는 1px 헤어라인 위에 흐리게 남는다.
-                 */}
-                <nav
-                  role="tablist"
-                  className="flex shrink-0 border-b border-hairline bg-canvas px-2"
-                >
-                  {TABS.map((item) => {
-                    const selected = tab === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        role="tab"
-                        aria-selected={selected}
-                        onClick={() => setTab(item.id)}
-                        /*
-                         * 크기는 고정하고 **웨이트와 밑줄만** 바꾼다 — 선택에 따라 글자
-                         * 크기가 달라지면 탭 폭이 흔들려서 누를 때마다 줄이 출렁인다.
-                         */
-                        className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-body-sm transition-colors ${
-                          selected
-                            ? "border-accent font-semibold text-ink"
-                            : "border-transparent text-ink-muted hover:bg-hover hover:text-ink"
-                        }`}
-                      >
-                        {item.label}
-                        {item.id === "agents" && activeAgents > 0 && (
-                          // 채움색은 accent 가 아니라 primary — 다크에서 흰 글자와의 대비가 여기서만 충분하다.
-                          <span className="rounded-full bg-primary px-1.5 text-caption text-on-primary">
-                            {activeAgents}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </nav>
-
-                <div className="min-h-0 flex-1">
-                  {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
-                  {tab === "agents" && <AgentDashboard />}
-                  {tab === "files" && (
-                    <div className="h-full min-h-0 overflow-hidden p-3">
-                      <FileExplorer />
-                    </div>
-                  )}
-                  {tab === "shell" && (
-                    <div className="flex h-full flex-col p-3">
-                      <ShellConsole />
-                    </div>
-                  )}
+            <div className="min-h-0 flex-1">
+              {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
+              {tab === "agents" && <AgentDashboard />}
+              {tab === "files" && (
+                <div className="h-full min-h-0 overflow-hidden p-3">
+                  <FileExplorer />
                 </div>
-              </section>
+              )}
+              {tab === "shell" && (
+                <div className="flex h-full flex-col p-3">
+                  <ShellConsole />
+                </div>
+              )}
             </div>
-          </>
-        )}
+          </section>
+        </div>
       </main>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />

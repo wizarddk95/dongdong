@@ -701,3 +701,222 @@ fn truncates_long_session_preview() {
     let preview = overviews[0].preview.as_deref().unwrap();
     assert_eq!(preview.chars().count(), 120);
 }
+
+/// 삭제/복사 테스트가 공유하는 밑그림 — 한 줄기로 이어진 세 턴.
+/// (u1 → a1 → u2 → a2 → u3 → a3)
+fn linear_session(conn: &rusqlite::Connection, tag: &str) -> (String, Vec<super::models::Message>) {
+    let record = queries::upsert_project(conn, tag, tag).unwrap();
+    let session = queries::create_session(conn, &record.id, "세션", None, None, None).unwrap();
+
+    let mut nodes: Vec<super::models::Message> = Vec::new();
+    for (role, content) in [
+        ("user", "질문1"),
+        ("assistant", "답1"),
+        ("user", "질문2"),
+        ("assistant", "답2"),
+        ("user", "질문3"),
+        ("assistant", "답3"),
+    ] {
+        let parent = nodes.last().map(|m| m.id.clone());
+        nodes.push(
+            queries::insert_message(
+                conn,
+                &message(&session.id, parent.as_deref(), role, content),
+            )
+            .unwrap(),
+        );
+    }
+    (session.id, nodes)
+}
+
+#[test]
+fn deletes_one_turn_and_stitches_the_rest_back_together() {
+    let project = TempProject::new("delete-solo");
+    let mut conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+    let (session_id, nodes) = linear_session(&conn, &root_path);
+
+    // 가운데 턴(u2 + a2)만 도려낸다.
+    let doomed = vec![nodes[2].id.clone(), nodes[3].id.clone()];
+    let outcome = queries::delete_messages(&mut conn, &doomed, false).unwrap();
+
+    assert_eq!(outcome.removed.len(), 2);
+    assert_eq!(outcome.reattached.len(), 1);
+    assert_eq!(outcome.reattached[0].message_id, nodes[4].id);
+    assert_eq!(
+        outcome.reattached[0].to_parent_id.as_deref(),
+        Some(nodes[1].id.as_str()),
+        "다음 턴은 지워진 턴의 부모에 이어 붙어야 한다"
+    );
+
+    let left = queries::list_messages(&conn, &session_id).unwrap();
+    assert_eq!(left.len(), 4, "뒤에 이어지던 턴은 살아남아야 한다");
+    let u3 = left.iter().find(|m| m.id == nodes[4].id).unwrap();
+    assert_eq!(u3.parent_id.as_deref(), Some(nodes[1].id.as_str()));
+
+    // 되돌리면 원래 id·부모가 그대로 돌아온다.
+    let restored = queries::restore_messages(&mut conn, &outcome).unwrap();
+    assert_eq!(restored, 2);
+
+    let back = queries::list_messages(&conn, &session_id).unwrap();
+    assert_eq!(back.len(), 6);
+    let u3 = back.iter().find(|m| m.id == nodes[4].id).unwrap();
+    assert_eq!(u3.parent_id.as_deref(), Some(nodes[3].id.as_str()));
+    let a2 = back.iter().find(|m| m.id == nodes[3].id).unwrap();
+    assert_eq!(a2.content, "답2");
+    assert_eq!(a2.seq, nodes[3].seq);
+
+    // 같은 되돌리기를 두 번 적용하면 노드가 두 벌 생긴다 → 막아야 한다.
+    assert!(queries::restore_messages(&mut conn, &outcome).is_err());
+}
+
+#[test]
+fn cascade_delete_takes_the_whole_subtree() {
+    let project = TempProject::new("delete-cascade");
+    let mut conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+    let (session_id, nodes) = linear_session(&conn, &root_path);
+
+    let outcome =
+        queries::delete_messages(&mut conn, &[nodes[2].id.clone(), nodes[3].id.clone()], true)
+            .unwrap();
+
+    assert_eq!(outcome.removed.len(), 4, "아래 턴까지 함께 지워야 한다");
+    assert!(outcome.reattached.is_empty());
+    assert_eq!(queries::list_messages(&conn, &session_id).unwrap().len(), 2);
+
+    queries::restore_messages(&mut conn, &outcome).unwrap();
+    assert_eq!(queries::list_messages(&conn, &session_id).unwrap().len(), 6);
+}
+
+#[test]
+fn refuses_a_delete_that_would_leave_two_roots() {
+    let project = TempProject::new("delete-root");
+    let mut conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+
+    let record = queries::upsert_project(&conn, &root_path, "root").unwrap();
+    let session = queries::create_session(&conn, &record.id, "세션", None, None, None).unwrap();
+
+    // 루트 하나에서 두 갈래가 갈라진 모양.
+    let root = queries::insert_message(&conn, &message(&session.id, None, "user", "뿌리")).unwrap();
+    let left =
+        queries::insert_message(&conn, &message(&session.id, Some(&root.id), "user", "왼쪽"))
+            .unwrap();
+    let right = queries::insert_message(
+        &conn,
+        &message(&session.id, Some(&root.id), "user", "오른쪽"),
+    )
+    .unwrap();
+
+    let blocked = queries::delete_messages(&mut conn, &[root.id.clone()], false);
+    assert!(
+        blocked.is_err(),
+        "루트를 지우면 뿌리가 둘이 되는 삭제는 거절해야 한다"
+    );
+    assert_eq!(queries::list_messages(&conn, &session.id).unwrap().len(), 3);
+
+    // 갈래가 하나면 그 자식이 새 뿌리가 되므로 허용된다.
+    queries::delete_messages(&mut conn, &[right.id], true).unwrap();
+    queries::delete_messages(&mut conn, &[root.id], false).unwrap();
+    let left_now = queries::get_message(&conn, &left.id).unwrap().unwrap();
+    assert_eq!(left_now.parent_id, None);
+}
+
+#[test]
+fn keeps_agent_runs_but_relinks_them_on_undo() {
+    let project = TempProject::new("delete-runs");
+    let mut conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+    let (session_id, nodes) = linear_session(&conn, &root_path);
+
+    let run = queries::create_agent_run(
+        &conn,
+        &NewAgentRun {
+            session_id: session_id.clone(),
+            parent_message_id: Some(nodes[3].id.clone()),
+            name: "조사".into(),
+            task: "일".into(),
+        },
+    )
+    .unwrap();
+
+    let outcome = queries::delete_messages(
+        &mut conn,
+        &[nodes[2].id.clone(), nodes[3].id.clone()],
+        false,
+    )
+    .unwrap();
+    assert_eq!(outcome.detached_runs.len(), 1);
+
+    // 실제로 쓴 토큰이므로 기록 자체는 남기고 링크만 끊는다.
+    let detached = queries::get_agent_run(&conn, &run.id).unwrap().unwrap();
+    assert_eq!(detached.parent_message_id, None);
+
+    queries::restore_messages(&mut conn, &outcome).unwrap();
+    let relinked = queries::get_agent_run(&conn, &run.id).unwrap().unwrap();
+    assert_eq!(
+        relinked.parent_message_id.as_deref(),
+        Some(nodes[3].id.as_str())
+    );
+}
+
+#[test]
+fn copies_a_turn_without_carrying_its_usage() {
+    let project = TempProject::new("copy");
+    let mut conn = open_workspace_db(&project.0).unwrap();
+    let root_path = project.0.to_string_lossy().into_owned();
+
+    let record = queries::upsert_project(&conn, &root_path, "copy").unwrap();
+    let source = queries::create_session(&conn, &record.id, "원본", None, None, None).unwrap();
+    let target = queries::create_session(&conn, &record.id, "대상", None, None, None).unwrap();
+
+    let ask = queries::insert_message(&conn, &message(&source.id, None, "user", "질문")).unwrap();
+    let answer = queries::insert_message(
+        &conn,
+        &NewMessage {
+            context_snapshot: Some(serde_json::json!({ "modelId": "anthropic:x" })),
+            token_usage: Some(serde_json::json!({ "inputTokens": 100, "outputTokens": 20 })),
+            status: Some("streaming".into()),
+            ..message(&source.id, Some(&ask.id), "assistant", "답")
+        },
+    )
+    .unwrap();
+
+    // 다른 세션의 뿌리로 붙여넣는다 (세션이 비어 있으므로 붙일 자리가 없어도 된다).
+    let copies = queries::copy_messages(
+        &mut conn,
+        &[ask.id.clone(), answer.id.clone()],
+        None,
+        &target.id,
+    )
+    .unwrap();
+
+    assert_eq!(copies.len(), 2);
+    assert_ne!(copies[0].id, ask.id, "복사본은 새 id 를 받는다");
+    assert_eq!(copies[0].parent_id, None);
+    assert_eq!(copies[1].parent_id.as_deref(), Some(copies[0].id.as_str()));
+    assert_eq!(copies[1].content, "답");
+    assert!(copies[1].token_usage.is_none(), "토큰은 복제하지 않는다");
+    assert!(copies[1].context_snapshot.is_none());
+    assert_eq!(
+        copies[1].status, "aborted",
+        "흐르다 만 노드는 중단으로 굳힌다"
+    );
+
+    // 원본은 그대로.
+    assert_eq!(queries::list_messages(&conn, &source.id).unwrap().len(), 2);
+
+    // 이미 대화가 있는 세션에 뿌리를 하나 더 만들 수는 없다.
+    let blocked = queries::copy_messages(&mut conn, &[ask.id.clone()], None, &target.id);
+    assert!(blocked.is_err());
+
+    // 자리를 고르면 그 뒤에 이어 붙는다.
+    let appended =
+        queries::copy_messages(&mut conn, &[ask.id], Some(&copies[1].id), &target.id).unwrap();
+    assert_eq!(
+        appended[0].parent_id.as_deref(),
+        Some(copies[1].id.as_str())
+    );
+    assert_eq!(queries::list_messages(&conn, &target.id).unwrap().len(), 3);
+}

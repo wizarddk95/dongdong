@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 268 / cargo 40. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 283 / cargo 45. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -110,8 +110,7 @@ src/
   lib/ipc.ts            invoke 얇은 래퍼 — 유일한 IPC 통로
   lib/tree.ts           parent_id → 트리 복원, pathTo(), siblingsOf()
   lib/turns.ts          노드 체인 → 턴 묶음 + 채팅 말풍선 접기(toBubbles). 순수 파생, 스키마 무관
-  lib/sessionTree.ts    parent_session_id → 세션 분기 트리
-  lib/layout.ts         왼→오른쪽 tidy tree 좌표 (턴 그래프·세션 맵 공용)
+  lib/layout.ts         왼→오른쪽 tidy tree 좌표 (턴 그래프·서브에이전트 레인)
   lib/agentRuns.ts      서브에이전트 상태 색·경과 시간 (트리 노드와 대시보드 공용)
   lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음)
   lib/theme.ts          테마 결정(순수) + <html data-theme> 적용. 색값은 안 갖는다
@@ -125,7 +124,7 @@ src/
   lib/ai/mcp.ts         MCP 도구 → dynamicTool (서버의 JSON Schema 그대로)
   lib/ai/instructions.ts 프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합
   store/                workspace(트리) · chat(턴) · agents(서브) · mcp · settings
-  components/           chat · flow(턴 그래프) · sessions(세션 맵) · agents · mcp · inspect
+  components/           chat · flow(턴 그래프) · agents · mcp · inspect
                         ErrorBoundary.tsx — 렌더 예외로 창이 새까매지는 것을 막는다
                         UsageMeter.tsx — 토큰·요금·컨텍스트 게이지 (채팅/턴/세션 공용)
                         Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·Hint·입력 크롬). 새 UI 는 여기서 가져다 쓴다
@@ -141,8 +140,19 @@ src-tauri/src/
 ## 도메인 개념
 
 - **대화 트리**: `messages.parent_id` 가 간선. 분기는 2층 — (a) 세션 내: `activeParentId` 변경 → 형제 노드, (b) 새 세션: `branch_session` 이 조상 체인을 복제.
-- **턴**: 화면에 보이는 노드 하나 = 턴 하나(user 앵커 + 그 아래 assistant/tool 체인). `lib/turns.ts` 가 매번 다시 계산하며 DB 에는 저장하지 않는다. 삭제도 턴 단위(앵커부터 CASCADE) — 반쪽 노드를 만들지 않는다.
-- **세션 맵**: 프로젝트를 열면 먼저 뜨는 화면. `parent_session_id` 로 세션 분기를 그린다. 카드 집계는 `list_sessions` 가 `SessionOverview` 로 한 번에 내려준다(세션마다 메시지를 읽지 않는다).
+- **턴**: 화면에 보이는 노드 하나 = 턴 하나(user 앵커 + 그 아래 assistant/tool 체인). `lib/turns.ts` 가 매번 다시 계산하며 DB 에는 저장하지 않는다. 삭제도 턴 단위 — 반쪽 노드를 만들지 않는다.
+- **삭제·되돌리기·복사**: 삭제는 두 가지다. **이 턴만**(`cascade: false`)은 그 턴의 노드만 지우고
+  자식들을 살아남은 조상에 다시 매단다(`delete_messages` 가 `reattached` 로 알려 준다).
+  **아래까지**(`cascade: true`)는 후손까지 지운다. 어느 쪽이든 `DeleteOutcome` 이 되돌리기 표이고,
+  프론트가 그걸 그대로 `restore_messages` 로 돌려보내면 **원래 id·seq** 로 되살아난다
+  (id 가 바뀌면 서브에이전트 링크도 자식의 부모도 다시 못 잇는다). 되돌리기 스택은 **메모리에만** 산다.
+  서브에이전트 기록은 삭제하지 않는다 — 실제 지출이라 지우면 세션 비용이 줄어든다(링크만 끊고 되돌리면 붙는다).
+  복사(`copy_messages`)는 **토큰 사용량·컨텍스트 스냅샷을 비운다**(이중 집계·거짓 원문 방지).
+- **세션의 뿌리는 하나**: 분기는 그래프에서 턴을 골라 만드는 길 하나뿐이다. 버튼으로 같은 일을
+  또 하게 두었더니 루트 턴에서 뿌리가 여러 개 생겼다 → 버튼을 없앴고, 뿌리를 늘리는
+  삭제·붙여넣기는 `queries.rs` 가 거절한다. 화면 쪽 같은 판정은 `soloDeleteBlocker()`
+  (`lib/turns.ts`) — **두 곳이 어긋나면 눌리는 버튼이 DB 에서 거절당한다**.
+- **세션 목록**: 좌측 사이드바 하나가 세션의 선택·생성·이름 변경·삭제를 모두 맡는다. 집계는 `list_sessions` 가 `SessionOverview` 로 한 번에 내려준다(세션마다 메시지를 읽지 않는다). 세션 맵(분기 세션 트리)은 세션 분기를 만드는 길이 사라지면서 함께 걷어냈다.
 - **도구 실행**: 한 턴이 여러 스텝. 스텝마다 `assistant`(호출) → `tool`(결과) → `assistant` 노드가 쌓인다. 짝 없는 tool-call/result 는 `toModelMessages()` 가 걸러낸다(공급자가 400 을 낸다).
   저장은 이렇게 둘로 나뉘지만 **채팅 화면에서는 한 말풍선**이다 — `toBubbles()`(`lib/turns.ts`)가 tool 노드를 자기를 부른 assistant 말풍선으로 흡수하고, 도구 묶음은 기본 접힘이다.
 - **토큰·비용**: **노드 하나 = LLM 호출 하나**다. 스텝이 끝날 때마다 그 호출 하나의 사용량이

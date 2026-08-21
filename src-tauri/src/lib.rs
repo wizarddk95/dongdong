@@ -57,6 +57,9 @@ pub fn run() {
             commands::session::get_message_path,
             commands::session::update_message,
             commands::session::delete_message,
+            commands::session::delete_messages,
+            commands::session::restore_messages,
+            commands::session::copy_messages,
             commands::session::branch_session,
             // 에이전트 메모리 (Phase 3)
             commands::memory::upsert_memory,

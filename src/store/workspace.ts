@@ -9,6 +9,7 @@ import { create } from "zustand";
 import { loadProjectInstructions, type ProjectInstructions } from "@/lib/ai/instructions";
 import * as ipc from "@/lib/ipc";
 import type {
+  DeleteOutcome,
   Message,
   NewMessage,
   Project,
@@ -16,6 +17,26 @@ import type {
   SessionOverview,
   SystemInfo,
 } from "@/types/ipc";
+
+/**
+ * 방금 지운 것 한 건 — 되돌리기 표.
+ * Rust 가 준 `outcome` 을 손대지 않고 그대로 돌려보내면 삭제 이전으로 돌아간다.
+ * **메모리에만 산다** — 앱을 끄거나 프로젝트를 닫으면 사라진다.
+ */
+export interface Deletion {
+  sessionId: string;
+  outcome: DeleteOutcome;
+  /** 되돌리기 버튼에 띄울 한 줄 */
+  label: string;
+}
+
+/** 복사해 둔 노드 묶음(보통 턴 하나). 세션을 옮겨 다녀도 유지된다. */
+export interface Clipboard {
+  /** 복사한 원본이 있는 세션 — 붙여넣기는 다른 세션에도 할 수 있다 */
+  sessionId: string;
+  messageIds: string[];
+  label: string;
+}
 
 interface WorkspaceState {
   project: Project | null;
@@ -34,6 +55,10 @@ interface WorkspaceState {
   activeParentId: string | null;
   /** 노드 트리에서 선택(하이라이트)된 노드 */
   selectedMessageId: string | null;
+
+  /** 되돌릴 수 있는 삭제들 (오래된 것부터). 세션별로 골라 쓴다. */
+  deletions: Deletion[];
+  clipboard: Clipboard | null;
 
   loading: boolean;
   error: string | null;
@@ -56,12 +81,31 @@ interface WorkspaceState {
   /** DB 를 거치지 않고 로컬 캐시만 교체 (스트리밍 종료 후 동기화용) */
   replaceMessage: (message: Message) => void;
   removeMessage: (messageId: string) => Promise<void>;
-  /** 턴 단위 삭제 — 앵커(user) 노드부터 하위 트리와 딸린 서브에이전트 기록까지 함께 지운다. */
-  removeTurn: (anchorId: string) => Promise<void>;
+  /**
+   * 노드 묶음(보통 턴 하나) 삭제.
+   * `cascade` 가 false 면 그 노드들만 지우고 아래 대화는 살아남은 조상에 이어 붙는다.
+   * 지운 내용은 되돌리기 스택에 쌓인다.
+   */
+  removeNodes: (
+    messageIds: string[],
+    options: { cascade: boolean; label: string },
+  ) => Promise<boolean>;
+  /** 현재 세션에서 마지막으로 지운 것을 되살린다. */
+  undoDelete: () => Promise<boolean>;
+
+  /** 턴 하나를 클립보드에 담는다 (DB 는 건드리지 않는다). */
+  copyNodes: (messageIds: string[], label: string) => void;
+  clearClipboard: () => void;
+  /** 클립보드의 묶음을 복제해 지정한 노드 뒤에 잇는다. 세션이 달라도 된다. */
+  pasteNodes: (targetParentId: string | null) => Promise<Message[] | null>;
 
   setActiveParent: (messageId: string | null) => void;
   selectMessage: (messageId: string | null) => void;
-  /** 타임머신: 해당 노드 시점을 복제한 새 세션으로 이동 */
+  /**
+   * 타임머신: 해당 노드 시점을 복제한 새 세션으로 이동.
+   * 지금은 화면에 진입점이 없다 — 분기는 그래프에서 턴을 고르는 길 하나로 모았다.
+   * 예전에 만들어 둔 분기 세션은 세션 맵이 그대로 그린다.
+   */
   branchFrom: (messageId: string, title?: string) => Promise<Session | null>;
 
   setError: (error: string | null) => void;
@@ -109,6 +153,35 @@ function latestLeaf(messages: Message[]): string | null {
   return pool.reduce((best, current) => (current.seq > best.seq ? current : best)).id;
 }
 
+/**
+ * 트리를 건드린 뒤 로컬 캐시를 DB 와 맞춘다.
+ * 사라진 노드를 가리키던 손가락(활성 부모·선택)은 살아 있는 잎으로 옮긴다 —
+ * 없는 노드를 부모로 들고 있으면 다음 턴이 조용히 새 뿌리를 만든다.
+ */
+async function syncTree(
+  set: (partial: Partial<WorkspaceState>) => void,
+  get: () => WorkspaceState,
+  sessionId: string,
+) {
+  const messages = await ipc.listMessages(sessionId);
+  const alive = new Set(messages.map((m) => m.id));
+  const parentId = get().activeParentId;
+  const selectedId = get().selectedMessageId;
+  set({
+    messages,
+    activeParentId: parentId && alive.has(parentId) ? parentId : latestLeaf(messages),
+    selectedMessageId: selectedId && alive.has(selectedId) ? selectedId : null,
+  });
+}
+
+/** 이 세션에서 마지막으로 지운 것의 위치. 없으면 -1. */
+function lastDeletionIndex(deletions: Deletion[], sessionId: string): number {
+  for (let index = deletions.length - 1; index >= 0; index -= 1) {
+    if (deletions[index].sessionId === sessionId) return index;
+  }
+  return -1;
+}
+
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   project: null,
   workspaceDir: null,
@@ -123,6 +196,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   messages: [],
   activeParentId: null,
   selectedMessageId: null,
+
+  deletions: [],
+  clipboard: null,
 
   loading: false,
   error: null,
@@ -146,6 +222,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         messages: [],
         activeParentId: null,
         selectedMessageId: null,
+        deletions: [],
+        clipboard: null,
         instructions: null,
       });
 
@@ -177,6 +255,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         messages: [],
         activeParentId: null,
         selectedMessageId: null,
+        deletions: [],
+        clipboard: null,
         instructions: null,
       });
     });
@@ -255,7 +335,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!sessionId) return null;
 
     return guard(set, async () => {
-      const parentId = message.parentId ?? get().activeParentId ?? null;
+      // 세션의 뿌리는 하나뿐이다 — 붙일 곳을 잃었으면 새 뿌리 대신 마지막 잎에 잇는다.
+      const parentId =
+        message.parentId ?? get().activeParentId ?? latestLeaf(get().messages);
       const created = await ipc.appendMessage({ ...message, sessionId, parentId });
       set({ messages: [...get().messages, created], activeParentId: created.id });
       return created;
@@ -282,11 +364,61 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     });
   },
 
-  removeTurn: async (anchorId) => {
-    // 턴의 앵커(user 노드)를 지우면 그 아래 응답/도구 노드가 CASCADE 로 함께 사라진다.
-    // 딸린 서브에이전트 기록 정리는 호출부가 `agents.removeForMessages()` 로 맡는다
-    // (스토어끼리 서로를 import 하지 않기 위해).
-    await get().removeMessage(anchorId);
+  removeNodes: async (messageIds, { cascade, label }) => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId || messageIds.length === 0) return false;
+
+    const outcome = await guard(set, async () => {
+      const outcome = await ipc.deleteMessages(messageIds, cascade);
+      set({ deletions: [...get().deletions, { sessionId, outcome, label }] });
+      await syncTree(set, get, sessionId);
+      return outcome;
+    });
+    return outcome != null;
+  },
+
+  undoDelete: async () => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return false;
+
+    const stack = get().deletions;
+    const at = lastDeletionIndex(stack, sessionId);
+    if (at < 0) return false;
+
+    // 성공하든 실패하든 스택에서 뺀다 — 되돌릴 수 없게 된 항목이 버튼에 남아 있으면
+    // 누를 때마다 같은 오류만 반복된다.
+    const entry = stack[at];
+    set({ deletions: stack.filter((_, index) => index !== at) });
+
+    const done = await guard(set, async () => {
+      await ipc.restoreMessages(entry.outcome);
+      await syncTree(set, get, sessionId);
+      return true;
+    });
+    return done === true;
+  },
+
+  copyNodes: (messageIds, label) => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId || messageIds.length === 0) return;
+    set({ clipboard: { sessionId, messageIds, label } });
+  },
+
+  clearClipboard: () => set({ clipboard: null }),
+
+  pasteNodes: async (targetParentId) => {
+    const sessionId = get().activeSessionId;
+    const clipboard = get().clipboard;
+    if (!sessionId || !clipboard) return null;
+
+    return guard(set, async () => {
+      const copies = await ipc.copyMessages(clipboard.messageIds, targetParentId, sessionId);
+      await syncTree(set, get, sessionId);
+      // 붙여넣은 줄기의 끝에서 대화가 이어지도록 손가락을 옮긴다.
+      const last = copies.at(-1);
+      if (last) set({ activeParentId: last.id, selectedMessageId: last.id });
+      return copies;
+    });
   },
 
   setActiveParent: (messageId) => set({ activeParentId: messageId }),

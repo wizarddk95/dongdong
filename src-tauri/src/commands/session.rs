@@ -2,7 +2,9 @@
 
 use tauri::State;
 
-use crate::db::models::{Message, MessagePatch, NewMessage, Session, SessionOverview};
+use crate::db::models::{
+    DeleteOutcome, Message, MessagePatch, NewMessage, Session, SessionOverview,
+};
 use crate::db::queries;
 use crate::error::AppResult;
 use crate::state::AppState;
@@ -126,6 +128,48 @@ pub fn delete_message(
 ) -> AppResult<()> {
     state.with_conn(project_path.as_deref(), |conn, _| {
         queries::delete_message(conn, &message_id)
+    })
+}
+
+/// 노드 묶음(보통 턴 하나)을 지운다.
+///
+/// `cascade` 가 false 면 넘어온 노드만 지우고 그 아래 대화는 살아남은 조상에 이어 붙인다.
+/// 돌려주는 [`DeleteOutcome`] 이 곧 되돌리기 표 — 프론트가 들고 있다가 `restore_messages` 로 돌려보낸다.
+#[tauri::command]
+pub fn delete_messages(
+    state: State<'_, AppState>,
+    message_ids: Vec<String>,
+    cascade: Option<bool>,
+    project_path: Option<String>,
+) -> AppResult<DeleteOutcome> {
+    state.with_conn(project_path.as_deref(), |conn, _| {
+        queries::delete_messages(conn, &message_ids, cascade.unwrap_or(false))
+    })
+}
+
+/// `delete_messages` 를 되돌린다. 원래 id 그대로 되살아난다.
+#[tauri::command]
+pub fn restore_messages(
+    state: State<'_, AppState>,
+    outcome: DeleteOutcome,
+    project_path: Option<String>,
+) -> AppResult<usize> {
+    state.with_conn(project_path.as_deref(), |conn, _| {
+        queries::restore_messages(conn, &outcome)
+    })
+}
+
+/// 노드 묶음을 복제해 다른 노드 뒤에 이어 붙인다 (세션을 넘나들 수 있다).
+#[tauri::command]
+pub fn copy_messages(
+    state: State<'_, AppState>,
+    source_ids: Vec<String>,
+    target_parent_id: Option<String>,
+    session_id: String,
+    project_path: Option<String>,
+) -> AppResult<Vec<Message>> {
+    state.with_conn(project_path.as_deref(), |conn, _| {
+        queries::copy_messages(conn, &source_ids, target_parent_id.as_deref(), &session_id)
     })
 }
 

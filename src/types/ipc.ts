@@ -101,6 +101,30 @@ export interface MessagePatch {
   status?: string;
 }
 
+/** 지워진 노드를 건너뛰고 부모가 바뀐 자식 하나. 되돌리기가 원래 부모를 알아야 한다. */
+export interface Reattachment {
+  messageId: string;
+  fromParentId: string | null;
+  toParentId: string | null;
+}
+
+/** 노드가 사라져 링크가 끊긴 서브에이전트 실행. 기록 자체는 남는다. */
+export interface DetachedRun {
+  runId: string;
+  parentMessageId: string;
+}
+
+/**
+ * 노드 삭제 결과이자 되돌리기 표.
+ * 이 객체를 그대로 `restoreMessages()` 에 돌려주면 삭제 이전으로 돌아간다.
+ */
+export interface DeleteOutcome {
+  /** 지워진 노드 원문 (seq 오름차순) */
+  removed: Message[];
+  reattached: Reattachment[];
+  detachedRuns: DetachedRun[];
+}
+
 /** 에이전트 메모리. `scope` 가 session 이면 해당 세션에서만 보인다. */
 export type MemoryScope = "project" | "session";
 

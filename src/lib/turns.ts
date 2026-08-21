@@ -221,6 +221,34 @@ export function toBubbles(chain: Message[]): Bubble[] {
   return bubbles;
 }
 
+/**
+ * 화면에 쓰는 턴 이름 — 앵커 노드 id 앞 8자.
+ *
+ * 순번(`seq`)은 **세션 안 삽입 순서**라 분기·복사·붙여넣기를 하고 나면 그래프에서의
+ * 자리와 어긋난다(루트 바로 다음 카드가 #7 로 뜬다). 반면 id 는 어디로 옮겨도 그대로고,
+ * 그래프 카드와 채팅 입력칸이 **같은 이름**으로 같은 자리를 부르도록 이 함수 하나만 쓴다
+ * (입력칸은 활성 부모가 낀 턴을 이 이름으로 부르고, 정확한 노드 id 는 툴팁에 남긴다).
+ */
+export function turnLabel(turn: Turn): string {
+  return turn.id.slice(0, 8);
+}
+
+/**
+ * 이 턴 하나만 지울 수 있는지. 못 지우면 이유를 돌려준다 (버튼 툴팁에 그대로 쓴다).
+ *
+ * 세션의 뿌리는 하나여야 한다 — 갈래가 둘 이상인 루트 턴만 도려내면
+ * 남은 갈래들이 저마다 뿌리가 되어 한 세션에 대화가 여러 그루로 갈라진다.
+ * **판정은 Rust 의 `delete_messages` 와 같아야 한다** — 화면에서 눌리는데
+ * DB 가 거절하면 그 자체가 버그로 읽힌다.
+ */
+export function soloDeleteBlocker(index: TurnIndex, turn: Turn): string | null {
+  const children = index.childrenOf.get(turn.id) ?? [];
+  if (turn.branchPointId === null && children.length > 1) {
+    return `이 턴은 대화의 뿌리인데 아래로 ${children.length}갈래가 갈라져 있습니다. 이 턴만 지우면 뿌리가 여러 개가 됩니다 — [아래까지 삭제] 를 쓰세요.`;
+  }
+  return null;
+}
+
 /** 같은 부모 턴을 공유하는 형제들 — "이 지점에 분기가 N개" 표시에 쓴다. */
 export function siblingTurns(index: TurnIndex, turn: Turn): Turn[] {
   return index.childrenOf.get(turn.parentTurnId) ?? [];

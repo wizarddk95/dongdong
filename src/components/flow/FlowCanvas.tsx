@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -17,8 +17,15 @@ import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import { isRunActive } from "@/lib/agentRuns";
 import { tidyLayout } from "@/lib/layout";
 import { pathTo } from "@/lib/tree";
-import { buildTurns, siblingTurns, turnSubtree } from "@/lib/turns";
+import {
+  buildTurns,
+  siblingTurns,
+  soloDeleteBlocker,
+  turnLabel,
+  turnSubtree,
+} from "@/lib/turns";
 import { useAgents } from "@/store/agents";
+import { useChat } from "@/store/chat";
 import { useWorkspace } from "@/store/workspace";
 import type { AgentRun } from "@/types/ipc";
 
@@ -39,17 +46,28 @@ interface FlowCanvasProps {
  * 한 턴(질문 + 응답 + 도구 스텝)이 카드 하나이고, 왼→오른쪽으로 이어진다.
  * 위임된 서브에이전트는 발화한 턴에서 위/아래로 갈라져 나온다.
  * 카드를 클릭하면 그 턴 뒤에서 대화가 이어진다 — 앞 턴을 고르면 분기가 생긴다.
+ * (분기는 여기서만 만든다. "이 턴에서 다시 질문" 같은 버튼을 따로 두면
+ *  같은 일을 두 갈래로 하게 되고, 그중 한쪽이 뿌리를 여러 개 만들었다.)
  */
 export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
   const messages = useWorkspace((state) => state.messages);
   const activeParentId = useWorkspace((state) => state.activeParentId);
   const selectedMessageId = useWorkspace((state) => state.selectedMessageId);
+  const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const setActiveParent = useWorkspace((state) => state.setActiveParent);
   const selectMessage = useWorkspace((state) => state.selectMessage);
-  const branchFrom = useWorkspace((state) => state.branchFrom);
-  const removeTurn = useWorkspace((state) => state.removeTurn);
+  const removeNodes = useWorkspace((state) => state.removeNodes);
+  const undoDelete = useWorkspace((state) => state.undoDelete);
+  const deletions = useWorkspace((state) => state.deletions);
+  const clipboard = useWorkspace((state) => state.clipboard);
+  const copyNodes = useWorkspace((state) => state.copyNodes);
+  const clearClipboard = useWorkspace((state) => state.clearClipboard);
+  const pasteNodes = useWorkspace((state) => state.pasteNodes);
   const runs = useAgents((state) => state.runs);
-  const removeRunsForMessages = useAgents((state) => state.removeForMessages);
+  const cancelRunsForMessages = useAgents((state) => state.cancelForMessages);
+  const refreshRuns = useAgents((state) => state.refresh);
+  // 턴이 흐르는 중에 트리를 건드리면 스트리밍이 쓰고 있는 노드가 사라진다.
+  const running = useChat((state) => state.running);
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // React Flow 는 자체 클래스로 명암을 잡으므로 해석된 테마를 직접 알려 줘야 한다.
@@ -190,28 +208,107 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
     : null;
   const selectedRun = selectedRunId ? (runs.find((run) => run.id === selectedRunId) ?? null) : null;
 
-  function deleteSelectedTurn() {
-    if (!selectedTurn) return;
-    const { turnIds, messageIds } = turnSubtree(index, selectedTurn.id);
-    const doomed = new Set(messageIds);
-    const runCount = runs.filter(
-      (run) => run.parentMessageId && doomed.has(run.parentMessageId),
-    ).length;
+  // 지금 되돌릴 수 있는 삭제 (이 세션에서 마지막으로 지운 것).
+  const undoable = useMemo(() => {
+    for (let at = deletions.length - 1; at >= 0; at -= 1) {
+      if (deletions[at].sessionId === activeSessionId) return deletions[at];
+    }
+    return null;
+  }, [deletions, activeSessionId]);
 
-    const descendants = turnIds.length - 1;
-    const detail = [
-      `이 턴${descendants > 0 ? `과 하위 ${descendants}개 턴` : ""}`,
-      `노드 ${messageIds.length}개`,
-      runCount > 0 ? `서브에이전트 기록 ${runCount}건` : null,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+  // 뿌리가 둘로 갈라지는 삭제는 막는다. 이유는 버튼 툴팁으로 그대로 보여준다.
+  const busy = running ? "턴이 진행 중입니다. 끝나거나 중지한 뒤에 하세요." : null;
+  const soloBlocker = busy ?? (selectedTurn ? soloDeleteBlocker(index, selectedTurn) : null);
 
-    if (!window.confirm(`${detail} 을(를) 삭제합니다. 되돌릴 수 없습니다.`)) return;
-
-    // 실행 기록을 먼저 지운다 — 노드가 먼저 사라지면 parentMessageId 가 끊겨 고아로 남는다.
-    void removeRunsForMessages(messageIds).then(() => removeTurn(selectedTurn.id));
+  /** 노드 목록을 지우고 딸린 실행·그래프를 정리한다. */
+  function remove(messageIds: string[], cascade: boolean, label: string) {
+    // 돌고 있는 서브에이전트는 먼저 멈춘다 — 노드가 사라져도 실행은 계속 돌기 때문이다.
+    cancelRunsForMessages(messageIds);
+    void removeNodes(messageIds, { cascade, label }).then(() => refreshRuns());
   }
+
+  /** 선택한 턴 하나만 도려낸다. 뒤에 이어지던 대화는 부모 턴에 그대로 붙는다. */
+  function deleteSelectedTurn() {
+    if (!selectedTurn || soloBlocker) return;
+    remove(
+      selectedTurn.nodes.map((node) => node.id),
+      false,
+      `턴 ${turnLabel(selectedTurn)}`,
+    );
+  }
+
+  /** 선택한 턴부터 그 아래 전부. 갈래째 걷어낼 때 쓴다. */
+  function deleteSelectedSubtree() {
+    if (!selectedTurn || busy) return;
+    const { turnIds, messageIds } = turnSubtree(index, selectedTurn.id);
+    const descendants = turnIds.length - 1;
+
+    // 한 턴짜리면 위 버튼과 결과가 같으니 묻지 않는다. 갈래를 통째로 걷어낼 때만 확인한다.
+    if (descendants > 0) {
+      const detail = `이 턴과 하위 ${descendants}개 턴 · 노드 ${messageIds.length}개`;
+      if (!window.confirm(`${detail} 을(를) 삭제합니다. [되돌리기] 로 되살릴 수 있지만 앱을 끄면 사라집니다.`)) {
+        return;
+      }
+    }
+
+    remove(messageIds, true, `턴 ${turnLabel(selectedTurn)} 아래 ${turnIds.length}개`);
+  }
+
+  const copySelectedTurn = useCallback(() => {
+    if (!selectedTurn) return;
+    const preview = selectedTurn.userText.replace(/\s+/g, " ").trim().slice(0, 20);
+    copyNodes(
+      selectedTurn.nodes.map((node) => node.id),
+      `턴 ${turnLabel(selectedTurn)}${preview ? ` · ${preview}` : ""}`,
+    );
+  }, [selectedTurn, copyNodes]);
+
+  /** 클립보드의 턴을 선택한 턴 뒤에 복제해 붙인다. 세션이 달라도 된다. */
+  const pasteIntoSelection = useCallback(() => {
+    if (!clipboard) return;
+    void pasteNodes(selectedTurn ? selectedTurn.leafId : null).then(() => refreshRuns());
+  }, [clipboard, selectedTurn, pasteNodes, refreshRuns]);
+
+  // 붙일 자리가 필요하다 — 빈 세션일 때만 자리 없이(=새 뿌리로) 붙일 수 있다.
+  const canPaste =
+    !running && Boolean(clipboard) && (selectedTurn != null || messages.length === 0);
+
+  /**
+   * Ctrl+C · Ctrl+V.
+   *
+   * 그래프 탭이 떠 있는 동안에만 듣는다 — 다른 탭을 보고 있으면 이 컴포넌트가 없다.
+   * 글자를 다루는 중이면(입력칸에 커서가 있거나 본문을 긁어 놓았으면) 그건 글자 복사다.
+   * 가로채면 채팅 내용을 복사하려던 손이 노드를 복사하게 된다 → 그대로 흘려보낸다.
+   */
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== "c" && key !== "v") return;
+
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("input, textarea, [contenteditable='true']")
+      ) {
+        return;
+      }
+      if (key === "c" && (window.getSelection()?.toString() ?? "") !== "") return;
+
+      if (key === "c") {
+        if (!selectedTurn) return;
+        event.preventDefault();
+        copySelectedTurn();
+      } else {
+        if (!canPaste) return;
+        event.preventDefault();
+        pasteIntoSelection();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedTurn, canPaste, copySelectedTurn, pasteIntoSelection]);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -220,6 +317,34 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
           {index.turns.length}개 턴 · {messages.length}노드
           {orphanCount > 0 && ` · 연결 끊긴 위임 ${orphanCount}건`}
         </span>
+
+        {clipboard && (
+          <span className="flex min-w-0 items-center gap-1 text-caption text-ink-subtle">
+            <span
+              className="max-w-56 truncate"
+              title={`복사해 둔 턴입니다. 붙여넣을 턴을 고르고 [붙여넣기] 를 누르세요 (${clipboard.messageIds.length}노드).`}
+            >
+              📋 {clipboard.label}
+            </span>
+            <button
+              className="rounded-sm px-1 transition-colors hover:bg-hover hover:text-ink"
+              title="복사해 둔 턴을 버립니다"
+              onClick={clearClipboard}
+            >
+              ✕
+            </button>
+          </span>
+        )}
+
+        {undoable && (
+          <Button
+            disabled={running}
+            onClick={() => void undoDelete().then(() => refreshRuns())}
+            title="방금 지운 노드를 원래 자리로 되살립니다. 앱을 끄면 되돌릴 수 없습니다."
+          >
+            ↩ 삭제 되돌리기 · {undoable.label}
+          </Button>
+        )}
 
         {selectedRun ? (
           <div className="ml-auto flex items-center gap-1">
@@ -233,27 +358,48 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
         ) : (
           <div className="ml-auto flex items-center gap-1">
             <Button
-              onClick={() => selectedTurn && setActiveParent(selectedTurn.branchPointId)}
+              onClick={copySelectedTurn}
               disabled={!selectedTurn}
-              title="이 턴이 갈라져 나온 지점으로 돌아갑니다. 같은 질문을 다시 하면 형제 턴이 생깁니다."
+              title="선택한 턴을 클립보드에 담습니다 (Ctrl+C). 다른 세션에도 붙여넣을 수 있습니다."
             >
-              ⑂ 이 턴 다시 질문
+              복사
             </Button>
-            <Button
-              onClick={() => selectedTurn && void branchFrom(selectedTurn.leafId)}
-              disabled={!selectedTurn}
-              title="선택한 턴까지를 복제해 새 세션을 만듭니다"
+            {/* 비활성 버튼에는 툴팁이 뜨지 않는 웹뷰가 있어 이유는 껍데기에 건다. */}
+            <span
+              title={
+                busy ??
+                (clipboard
+                  ? "복사한 턴을 선택한 턴 뒤에 복제해 붙입니다 (Ctrl+V). 토큰·컨텍스트 기록은 복제하지 않습니다."
+                  : "먼저 턴을 복사하세요 (Ctrl+C).")
+              }
             >
-              ⑂ 새 세션으로 분기
-            </Button>
-            <Button
-              variant="danger"
-              onClick={deleteSelectedTurn}
-              disabled={!selectedTurn}
-              title="선택한 턴과 그 아래 모든 턴을 삭제합니다"
+              <Button onClick={pasteIntoSelection} disabled={!canPaste}>
+                붙여넣기
+              </Button>
+            </span>
+            <span
+              title={
+                soloBlocker ??
+                "선택한 턴만 지웁니다. 뒤에 이어지던 대화는 부모 턴에 그대로 이어 붙습니다."
+              }
             >
-              턴 삭제
-            </Button>
+              <Button
+                variant="danger"
+                onClick={deleteSelectedTurn}
+                disabled={!selectedTurn || Boolean(soloBlocker)}
+              >
+                이 턴만 삭제
+              </Button>
+            </span>
+            <span title={busy ?? "선택한 턴과 그 아래로 갈라진 모든 턴을 함께 지웁니다."}>
+              <Button
+                variant="danger"
+                onClick={deleteSelectedSubtree}
+                disabled={!selectedTurn || Boolean(busy)}
+              >
+                아래까지 삭제
+              </Button>
+            </span>
           </div>
         )}
       </div>

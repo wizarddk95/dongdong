@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTurns, siblingTurns, toBubbles, turnSubtree } from "@/lib/turns";
+import {
+  buildTurns,
+  siblingTurns,
+  soloDeleteBlocker,
+  toBubbles,
+  turnLabel,
+  turnSubtree,
+} from "@/lib/turns";
 import type { Message, MessageRole } from "@/types/ipc";
 
 function node(
@@ -146,6 +153,38 @@ describe("turnSubtree", () => {
   it("없는 턴 id 는 빈 결과", () => {
     const index = buildTurns(WITH_TOOL);
     expect(turnSubtree(index, "nope")).toEqual({ turnIds: [], messageIds: [] });
+  });
+});
+
+describe("turnLabel", () => {
+  it("앵커 노드 id 앞 8자 — 순번과 무관하다", () => {
+    const index = buildTurns(WITH_TOOL);
+    const turn = index.byId.get("u2")!;
+
+    expect(turnLabel(turn)).toBe("u2");
+    // 같은 턴을 다른 자리(seq)로 옮겨도 이름은 그대로여야 한다.
+    expect(turnLabel({ ...turn, seq: 99 })).toBe("u2");
+  });
+});
+
+describe("soloDeleteBlocker", () => {
+  it("중간 턴은 혼자 지울 수 있다 (뒤 대화는 부모에 이어 붙는다)", () => {
+    const index = buildTurns(WITH_TOOL);
+    expect(soloDeleteBlocker(index, index.byId.get("u1")!)).toBeNull();
+    expect(soloDeleteBlocker(index, index.byId.get("u2")!)).toBeNull();
+  });
+
+  it("갈래가 둘 이상인 루트 턴은 막는다 — 뿌리가 여러 개가 된다", () => {
+    const forked = [
+      ...WITH_TOOL,
+      node("u3", "a2", 7, "user"), // u2 와 같은 지점에서 갈라진 형제 턴
+      node("a4", "u3", 8, "assistant"),
+    ];
+    const index = buildTurns(forked);
+
+    expect(soloDeleteBlocker(index, index.byId.get("u1")!)).toContain("뿌리");
+    // 루트가 아닌 턴은 지워도 뿌리 수가 그대로다.
+    expect(soloDeleteBlocker(index, index.byId.get("u2")!)).toBeNull();
   });
 });
 

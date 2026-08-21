@@ -127,6 +127,42 @@ pub struct MessagePatch {
     pub status: Option<String>,
 }
 
+/// 지워진 노드를 건너뛰고 부모가 바뀐 자식 하나.
+///
+/// 턴 하나만 지울 때 그 아래 대화가 잘려 나가지 않도록 살아남은 조상에 이어 붙인다.
+/// 되돌리기가 원래 부모를 알아야 하므로 바뀌기 **전** 값도 함께 담는다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reattachment {
+    pub message_id: String,
+    pub from_parent_id: Option<String>,
+    pub to_parent_id: Option<String>,
+}
+
+/// 노드가 사라져 연결이 끊긴 서브에이전트 실행.
+///
+/// 실행 기록 자체는 지우지 않는다 — 실제로 쓴 토큰이라 지우면 세션 비용이 조용히 줄어든다.
+/// (`agent_runs.parent_message_id` 는 ON DELETE SET NULL 이라 링크만 끊긴다.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetachedRun {
+    pub run_id: String,
+    pub parent_message_id: String,
+}
+
+/// 노드 삭제 결과. **되돌리기에 필요한 것을 전부** 담는다.
+///
+/// 프론트가 이 값을 그대로 들고 있다가 `restore_messages` 로 돌려보내면
+/// 지워진 노드가 원래 id·seq 로 되살아나고 자식들의 부모도 제자리로 돌아간다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteOutcome {
+    /// 지워진 노드 원문 (seq 오름차순 — 되돌릴 때 부모가 먼저 들어가야 한다)
+    pub removed: Vec<Message>,
+    pub reattached: Vec<Reattachment>,
+    pub detached_runs: Vec<DetachedRun>,
+}
+
 /// 에이전트 메모리. 프로젝트 전역(`project`) 또는 세션 한정(`session`) 으로 축적된다.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
