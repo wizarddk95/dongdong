@@ -74,6 +74,15 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
   그래서 카탈로그의 `cacheWrite` 는 `null`(무료)이 아니라 입력가와 같은 값이다. 3.1 Pro 는
   프롬프트 200K 초과 시 요청 전체가 상위 구간 요율 — OpenAI 272K 와 같은 규칙이라
   `longContextThresholdTokens` 를 그대로 쓴다.
+- **Gemini 의 호환 계층은 도구 호출 청크에 `index` 를 안 넣는다**. OpenAI 본가는 스트리밍
+  `tool_calls[].index` 를 항상 보내고(같은 번호의 조각을 이어 붙여 인자 문자열을 만드는 구조라
+  그게 스트림의 키다) `@ai-sdk/openai` 의 청크 스키마도 **필수 number** 로 본다. 구글은 도구 호출을
+  한 청크에 통째로 실으면서 이 필드를 빼먹는다 → 도구를 부르는 순간 `Type validation failed …
+  expected number, received undefined` 로 턴이 통째로 날아간다(본문만 스트리밍하는 대화는 멀쩡해서
+  "Gemini 는 되는데 도구만 안 된다" 로 보인다). `lib/ai/sseRepair.ts` 가 응답 SSE 를 지나가며 빠진
+  번호만 채운다 — **호출 id 기준 등장 순서**로 매기는 게 핵심이다(전부 0 으로 채우면 한 턴에 도구를
+  둘 이상 부를 때 SDK 가 서로 다른 호출을 한 호출의 조각으로 이어 붙인다). 같은 이유로 청크 경계가
+  줄 한복판에 떨어질 수 있으니 줄 단위 버퍼링이 필요하고, 손대지 않는 줄은 원문 바이트 그대로 흘린다.
 - **로컬 모델(`local:` 공급자)은 `createOpenAI(...).chat()` 로 부른다**. 기본 팩토리(`createOpenAI(...)(id)`)는
   Responses API 로 가는데 Ollama/LM Studio 는 `/v1/chat/completions` 만 구현했다. 키가 비면 SDK 가 예외를 내므로
   자리채움 키를 넣는다. 자세한 운용은 `docs/local-llm.md`.
@@ -116,6 +125,7 @@ src/
   lib/theme.ts          테마 결정(순수) + <html data-theme> 적용. 색값은 안 갖는다
   lib/useResolvedTheme.ts  지금 적용된 테마를 React 로 (React Flow 처럼 JS 로 명암을 넘겨야 하는 곳만)
   lib/ai/abort.ts       도구 실행에 중단 붙이기 (ToolSet 래퍼)
+  lib/ai/sseRepair.ts   OpenAI 호환 SSE 보정 (Gemini 가 빠뜨리는 tool_calls index 채우기)
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입 + 로컬 서버(OpenAI 호환) 탐색
   lib/ai/usage.ts       토큰 사용량 정규화 + 요금 추정 + 컨텍스트 잔량 (순수 파생)
   lib/ai/runner.ts      streamText 한 턴 (DB 안 건드림) + tool 파트 변환

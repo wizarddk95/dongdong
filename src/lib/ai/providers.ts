@@ -17,6 +17,8 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { LanguageModel } from "ai";
 
+import { withSseRepair } from "@/lib/ai/sseRepair";
+
 export type ProviderId = "anthropic" | "openai" | "google" | "local";
 
 /**
@@ -111,6 +113,13 @@ export interface ModelOption {
  * `ReadableStream` 이므로 SSE 토큰 스트리밍이 그대로 동작한다.
  */
 const localFetch = tauriFetch as unknown as typeof globalThis.fetch;
+
+/**
+ * 구글의 OpenAI 호환 계층은 도구 호출 청크에 `tool_calls[].index` 를 넣지 않는데,
+ * `@ai-sdk/openai` 의 스키마는 그걸 필수로 본다 → 도구를 부르는 순간 타입 검증 실패로
+ * 턴이 통째로 날아간다. 응답 스트림을 지나가며 빠진 번호만 채워 준다(`lib/ai/sseRepair.ts`).
+ */
+const geminiFetch = withSseRepair(localFetch);
 
 /**
  * Tauri HTTP 플러그인(Rust)은 요청마다 웹뷰 주소로 `Origin` 헤더를 강제로 붙인다
@@ -958,7 +967,7 @@ export function resolveModel(id: string, credentials: ProviderCredentials): Lang
         name: "google",
         apiKey,
         baseURL: credentials.googleBaseUrl?.trim() || GEMINI_BASE_URL,
-        fetch: localFetch,
+        fetch: geminiFetch,
       }).chat(modelId);
     }
     case "local": {
