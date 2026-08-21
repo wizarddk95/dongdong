@@ -11,13 +11,14 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 283 / cargo 45. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 310 / cargo 45. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
 
 React 19 · Vite 6 · TypeScript · Tailwind v4 · Zustand 5 · React Flow 12 · zod 4 ·
-**Vercel AI SDK Core v7** (`ai` + `@ai-sdk/anthropic` + `@ai-sdk/openai`) · Tauri 2 (Rust, rusqlite bundled).
+**Vercel AI SDK Core v7** (`ai` + `@ai-sdk/anthropic` + `@ai-sdk/openai`) · Tauri 2 (Rust, rusqlite bundled) ·
+KaTeX(채팅 본문의 수식 렌더링에만 쓴다 — 마크다운 파서 자체는 여전히 의존성이 없다).
 LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText` 직접 호출.
 
 ## 절대 규칙
@@ -94,6 +95,14 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - API 키·MCP 서버 목록은 프로젝트 DB 가 아니라 **OS 앱 설정 디렉터리의 `settings.json`**.
 - Bash 툴에서 cargo 를 쓰려면 `export PATH="$USERPROFILE/.cargo/bin:$PATH"`.
 - `pnpm tauri dev` 실행 중에 Rust 를 고치면 exe 교체 실패(os error 5)로 워처가 죽는다 → 앱 프로세스를 종료하고 다시 띄운다. 종료 후 포트 1420 을 문 vite 프로세스가 남기도 한다.
+- **CSS 의 `@import` 를 거치면 `url()` 이 되쓰인다**. Tailwind(v4)가 `@import` 를 인라인하면서
+  경로를 **그 파일 기준 상대 경로로** 바꾸는데, 패키지 지정자(`katex/dist/fonts/…`)까지 상대 경로로
+  보고 `./styles/katex/dist/fonts/…` 로 만들어 버린다 → 빌드는 "didn't resolve" 경고만 흘리고 성공하고,
+  실행하면 수식 서체만 조용히 빠진다. 그래서 KaTeX 사본은 `index.css` 가 아니라 **`main.tsx` 에서
+  직접 import** 한다(진입점 CSS 는 이 되쓰기를 안 거친다).
+- **KaTeX 의 CSS 를 그대로 쓰면 폰트가 세 벌 실린다**. @font-face 마다 woff2·woff·ttf 를 걸어 두어
+  브라우저는 woff2 만 쓰는데 번들러는 60개(1.2MB)를 전부 싣는다 → `scripts/gen-katex-css.mjs` 가
+  woff2 만 남긴 사본을 만든다(292KB). katex 를 올리면 이 스크립트를 다시 돌린다.
 - **Tailwind v4 의 important 는 접미사**(`bg-x!`)다. v3 문법인 `!bg-x` 는 클래스를 아예 안 만든다 —
   오타와 똑같이 **조용히 죽어서** 타입체크도 테스트도 못 잡는다. 색이 안 먹으면 빌드된 CSS 에
   그 클래스가 있는지부터 본다(`grep -o 'bg-hairline[^{]*{[^}]*}' dist/assets/index-*.css`).
@@ -121,7 +130,8 @@ src/
   lib/turns.ts          노드 체인 → 턴 묶음 + 채팅 말풍선 접기(toBubbles). 순수 파생, 스키마 무관
   lib/layout.ts         왼→오른쪽 tidy tree 좌표 (턴 그래프·서브에이전트 레인)
   lib/agentRuns.ts      서브에이전트 상태 색·경과 시간 (트리 노드와 대시보드 공용)
-  lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음)
+  lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음). 수식은 구분 기호만 걷어 원문을 넘긴다
+  styles/katex.css      KaTeX 스타일시트 사본 — 생성 파일(`scripts/gen-katex-css.mjs`), 직접 고치지 않는다
   lib/theme.ts          테마 결정(순수) + <html data-theme> 적용. 색값은 안 갖는다
   lib/useResolvedTheme.ts  지금 적용된 테마를 React 로 (React Flow 처럼 JS 로 명암을 넘겨야 하는 곳만)
   lib/ai/abort.ts       도구 실행에 중단 붙이기 (ToolSet 래퍼)

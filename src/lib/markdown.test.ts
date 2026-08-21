@@ -11,6 +11,8 @@ function flatten(nodes: InlineNode[]): string {
           return node.value;
         case "code":
           return `code(${node.value})`;
+        case "math":
+          return `math(${node.value})`;
         case "strong":
           return `b(${flatten(node.children)})`;
         case "em":
@@ -169,5 +171,101 @@ describe("parseMarkdown", () => {
   it("HTML 은 해석하지 않고 글자로 남긴다", () => {
     const blocks = parseMarkdown("<script>alert(1)</script>");
     expect(text(blocks[0])).toBe("<script>alert(1)</script>");
+  });
+});
+
+describe("수식", () => {
+  it("인라인 수식은 `$…$` 와 `\\(…\\)` 를 모두 받는다", () => {
+    expect(flatten(parseInline("답은 $E = mc^2$ 이다"))).toBe("답은 math(E = mc^2) 이다");
+    expect(flatten(parseInline("답은 \\(E = mc^2\\) 이다"))).toBe("답은 math(E = mc^2) 이다");
+  });
+
+  it("수식 안의 문법은 마크다운으로 해석하지 않는다", () => {
+    expect(flatten(parseInline("$a_1 + a_2$"))).toBe("math(a_1 + a_2)");
+    expect(flatten(parseInline("$\\frac{1}{2}$"))).toBe("math(\\frac{1}{2})");
+    // 별표가 짝을 이뤄도 강조로 끌려가면 안 된다.
+    expect(flatten(parseInline("$a * b * c$"))).toBe("math(a * b * c)");
+  });
+
+  it("통화 표기는 수식이 아니다", () => {
+    expect(flatten(parseInline("$5 와 $10 을 더하면"))).toBe("$5 와 $10 을 더하면");
+    expect(flatten(parseInline("가격 $ 5 $ 원"))).toBe("가격 $ 5 $ 원");
+  });
+
+  it("통화가 뒤따르는 수식과 짝지어지지 않는다", () => {
+    expect(flatten(parseInline("가격은 $5 와 $10 이다. 합은 $x + y$ 이다"))).toBe(
+      "가격은 $5 와 $10 이다. 합은 math(x + y) 이다",
+    );
+  });
+
+  it("`\\$` 는 달러 기호 그대로다", () => {
+    expect(flatten(parseInline("\\$100 과 \\$200"))).toBe("$100 과 $200");
+  });
+
+  it("인라인 코드가 수식보다 세다", () => {
+    expect(flatten(parseInline("`$x$`"))).toBe("code($x$)");
+  });
+
+  it("짝이 없으면 글자로 남는다", () => {
+    expect(flatten(parseInline("여는 $ 만 있다"))).toBe("여는 $ 만 있다");
+    expect(flatten(parseInline("\\(닫히지 않음"))).toBe("(닫히지 않음");
+  });
+
+  it("한 줄짜리 디스플레이 수식", () => {
+    expect(parseMarkdown("$$x^2 + y^2 = z^2$$")).toEqual([
+      { type: "math", value: "x^2 + y^2 = z^2", closed: true },
+    ]);
+  });
+
+  it("여러 줄 디스플레이 수식은 구분 기호만 걷어 낸다", () => {
+    const blocks = parseMarkdown("$$\n\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}\n$$");
+    expect(blocks).toEqual([
+      {
+        type: "math",
+        value: "\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}",
+        closed: true,
+      },
+    ]);
+  });
+
+  it("`\\[ … \\]` 도 디스플레이 수식이다", () => {
+    expect(parseMarkdown("\\[\n\\int_0^1 x\\,dx = \\frac12\n\\]")).toEqual([
+      { type: "math", value: "\\int_0^1 x\\,dx = \\frac12", closed: true },
+    ]);
+  });
+
+  it("닫히지 않은 디스플레이 수식은 스트리밍 중으로 본다", () => {
+    expect(parseMarkdown("$$\n\\frac{1}{")).toEqual([
+      { type: "math", value: "\\frac{1}{", closed: false },
+    ]);
+  });
+
+  it("여는 줄 뒤에 글자가 남으면 블록이 아니라 문단이다", () => {
+    const blocks = parseMarkdown("$$x$$ 가 답이다");
+    expect(blocks).toHaveLength(1);
+    expect(text(blocks[0])).toBe("math(x) 가 답이다");
+  });
+
+  it("닫는 줄 뒤에 남은 글자는 문단으로 잇는다", () => {
+    const blocks = parseMarkdown("$$\nx\n$$ 이 답이다");
+    expect(blocks[0]).toEqual({ type: "math", value: "x", closed: true });
+    expect(text(blocks[1])).toBe("이 답이다");
+  });
+
+  it("문단 중간의 디스플레이 수식은 문단을 끊는다", () => {
+    const blocks = parseMarkdown("앞 문장\n$$\nx = 1\n$$\n뒤 문장");
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "math", "paragraph"]);
+  });
+
+  it("목록 항목 안의 디스플레이 수식도 들여쓰기를 벗는다", () => {
+    const blocks = parseMarkdown("- 항목\n\n  $$\n  x = 1\n  $$");
+    expect(blocks[0].type).toBe("list");
+    const item = (blocks[0] as Extract<BlockNode, { type: "list" }>).items[0];
+    expect(item.children.at(-1)).toEqual({ type: "math", value: "x = 1", closed: true });
+  });
+
+  it("코드블록 안의 `$$` 는 글자다", () => {
+    const blocks = parseMarkdown("```\n$$x$$\n```");
+    expect(blocks).toEqual([{ type: "codeBlock", lang: null, value: "$$x$$", closed: true }]);
   });
 });

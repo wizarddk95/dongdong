@@ -2,14 +2,16 @@
  * 채팅 본문용 초경량 마크다운 파서.
  *
  * 외부 라이브러리를 쓰지 않는다(기술 스택 고정). LLM 이 실제로 뱉는 문법
- * — 제목 · 강조 · 코드/코드블록 · 목록 · 인용 · 표 · 링크 — 만 다룬다.
- * 스트리밍 중 잘린 코드펜스도 코드블록으로 보여야 하므로 `closed` 를 남긴다.
+ * — 제목 · 강조 · 코드/코드블록 · 목록 · 인용 · 표 · 링크 · 수식 — 만 다룬다.
+ * 스트리밍 중 잘린 코드펜스·수식도 제 모습으로 보여야 하므로 `closed` 를 남긴다.
+ * 수식은 구분 기호만 걷어 내고 원문을 그대로 넘긴다 — LaTeX 해석은 그리는 쪽(KaTeX) 일이다.
  * 원문 HTML 은 파싱하지 않고 텍스트로 흘려보낸다(React 가 그대로 이스케이프).
  */
 
 export type InlineNode =
   | { type: "text"; value: string }
   | { type: "code"; value: string }
+  | { type: "math"; value: string }
   | { type: "strong"; children: InlineNode[] }
   | { type: "em"; children: InlineNode[] }
   | { type: "del"; children: InlineNode[] }
@@ -29,18 +31,21 @@ export type BlockNode =
   | { type: "paragraph"; children: InlineNode[] }
   | { type: "heading"; level: number; children: InlineNode[] }
   | { type: "codeBlock"; lang: string | null; value: string; closed: boolean }
+  | { type: "math"; value: string; closed: boolean }
   | { type: "list"; ordered: boolean; start: number; tight: boolean; items: ListItem[] }
   | { type: "blockquote"; children: BlockNode[] }
   | { type: "table"; align: Align[]; header: InlineNode[][]; rows: InlineNode[][][] }
   | { type: "hr" };
 
-const ESCAPABLE = "\\`*_{}[]()#+-.!|~<>";
+const ESCAPABLE = "$\\`*_{}[]()#+-.!|~<>";
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*(.*)$/;
 const HEADING_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
 const HR_RE = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 const QUOTE_RE = /^ {0,3}>[ \t]?/;
 const LIST_RE = /^( {0,3})([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/;
 const TASK_RE = /^\[([ xX])\][ \t]+/;
+/** 디스플레이 수식의 여는 쪽. 닫는 짝은 `matchMathBlock()` 이 줄을 넘어가며 찾는다. */
+const MATH_OPEN_RE = /^ {0,3}(\$\$|\\\[)/;
 
 function isWordChar(ch: string | undefined): boolean {
   return ch != null && /[\p{L}\p{N}]/u.test(ch);
@@ -58,7 +63,8 @@ function startsBlock(line: string): boolean {
     HEADING_RE.test(line) ||
     HR_RE.test(line) ||
     QUOTE_RE.test(line) ||
-    LIST_RE.test(line)
+    LIST_RE.test(line) ||
+    isMathBlockStart(line)
   );
 }
 
@@ -93,6 +99,15 @@ function parseBlocks(lines: string[]): BlockNode[] {
         i++;
       }
       out.push({ type: "codeBlock", lang, value: body.join("\n"), closed });
+      continue;
+    }
+
+    // 디스플레이 수식 — 코드펜스보다 약하고(코드 안의 `$$` 는 글자다) 나머지보다 세다.
+    const math = matchMathBlock(lines, i);
+    if (math) {
+      out.push(math.node);
+      i = math.next;
+      if (math.tail) out.push({ type: "paragraph", children: parseInline(math.tail) });
       continue;
     }
 
@@ -151,6 +166,75 @@ function parseBlocks(lines: string[]): BlockNode[] {
   }
 
   return out;
+}
+
+/**
+ * `$$ … $$` / `\[ … \]` 를 한 블록으로 떼어 낸다.
+ *
+ * 여는 줄 뒤에 글자가 남으면(`$$x$$ 는 …`) 블록이 아니라 문단이므로 null 을 준다 —
+ * 그 경우는 인라인 수식이 받는다. 닫는 짝이 없으면(스트리밍 중) 남은 줄 전부를 수식으로
+ * 보되 `closed: false` 로 표시한다.
+ */
+function matchMathBlock(
+  lines: string[],
+  start: number,
+): { node: BlockNode; next: number; tail?: string } | null {
+  const open = MATH_OPEN_RE.exec(lines[start]);
+  if (!open) return null;
+
+  const closer = open[1] === "$$" ? "$$" : "\\]";
+  const first = lines[start].slice(open[0].length);
+  const inFirst = first.indexOf(closer);
+
+  // 한 줄로 끝나는 경우
+  if (inFirst >= 0) {
+    if (first.slice(inFirst + closer.length).trim()) return null;
+    return {
+      node: { type: "math", value: first.slice(0, inFirst).trim(), closed: true },
+      next: start + 1,
+    };
+  }
+
+  const body = first.trim() ? [first] : [];
+  let i = start + 1;
+  while (i < lines.length) {
+    const at = lines[i].indexOf(closer);
+    if (at < 0) {
+      body.push(lines[i]);
+      i++;
+      continue;
+    }
+    if (lines[i].slice(0, at).trim()) body.push(lines[i].slice(0, at));
+    const tail = lines[i].slice(at + closer.length).trim();
+    return {
+      node: { type: "math", value: dedent(body).join("\n").trim(), closed: true },
+      next: i + 1,
+      tail: tail || undefined,
+    };
+  }
+
+  return {
+    node: { type: "math", value: dedent(body).join("\n").trim(), closed: false },
+    next: lines.length,
+  };
+}
+
+/** 블록 안에서만 쓰는 공통 들여쓰기 제거 — 목록 안의 수식이 통째로 밀려 있어도 정렬이 산다. */
+function dedent(lines: string[]): string[] {
+  const indents = lines
+    .filter((line) => line.trim())
+    .map((line) => line.length - line.trimStart().length);
+  const pad = indents.length ? Math.min(...indents) : 0;
+  return pad ? lines.map((line) => line.slice(pad)) : lines;
+}
+
+/** `startsBlock()` 과 `matchMathBlock()` 이 같은 판정을 쓰도록 한 곳에 둔다. */
+function isMathBlockStart(line: string): boolean {
+  const open = MATH_OPEN_RE.exec(line);
+  if (!open) return false;
+  const rest = line.slice(open[0].length);
+  const at = rest.indexOf(open[1] === "$$" ? "$$" : "\\]");
+  return at < 0 || !rest.slice(at + 2).trim();
 }
 
 function parseList(lines: string[], start: number): { node: BlockNode; next: number } {
@@ -269,6 +353,28 @@ export function parseInline(source: string): InlineNode[] {
   while (i < source.length) {
     const ch = source[i];
 
+    // `\(…\)` · `\[…\]` — 이스케이프 분기보다 먼저 봐야 한다(안 그러면 여는 기호가 글자로 풀린다).
+    if (ch === "\\" && (source[i + 1] === "(" || source[i + 1] === "[")) {
+      const math = matchLatexMath(source, i);
+      if (math) {
+        flush();
+        nodes.push({ type: "math", value: math.value });
+        i = math.end;
+        continue;
+      }
+    }
+
+    // `$…$` · `$$…$$`
+    if (ch === "$") {
+      const math = matchDollarMath(source, i);
+      if (math) {
+        flush();
+        nodes.push({ type: "math", value: math.value });
+        i = math.end;
+        continue;
+      }
+    }
+
     if (ch === "\\" && ESCAPABLE.includes(source[i + 1] ?? "")) {
       text += source[i + 1];
       i += 2;
@@ -358,6 +464,52 @@ export function parseInline(source: string): InlineNode[] {
 
   flush();
   return nodes;
+}
+
+/** `\(…\)` / `\[…\]`. 닫는 짝이 없으면 null — 그러면 여느 이스케이프로 되돌아간다. */
+function matchLatexMath(source: string, start: number): { value: string; end: number } | null {
+  const closer = source[start + 1] === "(" ? "\\)" : "\\]";
+  const at = source.indexOf(closer, start + 2);
+  if (at < 0) return null;
+  const value = source.slice(start + 2, at).trim();
+  return value ? { value, end: at + 2 } : null;
+}
+
+/**
+ * `$…$` / `$$…$$`.
+ *
+ * 통화 표기를 수식으로 오인하지 않는 것이 전부다("$5 와 $10 을"). 여는 `$` 뒤에 공백이
+ * 오면 안 되고, 닫는 `$` 앞에 공백이 오거나 뒤에 숫자가 붙으면 짝으로 안 친다.
+ * 빈 줄을 건너뛰지도 않는다 — 문단을 넘어가며 삼키면 본문이 통째로 사라진다.
+ *
+ * 첫 후보가 조건에 걸리면 **거기서 포기한다**(다음 `$` 를 찾아 나서지 않는다).
+ * 계속 찾게 두면 "가격은 $5 와 $10 이다. 합은 $x$ 이다" 에서 맨 앞 `$` 가 저 뒤 수식의
+ * 닫는 `$` 와 짝을 지어 문장 하나를 통째로 삼킨다. 수식 안에 맨몸 `$` 가 들어갈 일은
+ * 없으므로(넣으려면 `\$`) 잃는 것도 없다.
+ */
+function matchDollarMath(source: string, start: number): { value: string; end: number } | null {
+  const size = source[start + 1] === "$" ? 2 : 1;
+  const from = start + size;
+  if (!source[from] || /\s/.test(source[from])) return null;
+
+  for (let i = from; i < source.length; i++) {
+    if (source[i] === "\\") {
+      i++;
+      continue;
+    }
+    if (source[i] === "\n" && source[i + 1] === "\n") return null;
+    if (source[i] !== "$") continue;
+
+    let run = 0;
+    while (source[i + run] === "$") run++;
+    if (run < size) continue;
+    if (/\s/.test(source[i - 1] ?? " ")) return null;
+    if (size === 1 && /\d/.test(source[i + 1] ?? "")) return null;
+
+    const value = source.slice(from, i).trim();
+    return value ? { value, end: i + size } : null;
+  }
+  return null;
 }
 
 function matchCodeSpan(source: string, start: number): { value: string; end: number } | null {

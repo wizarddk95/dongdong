@@ -1,3 +1,4 @@
+import katex from "katex";
 import { Fragment, memo, useMemo, useState } from "react";
 
 import { parseMarkdown, type BlockNode, type InlineNode, type ListItem } from "@/lib/markdown";
@@ -56,6 +57,9 @@ function Block({ node, dim }: { node: BlockNode; dim: boolean }) {
 
     case "codeBlock":
       return <CodeBlock lang={node.lang} value={node.value} />;
+
+    case "math":
+      return <MathBlock value={node.value} closed={node.closed} />;
 
     case "list":
       return <List node={node} dim={dim} />;
@@ -158,6 +162,71 @@ function Table({ node }: { node: Extract<BlockNode, { type: "table" }> }) {
   );
 }
 
+/**
+ * 수식을 KaTeX 로 그린다.
+ *
+ * `dangerouslySetInnerHTML` 을 쓰지만 원문을 그대로 붓는 게 아니라 KaTeX 가 만든 것만
+ * 넣는다 — `trust` 기본값이 꺼져 있어 `\href` 같은 바깥으로 나가는 명령은 애초에 무시된다.
+ * 실패는 예외로 받는다(`throwOnError`) — 켜 두면 KaTeX 가 제 빨간색을 박아 넣어
+ * 테마를 안 따라간다. 대신 원문을 그대로 보여 주고 이유를 툴팁에 담는다.
+ */
+function renderMath(value: string, display: boolean): { html: string } | { error: string } {
+  try {
+    return {
+      html: katex.renderToString(value, {
+        displayMode: display,
+        throwOnError: true,
+        // LLM 출력엔 수식 안에 한글·유니코드가 섞이기 마련이라 경고까지 올리지 않는다.
+        strict: false,
+      }),
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function MathBlock({ value, closed }: { value: string; closed: boolean }) {
+  // 스트리밍 중(아직 안 닫힘)엔 반쪽 LaTeX 이라 그리려 들지 않는다 — 매 토큰 오류가 번쩍인다.
+  const result = useMemo(() => (closed ? renderMath(value, true) : null), [value, closed]);
+
+  if (!result || "error" in result) {
+    return (
+      <pre
+        className="overflow-x-auto rounded-md border border-hairline bg-surface-1 px-3 py-2 font-mono text-caption text-ink-muted"
+        title={result?.error}
+      >
+        {value}
+      </pre>
+    );
+  }
+
+  // KaTeX 가 `.katex-display` 에 1em 세로 여백을 박아 넣는다 — 블록 간격은 본문 쪽
+  // `space-y-*` 하나로 잡아야 하므로 걷어낸다.
+  return (
+    <div
+      className="overflow-x-auto py-1 [&_.katex-display]:my-0"
+      dangerouslySetInnerHTML={{ __html: result.html }}
+    />
+  );
+}
+
+function MathInline({ value }: { value: string }) {
+  const result = useMemo(() => renderMath(value, false), [value]);
+
+  if ("error" in result) {
+    return (
+      <code
+        className="rounded-xs bg-error-subtle px-1.5 py-[1px] font-mono text-caption text-error"
+        title={result.error}
+      >
+        {value}
+      </code>
+    );
+  }
+
+  return <span dangerouslySetInnerHTML={{ __html: result.html }} />;
+}
+
 function CodeBlock({ lang, value }: { lang: string | null; value: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -206,6 +275,9 @@ function InlineNodeView({ node }: { node: InlineNode }) {
 
     case "break":
       return <br />;
+
+    case "math":
+      return <MathInline value={node.value} />;
 
     case "code":
       return (
