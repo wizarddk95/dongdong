@@ -8,15 +8,16 @@
 
 ---
 
-## 현재 상태: Phase 4 완료
+## 무엇이 되는가
 
-| Phase | 내용 | 상태 |
-| --- | --- | --- |
-| 1 | Tauri 스캐폴딩, SQLite 워크스페이스, IPC 브릿지 | ✅ |
-| 2 | Zustand + Vercel AI SDK Core, React Flow 노드 트리, 타임머신 분기 | ✅ |
-| 3 | Skill 매핑(IPC → 도구), Context / Memory Inspector | ✅ |
-| 4 | `delegate_task` 서브에이전트 + 실행 대시보드 | ✅ |
-| 4-α | MCP stdio 브리지 (외부 서버 도구 병합) | ✅ |
+- **대화가 트리다.** 턴 단위 노드 그래프에서 아무 자리나 골라 이어 붙이고, 턴 하나만 도려내고,
+  되돌리고, 다른 자리·다른 세션으로 복사한다.
+- **모델 넷.** Anthropic · OpenAI · Google Gemini · **이 PC 에서 도는 OpenAI 호환 서버**(Ollama · LM Studio …).
+  `provider:modelId` 문자열 하나로 갈아 끼운다.
+- **도구는 확인 없이 바로 실행.** 파일 · 쉘 · 메모리 · 서브에이전트 위임, 그리고 MCP 서버가 내주는 도구.
+- **무엇이 나갔는지 숨기지 않는다.** 노드마다 그때 보낸 컨텍스트 원문 · 실측 토큰 · 요금,
+  그리고 "지금 [전송]을 누르면 얼마가 나가는가" 까지 화면에 적는다.
+- 라이트/다크 두 벌 테마. 색과 활자는 `src/index.css` 의 의미 토큰 한 곳에서만 나온다.
 
 ---
 
@@ -59,8 +60,9 @@ pnpm tauri:dev
 
 1. 상단 **[폴더 열기]** — 작업할 프로젝트 루트를 고른다.
    그 폴더에 `.agent_workspace/local.db` 가 생기고, 세션이 없으면 "새 대화"가 자동으로 만들어진다.
-2. 상단 **[설정]** — Anthropic 또는 OpenAI **API 키**를 넣고 모델을 고른다. 키가 없으면 대화가 되지 않는다.
-   같은 화면에서 스킬(도구) 토글과 MCP 서버도 정한다.
+2. 상단 **[설정]** — Anthropic · OpenAI · Google Gemini 중 쓸 곳의 **API 키**를 넣고 모델을 고른다.
+   셋 다 없어도 되지만 그때는 **로컬 모델 서버**를 대신 붙여야 한다 (아래 [로컬 오픈소스 모델](#로컬-오픈소스-모델)).
+   같은 화면에서 사고 강도 · 최대 스텝 · 스킬(도구) 토글 · 서브에이전트 · MCP 서버 · 테마도 정한다.
 3. 채팅창에 입력하면 시작. 좌측 사이드바의 **[+]** 로 세션을 더 만든다.
 
 앱은 마지막에 연 프로젝트를 기억하지 않는다. 실행할 때마다 **[폴더 열기]** 로 다시 연다.
@@ -99,29 +101,39 @@ cd src-tauri && cargo test --lib   # 백엔드 단위 테스트
 
 ```
 src/                        프론트엔드 (React + TS + Tailwind v4)
+  index.css                 디자인 토큰 (색 · 활자 · 모서리 · 그림자) — 라이트/다크 두 벌. 화면의 유일한 색 출처
   types/ipc.ts              Rust ↔ TS 타입 정의 (serde camelCase 와 1:1)
   lib/ipc.ts                invoke 래퍼 — 모든 IPC 는 이 모듈을 경유
   lib/tree.ts               parent_id → 트리 복원 (buildIndex / pathTo / siblingsOf)
-  lib/turns.ts              노드 체인 → 턴(질문+응답+도구 스텝) 묶음 — 순수 파생 계산
+  lib/turns.ts              노드 체인 → 턴(질문+응답+도구 스텝) 묶음 + 말풍선 접기 — 순수 파생 계산
   lib/layout.ts             왼→오른쪽 tidy tree 좌표 계산 (턴 그래프 · 서브에이전트 레인)
   lib/agentRuns.ts          서브에이전트 실행 표시용 공통 값 (상태 색 · 경과 시간)
   lib/markdown.ts           채팅 본문용 경량 마크다운 파서 (외부 의존성 없음)
-  lib/ai/providers.ts       다중 모델 라우팅 (`provider:modelId`) + Tauri fetch 주입
+  lib/theme.ts              테마 결정(순수) + <html data-theme> 적용 — 색값은 갖지 않는다
+  lib/useResolvedTheme.ts   지금 적용된 테마를 React 로 (React Flow 처럼 JS 로 명암을 넘겨야 하는 곳만)
+  lib/panelSize.ts          좌우 패널 폭 기억 · 클램프
+  lib/ai/providers.ts       모델 카탈로그 + `provider:modelId` 라우팅 + Tauri fetch 주입 + 로컬 서버 탐색
+  lib/ai/usage.ts           토큰 정규화 · 요금 추정 · 컨텍스트 잔량 환산 (순수 파생)
   lib/ai/runner.ts          streamText 한 턴 실행 (DB 는 건드리지 않음) + 도구 파트 변환
-  lib/ai/skills.ts          IPC 를 AI SDK 도구로 노출 (zod 스키마 + 설정 토글)
+  lib/ai/abort.ts           도구 실행을 중단 시그널과 경주시키는 ToolSet 래퍼
+  lib/ai/sseRepair.ts       OpenAI 호환 SSE 보정 (Gemini 가 빠뜨리는 tool_calls index 채우기)
+  lib/ai/skills.ts          IPC 를 AI SDK 도구로 노출 (zod 스키마 + 설정 토글 + delegate_task)
   lib/ai/subagent.ts        서브에이전트 한 명의 격리된 실행 루프
   lib/ai/mcp.ts             MCP 도구 → AI SDK dynamicTool 변환 (JSON Schema 그대로)
   lib/ai/instructions.ts    프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합
-  store/workspace.ts        프로젝트 / 세션 / 대화 트리 (DB 반영 상태)
+  store/workspace.ts        프로젝트 / 세션 / 대화 트리 (DB 반영 상태 + 삭제 되돌리기 스택)
   store/chat.ts             턴 실행 오케스트레이션 + 스트리밍 상태
   store/agents.ts           서브에이전트 인스턴스 (실행 + agent_runs 영속화)
   store/mcp.ts              MCP 서버 연결 상태 + 도구 병합
-  store/settings.ts         API 키 · 모델 · 시스템 프롬프트 · 스킬 토글
-  components/chat/          ChatPanel / MessageBubble (tool 노드 렌더 포함) / Markdown 렌더러
+  store/settings.ts         API 키 · 모델 · 사고 강도 · 시스템 프롬프트 · 스킬 토글 · 테마
+  components/chat/          ChatPanel / MessageBubble (tool 노드 흡수) / Markdown 렌더러
   components/flow/          FlowCanvas / TurnNode / AgentNode (대화 턴 그래프)
   components/inspect/       ContextModal / MemoryModal / JsonTree (투명성 UI)
   components/agents/        AgentDashboard (서브에이전트 칸반)
   components/mcp/           McpServers (서버 등록 · 연결 · 도구 목록)
+  components/Panel.tsx      공통 부품 (Button · Panel · Modal · Tag · Hint · 입력 크롬) — 새 UI 는 여기서 가져다 쓴다
+  components/UsageMeter.tsx 토큰 · 요금 · 컨텍스트 링 (채팅 / 턴 / 세션 공용)
+  components/ErrorBoundary.tsx  렌더 예외로 창이 새까매지는 것을 막는다
   components/               TopBar / SessionSidebar / SettingsModal / FileExplorer / ShellConsole
 
 src-tauri/src/
@@ -130,17 +142,20 @@ src-tauri/src/
   paths.rs                  크로스 플랫폼 경로 정규화 + 루트 밖 접근 차단
   state.rs                  열린 워크스페이스(프로젝트별 SQLite 커넥션) 보관
   db/schema.rs              마이그레이션 (PRAGMA user_version 기반)
-  db/models.rs              Project / Session / SessionOverview / Message 모델
+  db/models.rs              Project / Session / SessionOverview / Message / AgentRun 모델
   db/queries.rs             모든 SQL 은 여기로만
   commands/workspace.rs     open_project / close_project / system_info
-  commands/shell.rs         execute_shell_command (OS 분기 + 타임아웃)
+  commands/shell.rs         execute_shell_command / cancel_shell_command (OS 분기 · 타임아웃 · 출력 디코딩)
   commands/fs.rs            read_file / write_file / list_directory / ...
-  commands/session.rs       세션·메시지(노드) CRUD + branch_session
-  commands/settings.rs      앱 전역 설정 (API 키) — OS 설정 디렉터리의 settings.json
+  commands/session.rs       세션·메시지(노드) CRUD + 턴 삭제/복원/복사 + branch_session
+  commands/settings.rs      앱 전역 설정 (API 키 · MCP 서버 · 테마) — OS 설정 디렉터리의 settings.json
   commands/memory.rs        에이전트 메모리 CRUD (remember / recall 의 백엔드)
   commands/agent.rs         서브에이전트 실행 기록 (agent_runs)
   commands/mcp.rs           MCP 연결 IPC (모두 async + spawn_blocking)
   mcp.rs                    MCP stdio 클라이언트 (JSON-RPC 피어 + 프로세스 레지스트리)
+
+docs/design.md              디자인 규율 (토큰 · 테마 · 성격)
+docs/local-llm.md           로컬 오픈소스 모델 운용 (모델 선택 · 컨텍스트 · 부분 오프로드)
 ```
 
 ## 세션 목록
@@ -189,13 +204,25 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 `Vercel AI SDK Core` 의 `streamText` 를 직접 호출한다 (LangChain 같은 추상화 계층 없음).
 
 - 모델은 `"anthropic:claude-opus-5"` 처럼 `provider:modelId` 문자열 하나로 식별한다.
+  공급자는 `anthropic` · `openai` · `google` · `local` 넷이고, 목록·요율·컨텍스트 창은
+  `lib/ai/providers.ts` 의 `MODEL_CATALOG` 한 곳에 있다. 카탈로그에 없는 모델도 [직접 입력] 으로 부를 수 있다.
 - **웹뷰의 기본 `fetch` 를 쓰지 않는다.** Anthropic 은 브라우저 직접 호출을 막고 CORS 에 걸리므로,
   Rust(reqwest)를 경유하는 `@tauri-apps/plugin-http` 의 `fetch` 를 provider 에 주입한다.
   이 플러그인의 응답 body 는 실제 `ReadableStream` 이라 토큰 스트리밍이 그대로 동작한다.
 - 새 공급자 도메인을 붙이려면 `src-tauri/capabilities/default.json` 의 `http:default` 스코프에
   URL 을 추가해야 한다. 안 하면 요청이 차단된다.
-- Anthropic 4.6+ 모델은 `temperature` 를 거부하므로 보내지 않고, adaptive thinking + `effort` 로 사고량을 조절한다.
-- 토큰마다 DB 를 쓰지 않는다. 스트리밍 중에는 Zustand 에만 쌓고, 턴이 끝날 때 `update_message` 로 한 번만 저장한다.
+- **Gemini 도 `@ai-sdk/openai` 로 부른다.** `@ai-sdk/google` 을 새로 들이지 않고 구글의
+  **OpenAI 호환 엔드포인트**를 쓴다. 다만 이 호환 계층은 스트리밍 도구 호출 청크에 `index` 를
+  빠뜨려서, 그냥 두면 도구를 부르는 순간 타입 검증 실패로 턴이 통째로 날아간다 →
+  `lib/ai/sseRepair.ts` 가 응답 SSE 를 지나가며 **호출 id 등장 순서**로 빠진 번호만 채운다.
+- **사고 강도는 공급자마다 키가 다르고 모델마다 받는 값이 다르다.** 설정의 강도는 하나뿐인데
+  어떤 모델은 `max` 까지 받고 어떤 모델은 `low~high` 만 받는다 → `resolveEffort()` 가 목록 밖
+  값을 가장 가까운 값으로 당겨서 보낸다(400 으로 턴을 날리지 않게). 아예 안 받는 모델이면
+  설정의 강도 칸이 잠기고 이유를 적어 준다. 무엇이 실제로 나갔는지는 인스펙터가 같은 함수로 다시 계산해 보여 준다.
+- Anthropic 4.6+ 모델은 `temperature` 를 거부하므로 보내지 않고, adaptive thinking + `effort` 로
+  사고량을 조절한다. 이것도 모델마다 달라서 구형(Haiku 4.5 등)에는 붙이지 않는다.
+- 토큰마다 DB 를 쓰지 않는다. 스트리밍 중에는 Zustand 에만 쌓고, **스텝 경계**(도구 호출 확정 ·
+  턴 종료)에서만 `update_message` 로 저장한다.
 
 ### 로컬 오픈소스 모델
 
@@ -209,6 +236,27 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
   Ollama/LM Studio 가 구현한 건 `/v1/chat/completions` 뿐이다.
 - 어떤 모델을 받고 어떻게 띄우는지(16GB VRAM 기준 선택, 컨텍스트 설정, 부분 오프로드)는
   **[docs/local-llm.md](docs/local-llm.md)** 에 정리해 두었다.
+
+## 토큰 · 비용 · 컨텍스트
+
+**노드 하나 = LLM 호출 하나**다. 스텝이 끝날 때마다 그 호출 하나의 실측 사용량이
+그 스텝 assistant 노드의 `token_usage` 에 남는다 (입력 · 캐시 읽기/쓰기 · 출력 · 사고 토큰).
+
+- **비용은 저장하지 않는다.** 언제나 `MODEL_CATALOG` 의 요율표로 다시 계산한다 —
+  저장해 두면 노드별 합과 세션 집계가 조용히 어긋난다. 캐시 읽기/쓰기 · 장문 구간 할증도 요율표가 안다.
+- 세션 카드용 누적은 `list_sessions` 가 **모델별로 나눠서** 내려준다. 같은 토큰도 모델마다
+  단가가 달라서 먼저 합치면 값이 틀어진다. 로컬 모델은 아무리 써도 청구서가 없으므로 "요율 미상" 과 구분해서 말한다.
+- 서브에이전트는 대화 노드를 남기지 않으므로 자기 토큰을 `agent_runs.token_usage` 에 따로 적는다.
+- **컨텍스트 잔량의 답은 "지금 [전송]을 누르면 얼마가 나가는가"** 다. 대화는 매 턴 전체가 다시
+  올라가므로 누적 합이 아니고, 그렇다고 마지막 호출의 실측값도 아니다 — 그 뒤에 붙은 것(그 답변,
+  새 질문)은 아직 아무도 센 적이 없기 때문이다. `projectTokens()` 가 실측에 못을 박고 **늘어난
+  만큼만** 환산하는데, 그 비율은 일반론이 아니라 이 대화가 방금 만든 값(마지막 호출 페이로드의
+  문자 수 ÷ 그 호출의 입력 토큰)이라 매 턴 다시 보정된다.
+- 분모는 **지금 고른 모델**의 컨텍스트 창이다. 창 크기가 모델마다 200K~1M 로 다섯 배씩 차이 나서
+  모델을 바꾸면 같은 대화라도 여유가 완전히 달라진다. 분자를 잰 모델이 그와 다르면 토크나이저가
+  어긋나므로 `근사` 라고 표시만 하고 값을 보정하지는 않는다.
+- 표시는 원형 링(`ContextRing`)이고 채팅 입력칸 위와 세션 카드가 **같은 부품 · 같은 페이로드
+  계산기**를 쓴다. 두 자리가 다른 수를 말하면 그 자체가 버그로 읽힌다.
 
 ## Skill (도구)
 
@@ -229,6 +277,12 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
   `assistant`(호출) → `tool`(결과) → `assistant`(다음 응답) 노드가 쌓이고,
   DB 쓰기는 이 **스텝 경계**에서만 일어난다.
 - 도구 출력은 컨텍스트를 잡아먹지 않도록 잘라서 모델에 돌려준다 (쉘 stdout 2만 자, 디렉터리 300개).
+- **[중단] 은 도구가 도는 중에도 들어야 한다.** AI SDK 는 청크가 하나 흐른 뒤에야 중단을 보므로
+  도구가 실행 중이면 스트림이 조용해 아무 일도 일어나지 않는다 → `lib/ai/abort.ts` 가 ToolSet 을
+  한 번 감싸 **도구 실행 자체를 중단 시그널과 경주**시킨다. 도구가 거절되면 tool-error 청크가
+  흐르고 그때 스트림이 닫힌다. 다만 백그라운드에서 진짜 돌고 있는 작업은 도구가 스스로 정리해야
+  한다 — `execute_shell_command` 는 `cancel_shell_command` 로 프로세스 트리를 죽인다.
+  새 도구를 붙일 때도 이 경로를 끊지 않는다.
 
 ## 서브에이전트
 
@@ -247,6 +301,8 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 - 우측 **[서브에이전트]** 탭이 상태별 칸반이다. 진행바 · 지금 실행 중인 Skill · 소요 시간을
   실시간으로 보여주고, 개별 중단 / 삭제 / 끝난 것 정리를 할 수 있다.
 - 모델과 스텝 예산은 [설정] 에서 따로 정한다 (기본값은 메인 모델과 동일).
+- 서브에이전트는 대화 노드를 남기지 않으므로 자기가 쓴 토큰을 `agent_runs.token_usage` 에 적는다.
+  세션 비용에 그대로 합산되고, 그래서 턴을 지워도 이 기록은 지우지 않는다.
 
 ## MCP 브리지
 
@@ -285,6 +341,9 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
   도구 스텝처럼 원문을 따로 저장하지 않은 노드는 조상 체인으로 동일하게 재구성한다.
 - **[현재 메모리 보기]** — `remember` / `recall` 이 쓰는 것과 같은 테이블을 직접 보고 고친다.
 - tool 노드 말풍선은 호출 입력과 실행 결과를 JSON 트리로 펼쳐 볼 수 있다.
+- **인스펙터의 "자" 와 게이지의 "토큰" 은 다른 자다.** 컨텍스트 모달은 문자 수를 세는데
+  들여쓴 JSON 을 재면 실제 페이로드보다 30% 가까이 부풀고 도구 스키마는 아예 안 잡힌다
+  → 문자 수는 **들여쓰기 없는** 원문으로 세고, 같은 자리에 그 호출의 **실측 토큰 수**를 함께 적는다.
 
 ## 데이터 모델
 
@@ -296,12 +355,33 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 - **`agent_runs`** — 서브에이전트 실행 상태 (진행률 · 실행 중인 Skill · 결과 · 소요 시간)
 - **`memories`** — 에이전트 메모리. `scope`(project/session) + `key` 가 유일 키 (마이그레이션 v2)
 
+마이그레이션은 `PRAGMA user_version` 기반으로 현재 v3 까지다 —
+v1 기본 스키마 · v2 메모리 유일성 재정의 · v3 `agent_runs.token_usage`(서브에이전트도 자기 토큰을 남긴다).
+
 스키마를 바꿀 때는 `MIGRATIONS` 배열 **끝에만** 추가한다. 기존 항목을 고치면 이미 만들어진 DB 와 어긋난다.
+
+## 화면 (테마와 디자인 토큰)
+
+라이트가 기본이고 다크는 [설정] → 화면에서 켠다 (`라이트` · `다크` · `시스템 설정`). 고르는 즉시 적용되고 저장된다.
+
+- **색·활자는 토큰만 쓴다.** 컴포넌트에 `zinc-800` 같은 팔레트 값이나 `#hex` 를 직접 적지 않고
+  전부 `src/index.css` 의 의미 토큰(`bg-canvas` · `text-ink-muted` · `border-hairline` · `text-caption` …)
+  을 경유한다. 하드코딩하면 다른 테마에서 그 자리만 깨진다.
+- **크로마틱 액센트는 청록 하나.** 두 번째 브랜드 색을 만들지 않는다 — 뜻이 더 필요하면
+  라벨·아이콘·자리·테두리 굵기로 가른다. (의도된 예외는 인라인 코드 칩의 테라코타 하나뿐이다.)
+- 선택값은 `settings.json` 에 저장하고, 첫 페인트 전에 깔리도록 `localStorage` 에도 복사한다.
+  React Flow 처럼 JS 로 명암을 넘겨야 하는 곳만 `useResolvedTheme()` 로 지금 테마를 읽는다.
+- 자세한 규율(반지름·그림자 단계, Tailwind v4 에서 밟은 함정들)은 **[docs/design.md](docs/design.md)**.
 
 ## 크로스 플랫폼 규칙
 
 - 쉘: Windows `cmd /C`, macOS `zsh -lc`, Linux `sh -c` (`shell` 옵션으로 강제 지정 가능)
-- Windows `cmd` 는 출력이 CP949 로 깨지므로 `chcp 65001` 을 앞에 붙인다
+- **Windows 셸 출력은 `chcp 65001` 로는 안 고쳐진다.** 출력이 파이프로 리다이렉트되면
+  `dir` 같은 cmd 내장 명령과 PowerShell 5 는 코드 페이지와 무관하게 OEM 코드 페이지(한국어면 CP949)로 쓴다
+  → 받는 쪽에서 되돌린다. `decode_text()` 가 **줄 단위로** UTF-8 을 시도하고 실패한 줄만 OEM 으로
+  디코딩한다 (한 스트림에 UTF-8 도구 출력과 CP949 가 섞여 나오기 때문). `chcp 65001` 선행은 보조 수단으로 남겨 둔다
+- Windows 에서 손자 프로세스(`cmd /C pnpm dev` 같은)가 생기면 부모만 죽여선 파이프가 닫히지 않는다
+  → `taskkill /T /F` 로 트리째 죽이고, 출력 리더 조인에도 유예 시간을 둔다
 - 경로는 `paths.rs` 에서 항상 OS 네이티브 구분자로 정규화하고, `\\?\` 확장 프리픽스를 제거한다
 - 프로젝트가 열려 있으면 파일 접근은 **루트 밖으로 나가지 못한다** (`resolve_within`)
 
