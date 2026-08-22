@@ -11,7 +11,7 @@ import { create } from "zustand";
 
 import { isRunActive } from "@/lib/agentRuns";
 import { instructionBlock } from "@/lib/ai/instructions";
-import { MissingApiKeyError } from "@/lib/ai/providers";
+import { errorMessage } from "@/lib/ai/errors";
 import { buildSkills } from "@/lib/ai/skills";
 import { runSubagent } from "@/lib/ai/subagent";
 import { toStoredUsage } from "@/lib/ai/usage";
@@ -105,7 +105,7 @@ export const useAgents = create<AgentsState>((set, get) => {
         if (controllers.size === 0) await ipc.reapAgentRuns(sessionId);
         set({ runs: await ipc.listAgentRuns(sessionId) });
       } catch (error) {
-        set({ error: error instanceof Error ? error.message : String(error) });
+        set({ error: errorMessage(error) });
       } finally {
         set({ loading: false });
       }
@@ -190,13 +190,7 @@ export const useAgents = create<AgentsState>((set, get) => {
       } catch (error) {
         // 중단 중에 터진 예외(도구가 중단으로 거절되는 등)는 실패가 아니라 취소다.
         const cancelled = controller.signal.aborted || cancelledRuns.has(run.id);
-        const message = cancelled
-          ? CANCELLED_MESSAGE
-          : error instanceof MissingApiKeyError
-            ? error.message
-            : error instanceof Error
-              ? error.message
-              : String(error);
+        const message = cancelled ? CANCELLED_MESSAGE : errorMessage(error);
         const status: AgentStatus = cancelled ? "cancelled" : "failed";
         try {
           await persist(run.id, { status, error: message });
@@ -228,7 +222,7 @@ export const useAgents = create<AgentsState>((set, get) => {
       try {
         await ipc.deleteAgentRun(runId);
       } catch (error) {
-        set({ error: error instanceof Error ? error.message : String(error) });
+        set({ error: errorMessage(error) });
       } finally {
         forget(runId);
       }

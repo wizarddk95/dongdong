@@ -14,7 +14,7 @@
 import { create } from "zustand";
 
 import { composeSystemPrompt } from "@/lib/ai/instructions";
-import { MissingApiKeyError } from "@/lib/ai/providers";
+import { errorMessage } from "@/lib/ai/errors";
 import { buildTurnContext, runTurn, type StepRecord, type StoredToolCall } from "@/lib/ai/runner";
 import { buildSkills, summarizeToolCall } from "@/lib/ai/skills";
 import { toStoredUsage } from "@/lib/ai/usage";
@@ -242,12 +242,7 @@ export const useChat = create<ChatState>((set, get) => ({
     } catch (error) {
       // 중단으로 끊긴 것은 실패가 아니다 — 에러 배너 대신 "중단됨" 으로 남긴다.
       const aborted = controller?.signal.aborted ?? false;
-      const messageText =
-        error instanceof MissingApiKeyError
-          ? error.message
-          : error instanceof Error
-            ? error.message
-            : String(error);
+      const messageText = errorMessage(error);
 
       if (!aborted) set({ error: messageText });
 
