@@ -53,6 +53,7 @@ pub fn run() {
             commands::fs::create_directory,
             commands::fs::delete_path,
             commands::fs::path_info,
+            commands::fs::search_project_files,
             // sessions & messages (대화 트리)
             commands::session::create_session,
             commands::session::list_sessions,

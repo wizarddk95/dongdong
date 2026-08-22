@@ -10,6 +10,7 @@
 import { create } from "zustand";
 
 import { isRunActive } from "@/lib/agentRuns";
+import { datetimeBlock } from "@/lib/ai/datetime";
 import { instructionBlock } from "@/lib/ai/instructions";
 import { errorMessage } from "@/lib/ai/errors";
 import { buildSkillTools, skillCatalogBlock } from "@/lib/ai/skills";
@@ -17,6 +18,7 @@ import { buildTools } from "@/lib/ai/tools";
 import { runSubagent } from "@/lib/ai/subagent";
 import { toStoredUsage } from "@/lib/ai/usage";
 import * as ipc from "@/lib/ipc";
+import { useApprovals } from "@/store/approvals";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
 import { useSkills } from "@/store/skills";
@@ -145,7 +147,14 @@ export const useAgents = create<AgentsState>((set, get) => {
 
         // 서브에이전트에게는 `delegate_task` 를 주지 않는다 (재위임 금지).
         const tools = {
-          ...buildTools({ enabled: settings.tools, sessionId }),
+          ...buildTools({
+            enabled: settings.tools,
+            sessionId,
+            // 서브에이전트가 부른 셸도 같은 게이트를 지난다 — 위임했다고 승인이 면제되면
+            // "묻는 모드" 가 위임 한 줄로 뚫린다. 카드에는 누가 요청했는지 이름이 뜬다.
+            requestApproval: (ask) => useApprovals.getState().request(ask),
+            origin: name,
+          }),
           ...(settings.tools.mcp ? useMcp.getState().tools() : {}),
           ...buildSkillTools(skills),
         };
@@ -163,6 +172,8 @@ export const useAgents = create<AgentsState>((set, get) => {
           [
             settings.useProjectInstructions && instructions ? instructionBlock(instructions) : "",
             skillCatalogBlock(skills),
+            // 서브에이전트도 "지금" 을 모르면 메인과 같은 착각을 한다.
+            settings.injectDateTime ? datetimeBlock(new Date()) : "",
           ]
             .filter(Boolean)
             .join(BLOCK_SEPARATOR) || undefined;

@@ -78,6 +78,8 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
         composeSystemPrompt(
           appendSkillCatalog(settings.systemPrompt, skills),
           settings.useProjectInstructions ? instructions : null,
+          // 미리보기도 실제 전송과 같은 함수·같은 조건을 쓴다(시각 블록 포함).
+          settings.injectDateTime ? new Date() : null,
         ),
       chain: pathTo(messages, leafId),
       effort: snapshot?.effort ?? settings.effort,

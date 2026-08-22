@@ -3,7 +3,7 @@
 `dongdong` — 노드 기반 대화 시각화를 갖춘 **로컬 코딩 에이전트** (Tauri 2 + React 19).
 도커/샌드박스 없이 사용자 OS 권한으로 직접 실행하고, 프로젝트 루트의 `.agent_workspace/local.db`(SQLite)에 저장한다.
 Phase 1~4 완료: 워크스페이스·대화 트리 → LLM 스트리밍 → 도구/Inspector → 서브에이전트 + MCP 브리지.
-그 위에 스킬(절차서) · 훅(비차단 자동 동작)이 올라가 있다.
+그 위에 스킬(절차서) · 훅(비차단 자동 동작) · 셸 실행 승인 · `@` 파일 참조가 올라가 있다.
 
 ## 작업 후 반드시 통과시킬 것
 
@@ -12,7 +12,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 376 / cargo 53. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 476 / cargo 63. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -34,6 +34,16 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
   (`resolve_through_links()`). 문자열 비교만 하면 `<root>/link/새파일` 이 통과한다.
   다만 셸이 켜져 있으면 이 담장은 실수를 막는 장치일 뿐이다 — `cd ..` 한 줄이면 그만이다.
 - **오래 걸리는 command 는 `async` + `spawn_blocking`**. 동기 command 는 메인 스레드를 막아 UI 가 언다.
+- **셸 실행과 삭제는 사람이 승인한다**: `execute_shell_command` · `delete_path` 는 실행 직전 `requestApproval` 게이트를
+  지난다(기본 모드가 **승인 필요**). 판정은 전부 `lib/ai/approval.ts` 의 순수 함수이고
+  묻고 기다리는 일만 `store/approvals.ts` 가 한다 — **판정을 UI 에 따로 적지 말 것**
+  (설정 화면·승인 카드·게이트가 같은 함수를 쓴다). [항상 허용] 규칙은 연산자(`&&`·파이프·
+  리다이렉션)가 붙은 명령을 절대 덮지 않고, **실행기**(`uv run`·`npx`·`python`·`node` …)는
+  뒤에 오는 것이 곧 명령이라 전체 일치로만 덮는다. 이게 뚫리면 클릭 한 번이 임의 실행
+  백지수표가 된다 — 실제로 `uv run` 규칙 하나가 `uv run <아무 스크립트>` 를 조용히 통과시켰다.
+  **삭제는 규칙으로 열 수 없다**(지운 파일은 되돌아오지 않으므로 "비슷한 것도 함께" 가 성립하지 않는다).
+  허용 규칙은 **세션 수명**이다 — 설정에 저장하지 않는다. 거부는 예외가 아니라 **결과**다 — 던지면 턴이 에러로 끊기고, 결과로 돌려주면 모델이 다른 수를 고른다.
+  서브에이전트가 부른 셸도 같은 게이트를 지난다(위임 한 줄로 승인이 면제되면 안 된다).
 - **중단 경로를 끊지 말 것**: 새 도구를 붙이면 `abortSignal` 을 반드시 존중한다. `runner.ts` 가 `abortableTools()` 로 한 번 감싸 주지만, 백그라운드에서 진짜 돌고 있는 작업(프로세스·자식 프로세스)은 도구가 스스로 정리해야 한다(`execute_shell_command` → `cancel_shell_command`, `mcp_call_tool` → `mcp_cancel_tool`).
 - **도구와 스킬은 다른 층이다**: 도구(`lib/ai/tools.ts`)는 스키마째 매 턴 실리는 **실행 경로**,
   스킬(`lib/ai/skills.ts`)은 이름·설명만 실렸다가 `load_skill` 로 본문을 끌어오는 **절차서**다.
@@ -179,6 +189,10 @@ src/
   lib/ai/sseRepair.ts   OpenAI 호환 SSE 보정 (Gemini 가 빠뜨리는 tool_calls index 채우기)
   lib/ai/thoughtSignature.ts  Gemini 3.x thought_signature 왕복 (응답에서 줍고 다음 요청에 되붙이기)
   lib/ai/errors.ts      공급자 에러 → 읽을 수 있는 한 줄 (APICallError.responseBody 를 편다)
+  lib/ai/approval.ts    셸 실행 승인 판정(순수) — 규칙 뽑기·매칭·위험 명령 판별
+  lib/ai/attachments.ts `@` 참조 파일을 읽어 메시지에 싣는 블록으로 (바이너리는 자리표만)
+  lib/ai/datetime.ts    지금 시각 블록 — 모델이 학습 시점을 "지금" 으로 착각하지 않게
+  lib/mention.ts        `@` 토큰 찾기·끼워 넣기·뽑기 (순수). 입력칸과 전송 경로가 같은 규칙을 쓴다
   lib/ai/redact.ts      비밀값 가리기 — 도구 출력·에러 문구에서 API 키를 지운다 (`clip()` 이 부른다)
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입 + 로컬 서버(OpenAI 호환) 탐색
   lib/ai/usage.ts       토큰 사용량 정규화 + 요금 추정 + 컨텍스트 잔량 (순수 파생)
@@ -190,10 +204,13 @@ src/
   lib/ai/mcp.ts         MCP 도구 → dynamicTool (서버의 JSON Schema 그대로)
   lib/ai/instructions.ts 프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합
   store/                workspace(트리) · chat(턴) · agents(서브) · mcp · skills · settings
+                        approvals — 승인 대기열 + 세션 수명 허용 규칙 (디스크에 남기지 않는다)
   components/           chat · flow(턴 그래프) · agents · mcp · inspect · skills · hooks
                         SettingsModal.tsx — 좌측 섹션 목록 + 한 번에 한 섹션 (일반·모델·공급자·도구·스킬·훅·MCP)
                         ErrorBoundary.tsx — 렌더 예외로 창이 새까매지는 것을 막는다
                         UsageMeter.tsx — 토큰·요금·컨텍스트 게이지 (채팅/턴/세션 공용)
+                        chat/ApprovalPrompt.tsx — 셸 실행 승인 카드 (입력칸 바로 위, 한 번에 하나)
+                        chat/MentionPicker.tsx — `@` 자동완성 (방향키 이동 · Enter 선택)
                         Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·Hint·입력 크롬). 새 UI 는 여기서 가져다 쓴다
 src-tauri/src/
   lib.rs                command 등록 지점
@@ -202,6 +219,8 @@ src-tauri/src/
   process.rs            프로세스 트리 kill (셸·MCP 공용 — 손자까지 죽여야 파이프가 닫힌다)
   db/{schema,models,queries}.rs
   commands/{workspace,shell,fs,session,settings,skills,memory,agent,mcp}.rs
+                        fs.rs 의 `search_project_files` 가 `@` 자동완성 목록을 만든다
+                        (빌드 산출물 디렉터리는 애초에 훑지 않는다)
                         skills.rs 만 프로젝트 루트 밖(앱 설정 디렉터리)을 연다 — 전역 스킬이 거기 산다
   mcp.rs                MCP stdio 클라이언트 (JSON-RPC 피어 + 프로세스 레지스트리)
 ```
@@ -253,6 +272,36 @@ src-tauri/src/
   → 프로젝트(`.dongdong/skills/`). 프로젝트 쪽을 `.agent_workspace` 에 두지 않은 이유는 그 폴더의
   `.gitignore` 가 `*` 라 리포와 함께 공유될 수 없기 때문이다. 파싱(frontmatter)은 **TS 가 한다** —
   Rust 는 파일만 읽어 온다(규칙을 두 언어로 나눠 적으면 반드시 어긋난다).
+- **실행 승인**: 셸 명령과 **파일 삭제**는 기본적으로 사람이 눌러야 돈다. 파일 읽기·생성·수정은
+  묻지 않는다 — 묻는 창이 많아지면 사람이 읽지 않고 누르고, 그러면 정작 물어야 할 것도 함께
+  흘러간다(가르는 손잡이는 설정의 도구 토글이다). 모드는 둘 — `자동 실행` / `승인 필요`.
+  카드는 **한 번에 하나만** 뜬다(여러 장을 쌓으면 읽지 않고 누르게 된다). 버튼 셋은 전부 채운
+  버튼이다 — 하나만 옅으면 그것만 덜 중요한 것으로 읽혀 눈이 미끄러지는데, 여기서 미끄러지면
+  안 되는 판단이다(실행=primary 청록 · 항상 허용=secondary 잉크 · 거부=danger).
+  [항상 허용] 을 누르면 그 명령을 덮는 규칙이 생긴다: 단일 명령은 프로그램(+하위 명령)
+  앞부분으로, 연산자가 섞인 명령은 **전체가 같을 때만**. 되돌리기 어려운 명령
+  (`rm`·`git push`·`curl` …)에는 [항상 허용] 버튼 자체가 뜨지 않는다.
+  **규칙의 수명은 지금 세션이다** — `settings.json` 이 아니라 `store/approvals.ts` 의 메모리에
+  살고, 세션을 바꾸거나 앱을 다시 켜면 사라진다(어제 한 번 누른 것이 오늘 다른 프로젝트의
+  명령을 조용히 통과시키면 승인 화면을 둔 뜻이 사라진다). 스코프는 **누르기 전에** 카드에
+  글자로 적어 둔다. 삭제는 [항상 허용]을 아예 내주지 않는다.
+  승인을 기다리는 동안 [중지]를 누르면 중단 경주가 도구를 거절하고 대기열도 함께 풀린다.
+  **진행 표시는 두 상태를 갈라 말해야 한다** — "도구 실행 중" 만 떠 있으면 승인을 기다리는
+  중인지 진짜로 도는 중인지 구별할 수 없어 멀쩡한 명령이 "무한 로딩" 으로 읽힌다.
+  채팅 하단 바가 `승인 대기 중` / `도구 실행 중` 과 **경과 초**를 함께 적는다.
+- **셸은 반드시 끝난다**: 타임아웃은 기본 2분·최대 10분이고 **양쪽에서 접는다**
+  (`tools.ts` 의 `MAX_SHELL_TIMEOUT_MS` · `shell.rs` 의 `effective_timeout`).
+  상한이 없으면 모델이 크게 잡아 온 `timeoutMs` 하나로 턴이 몇 시간이고 멈춰 선다.
+- **`@` 파일 참조**: 입력칸에서 `@` 를 치면 프로젝트 파일 목록이 뜨고, 고른 파일은 **보내기
+  직전에 읽혀** 사용자 노드의 `content` 뒤에 `<attached_files>` 블록으로 함께 저장된다
+  (모델은 통째로 받고, 말풍선·그래프 카드는 접는다 — 같은 `splitAttachments()` 를 쓴다).
+  텍스트가 아닌 파일은 **본문을 싣지 않는다**: 엑셀·워드·PDF 는 경로·종류·크기만 남기고
+  `load_skill("xlsx"|"docx"|"pdf")` 로 절차를 열어 Python 으로 직접 읽으라고 짚어 준다.
+  실린 내용은 `clip()` 을 지나므로 상한(파일당 20,000자·합계 60,000자)과 비밀값 가리기가 함께 걸린다.
+- **현재 시각**: 모델은 학습이 끝난 시점을 "지금" 으로 안다 → 최신 자료를 지난 연도로 찾는다.
+  `composeSystemPrompt()` 가 시각 블록을 **맨 뒤**(대화 바로 앞)에 붙인다. 대화 노드에는 남기지
+  않는다 — 남기면 옛 턴의 시각이 화석으로 남는다. 채팅 게이지·인스펙터·실제 전송이 같은 함수를
+  써야 세 화면이 같은 수를 말한다.
 - **훅**: 턴 시작·완료·오류 시점에 도는 부수 동작. 내장(OS 알림)은 켜고 끄기만 하고, 사용자 훅은
   셸 명령 한 줄이다. 자리표(`{{status}}` 등)에 들어가는 값은 셸을 가를 수 있는 글자를 걷어내고,
   **공급자 에러 문자열은 자리표로 주지 않는다**(알림 문구로만 쓴다).

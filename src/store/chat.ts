@@ -13,6 +13,7 @@
  */
 import { create } from "zustand";
 
+import { resolveMentions, withAttachments } from "@/lib/ai/attachments";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { errorMessage } from "@/lib/ai/errors";
 import { buildTurnContext, runTurn, type StepRecord, type StoredToolCall } from "@/lib/ai/runner";
@@ -21,7 +22,9 @@ import { buildTools, summarizeToolCall } from "@/lib/ai/tools";
 import { toStoredUsage } from "@/lib/ai/usage";
 import { dispatchHooks, type HookEvent } from "@/lib/hooks";
 import * as ipc from "@/lib/ipc";
+import { extractMentions } from "@/lib/mention";
 import { useAgents } from "@/store/agents";
+import { useApprovals } from "@/store/approvals";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
 import { useSkills } from "@/store/skills";
@@ -135,8 +138,19 @@ export const useChat = create<ChatState>((set, get) => ({
     let assistantId: string | null = null;
 
     try {
-      // 1. 사용자 노드 저장 (activeParentId 아래에 붙으므로 분기가 자연스럽게 생긴다)
-      const userMessage = await workspace.addMessage({ role: "user", content: text });
+      // 1. `@` 로 지목한 파일을 지금 읽어 메시지에 함께 싣는다.
+      //    도구 한 번을 아끼려는 게 아니라, 사용자가 이미 정해 준 것을 모델이 다시
+      //    찾아 헤매지 않게 하려는 것이다. 실패한 참조도 사실대로 실린다.
+      const mentions = extractMentions(text);
+      const attachments = mentions.length
+        ? await resolveMentions(mentions, { projectPath: workspace.project.rootPath })
+        : [];
+
+      // 사용자 노드 저장 (activeParentId 아래에 붙으므로 분기가 자연스럽게 생긴다)
+      const userMessage = await workspace.addMessage({
+        role: "user",
+        content: withAttachments(text, attachments),
+      });
       if (!userMessage) throw new Error("사용자 메시지를 저장하지 못했습니다.");
 
       // 2. 루트 → 이 노드까지의 체인이 곧 LLM 컨텍스트
@@ -155,6 +169,8 @@ export const useChat = create<ChatState>((set, get) => ({
         ...buildTools({
           enabled: settings.tools,
           sessionId,
+          // 셸은 실행 직전에 사용자에게 묻는다(설정이 "자동 실행" 이면 게이트가 그냥 통과시킨다).
+          requestApproval: (ask) => useApprovals.getState().request(ask),
           // 위임은 서브에이전트 스토어가 실행한다. 결과 요약만 도구 결과로 돌아온다.
           onDelegate: ({ name, task, signal }) =>
             useAgents.getState().spawn({ name, task, signal, parentMessageId: assistantId }),
@@ -166,7 +182,12 @@ export const useChat = create<ChatState>((set, get) => ({
       };
       const context = buildTurnContext({
         modelId: settings.modelId,
-        system: composeSystemPrompt(appendSkillCatalog(settings.systemPrompt, skills), instructions),
+        system: composeSystemPrompt(
+          appendSkillCatalog(settings.systemPrompt, skills),
+          instructions,
+          // 모델은 학습 시점을 "지금" 으로 착각한다 → 턴마다 실제 시각을 실어 준다.
+          settings.injectDateTime ? new Date() : null,
+        ),
         chain,
         effort: settings.effort,
         maxSteps: settings.maxSteps,
@@ -303,6 +324,8 @@ export const useChat = create<ChatState>((set, get) => ({
       }
     } finally {
       controller = null;
+      // 턴이 끝났는데 카드가 남아 있으면 누를 곳 없는 버튼이 된다.
+      useApprovals.getState().clear();
       set({
         running: false,
         stopping: false,

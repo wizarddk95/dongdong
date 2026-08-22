@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Markdown } from "@/components/chat/Markdown";
+import { attachmentTitles, splitAttachments } from "@/lib/ai/attachments";
 import { JsonTree } from "@/components/inspect/JsonTree";
 import {
   readToolCalls,
@@ -60,10 +61,16 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const [showReasoning, setShowReasoning] = useState(false);
 
+  const [showAttachments, setShowAttachments] = useState(false);
+
   const style = ROLE_STYLE[message.role] ?? ROLE_STYLE.system;
   const streaming = message.status === "streaming";
   const isTool = message.role === "tool";
-  const body = streaming ? (liveText ?? "") : message.content;
+  // `@` 로 참조한 파일은 사용자 노드의 본문 뒤에 함께 저장된다(모델은 통째로 받는다).
+  // 화면에서는 접어 둔다 — 안 접으면 파일 하나로 말풍선이 화면을 덮는다.
+  const attached =
+    message.role === "user" && !streaming ? splitAttachments(message.content) : null;
+  const body = streaming ? (liveText ?? "") : (attached?.body ?? message.content);
   const reasoning = isTool
     ? ""
     : streaming
@@ -142,6 +149,27 @@ export function MessageBubble({
         // 스트리밍 커서는 본문 끝에 붙여 마지막 블록 안에서 흐르게 한다.
         <Markdown text={streaming ? `${body}▌` : body} />
       ) : null}
+
+      {attached?.block && (
+        <div className="mt-2 border-t border-hairline pt-2">
+          <button
+            className="flex w-full items-center gap-1.5 text-caption text-ink-muted transition-colors hover:text-ink"
+            title="이 메시지와 함께 LLM 으로 나간 파일 내용입니다"
+            onClick={() => setShowAttachments((value) => !value)}
+          >
+            <span>{showAttachments ? "▾" : "▸"}</span>
+            <span>첨부 {attachmentTitles(attached.block).length}개</span>
+            <span className="truncate font-mono text-ink-subtle">
+              {attachmentTitles(attached.block).join(" · ")}
+            </span>
+          </button>
+          {showAttachments && (
+            <pre className="mt-1.5 max-h-96 overflow-auto rounded-md bg-surface-2 p-2.5 font-mono text-caption whitespace-pre-wrap text-ink select-text">
+              {attached.block}
+            </pre>
+          )}
+        </div>
+      )}
 
       {toolCalls.length > 0 && (
         <ToolCallList calls={toolCalls} results={toolResults} withGap={!isTool && Boolean(body)} />

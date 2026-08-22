@@ -23,8 +23,10 @@ import {
   sendsEffort,
   type Effort,
 } from "@/lib/ai/providers";
+import { APPROVAL_MODES, describeRule, type ApprovalMode } from "@/lib/ai/approval";
 import { DEFAULT_TOOLS, TOOL_GROUPS, type ToolToggles } from "@/lib/ai/tools";
 import { THEME_LABEL, THEME_PREFERENCES, type ThemePreference } from "@/lib/theme";
+import { useApprovals } from "@/store/approvals";
 import { useSettings } from "@/store/settings";
 
 /**
@@ -135,6 +137,10 @@ function Help({ children }: { children: React.ReactNode }) {
 
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const settings = useSettings();
+  // [항상 허용] 규칙은 설정 파일이 아니라 **지금 세션**에 산다 (`store/approvals.ts`).
+  const allowedCommands = useApprovals((state) => state.allowed);
+  const forgetRule = useApprovals((state) => state.forget);
+  const forgetAllRules = useApprovals((state) => state.forgetAll);
   const backdrop = useBackdropDismiss(onClose);
 
   const [section, setSection] = useState<SectionId>("general");
@@ -162,6 +168,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [useProjectInstructions, setUseProjectInstructions] = useState(
     settings.useProjectInstructions,
   );
+  const [injectDateTime, setInjectDateTime] = useState(settings.injectDateTime);
+  const [shellApproval, setShellApproval] = useState<ApprovalMode>(settings.shellApproval);
 
   // "직접 입력" 이면 입력칸의 값이 곧 고른 모델이다.
   const selectedModelId = modelId === "custom" ? customModel.trim() : modelId;
@@ -204,6 +212,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setSubagentModelId(settings.subagentModelId);
     setSubagentMaxSteps(settings.subagentMaxSteps);
     setUseProjectInstructions(settings.useProjectInstructions);
+    setInjectDateTime(settings.injectDateTime);
+    setShellApproval(settings.shellApproval);
 
     const known = modelOptions.some((option) => option.id === settings.modelId);
     setModelId(known ? settings.modelId : "custom");
@@ -228,6 +238,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       subagentModelId,
       subagentMaxSteps,
       useProjectInstructions,
+      injectDateTime,
+      shellApproval,
     });
     onClose();
   }
@@ -349,6 +361,35 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     <span className="mt-0.5 block text-caption text-ink-muted">
                       파일이 있으면 매 턴 컨텍스트 맨 앞에 원문을 싣습니다. 서브에이전트에게도 같은
                       지침이 전달됩니다.
+                    </span>
+                  </span>
+                </label>
+
+                <div className="pt-3">
+                  <SectionTitle
+                    hint={
+                      <>
+                        모델은 학습이 끝난 시점을 &quot;지금&quot; 으로 착각합니다. 실제 시각을
+                        실어 주지 않으면 최신 자료를 지난 연도 기준으로 찾습니다.
+                      </>
+                    }
+                  >
+                    현재 시각
+                  </SectionTitle>
+                </div>
+                <label className="flex items-start gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2.5 transition-colors hover:bg-hover">
+                  <input
+                    type="checkbox"
+                    checked={injectDateTime}
+                    onChange={(event) => setInjectDateTime(event.target.checked)}
+                    className="mt-0.5 accent-accent"
+                  />
+                  <span className="min-w-0">
+                    <span className="text-ink">지금 시각을 매 턴 컨텍스트에 싣기</span>
+                    <span className="mt-0.5 block text-caption text-ink-muted">
+                      날짜 · 시각 · 시간대를 시스템 프롬프트 끝에 붙입니다. 대화 노드에는 남지
+                      않으므로 옛 턴의 시각이 화석으로 남지 않습니다. 서브에이전트도 같은 값을
+                      받습니다.
                     </span>
                   </span>
                 </label>
@@ -659,8 +700,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   도구 (에이전트가 바로 실행하는 것)
                 </SectionTitle>
                 <Help>
-                  켜 둔 도구는 확인 없이 바로 실행됩니다. 샌드박스가 아니라 이 PC 의 사용자 권한으로
-                  동작하니 필요한 것만 켜세요.
+                  켜 둔 도구는 확인 없이 바로 실행됩니다(셸만 예외 — 아래에서 정합니다).
+                  샌드박스가 아니라 이 PC 의 사용자 권한으로 동작하니 필요한 것만 켜세요.
                 </Help>
                 {TOOL_GROUPS.map((group) => (
                   <label
@@ -683,6 +724,89 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     </span>
                   </label>
                 ))}
+
+                <div className="pt-3">
+                  <SectionTitle
+                    hint={
+                      <>
+                        셸 명령은 이 PC 에서 그대로 돕니다. 무엇을 돌릴지 고르는 마지막 판단은
+                        사람이 하는 게 맞습니다 — 자동 실행은 무엇이 실행되는지 지켜볼 수 있을 때만
+                        켜세요.
+                      </>
+                    }
+                  >
+                    셸 실행 권한
+                  </SectionTitle>
+                </div>
+                {APPROVAL_MODES.map((mode) => (
+                  <label
+                    key={mode.id}
+                    className="flex items-start gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2.5 transition-colors hover:bg-hover"
+                  >
+                    <input
+                      type="radio"
+                      name="shell-approval"
+                      checked={shellApproval === mode.id}
+                      onChange={() => setShellApproval(mode.id)}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <span className="min-w-0">
+                      <span className="text-ink">{mode.label}</span>
+                      <span className="mt-0.5 block text-caption text-ink-muted">
+                        {mode.description}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+
+                <div className="pt-3">
+                  <SectionTitle
+                    hint={
+                      <>
+                        승인 카드에서 [항상 허용] 을 누르면 여기 쌓입니다. 끝에 …가 붙은 규칙은
+                        <b> 그 앞부분으로 시작하는 단일 명령</b>만 덮습니다 —
+                        <span className="font-mono"> &amp;&amp;</span> 나 파이프로 이어 붙인 명령은
+                        규칙에 걸려도 다시 묻습니다.
+                      </>
+                    }
+                  >
+                    이 세션에서 항상 허용한 명령 ({allowedCommands.length})
+                  </SectionTitle>
+                </div>
+                <Help>
+                  이 목록은 <b>지금 세션에만</b> 삽니다. 세션을 바꾸거나 앱을 다시 켜면 비워지고,
+                  설정 파일에도 저장되지 않습니다 — 어제 한 번 누른 것이 오늘 다른 프로젝트의
+                  명령을 조용히 통과시키면 승인 화면을 둔 뜻이 사라지기 때문입니다.
+                </Help>
+                {allowedCommands.length === 0 ? (
+                  <Help>
+                    아직 없습니다. 승인 카드에서 [이 세션에서 항상 허용] 을 누른 명령이 여기 모입니다.
+                  </Help>
+                ) : (
+                  <div className="space-y-1.5">
+                    {allowedCommands.map((rule) => (
+                      <div
+                        key={rule.id}
+                        className="flex items-center gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2"
+                      >
+                        <code className="min-w-0 flex-1 truncate font-mono text-caption text-ink">
+                          {describeRule(rule)}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="이 규칙을 지웁니다. 다음부터 그 명령은 다시 묻습니다."
+                          onClick={() => forgetRule(rule.id)}
+                        >
+                          삭제
+                        </Button>
+                      </div>
+                    ))}
+                    <Button variant="tertiary" size="sm" onClick={forgetAllRules}>
+                      전부 지우기
+                    </Button>
+                  </div>
+                )}
               </>
             )}
 

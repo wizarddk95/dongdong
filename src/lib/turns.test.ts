@@ -229,6 +229,24 @@ describe("toBubbles", () => {
   });
 });
 
+describe("buildTurns — @ 첨부", () => {
+  it("그래프 카드의 사용자 문구에서 첨부 블록을 뺀다", () => {
+    // 파일 하나만 붙어도 원문이 카드를 통째로 덮는다. 모델은 통째로 받고, 카드만 접는다.
+    const withAttachment = node("u1", null, 1, "user", {
+      content: [
+        "이거 봐줘 @a.ts",
+        "",
+        "<attached_files>",
+        "## a.ts (5자)",
+        "const",
+        "</attached_files>",
+      ].join("\n"),
+    });
+    const turn = buildTurns([withAttachment]).byId.get("u1")!;
+    expect(turn.userText).toBe("이거 봐줘 @a.ts");
+  });
+});
+
 describe("buildTurns — 토큰과 요금", () => {
   it("턴 안의 사용량을 모아 요금까지 낸다", () => {
     const messages: Message[] = [

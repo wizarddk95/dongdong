@@ -24,6 +24,7 @@ import type {
   OpenProjectResult,
   PathInfo,
   Project,
+  ProjectFile,
   Session,
   SessionOverview,
   ShellOptions,
@@ -140,6 +141,20 @@ export const deletePath = (path: string, options?: { projectPath?: string; recur
 
 export const pathInfo = (path: string, projectPath?: string) =>
   call<PathInfo>("path_info", { path, projectPath });
+
+/**
+ * `@` 자동완성용 프로젝트 파일 검색. 빌드 산출물 디렉터리는 Rust 가 애초에 훑지 않는다.
+ * 검색어를 비우면 얕은 것부터 골라 준다.
+ */
+export const searchProjectFiles = (
+  query: string,
+  options?: { projectPath?: string; limit?: number },
+) =>
+  call<ProjectFile[]>("search_project_files", {
+    query,
+    projectPath: options?.projectPath,
+    limit: options?.limit,
+  });
 
 // ------------------------------------------------------ sessions & nodes
 

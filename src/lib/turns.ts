@@ -5,6 +5,7 @@
  * 사람이 다루는 단위는 "질문 하나와 그에 대한 응답 전체"다.
  * 여기서 노드 체인을 되접어 턴으로 묶는다 — 스키마를 바꾸지 않는 순수 파생 계산이다.
  */
+import { splitAttachments } from "@/lib/ai/attachments";
 import { readToolCalls, readToolResults } from "@/lib/ai/runner";
 import { readChainUsage, type Cost, type Usage } from "@/lib/ai/usage";
 import { buildIndex } from "@/lib/tree";
@@ -146,7 +147,9 @@ export function buildTurns(messages: Message[]): TurnIndex {
       leafId: leaf.id,
       parentTurnId: parentId ? (turnOfMessage.get(parentId) ?? null) : null,
       branchPointId: parentId,
-      userText: anchor.role === "user" ? anchor.content : "",
+      // `@` 첨부 블록은 카드에서 뺀다 — 파일 하나가 붙으면 카드가 그 원문으로 뒤덮인다.
+      // (모델은 통째로 받는다. 접는 규칙은 채팅 말풍선과 같은 함수를 쓴다)
+      userText: anchor.role === "user" ? splitAttachments(anchor.content).body : "",
       assistantText: lastAssistant?.content ?? "",
       toolUses: [...counts.entries()].map(([name, count]) => ({ name, count })),
       toolErrorCount,

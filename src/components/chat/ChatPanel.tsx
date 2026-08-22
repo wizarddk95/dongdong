@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ApprovalPrompt } from "@/components/chat/ApprovalPrompt";
+import { MentionPicker, useMentionPicker } from "@/components/chat/MentionPicker";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ContextModal } from "@/components/inspect/ContextModal";
 import { MemoryModal } from "@/components/inspect/MemoryModal";
 import { Button } from "@/components/Panel";
 import { ContextRing, UsageBreakdown } from "@/components/UsageMeter";
+import { APPROVAL_MODES } from "@/lib/ai/approval";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { findModelOption } from "@/lib/ai/providers";
 import { contextPayloadOf } from "@/lib/ai/runner";
@@ -19,6 +22,7 @@ import {
 import { buildIndex, pathTo, siblingsOf } from "@/lib/tree";
 import { buildTurns, toBubbles, turnLabel } from "@/lib/turns";
 import { useAgents } from "@/store/agents";
+import { useApprovals } from "@/store/approvals";
 import { useChat } from "@/store/chat";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
@@ -30,6 +34,8 @@ export function ChatPanel() {
   const project = useWorkspace((state) => state.project);
   const instructions = useWorkspace((state) => state.instructions);
   const agentRuns = useAgents((state) => state.runs);
+  // 승인을 기다리는 중인지 알아야 아래 진행 표시가 거짓말을 하지 않는다.
+  const approvalQueue = useApprovals((state) => state.queue);
 
   const {
     running,
@@ -46,6 +52,9 @@ export function ChatPanel() {
   const modelId = useSettings((state) => state.modelId);
   const useProjectInstructions = useSettings((state) => state.useProjectInstructions);
   const systemPrompt = useSettings((state) => state.systemPrompt);
+  const injectDateTime = useSettings((state) => state.injectDateTime);
+  const shellApproval = useSettings((state) => state.shellApproval);
+  const updateSettings = useSettings((state) => state.update);
 
   const [draft, setDraft] = useState("");
   const [usageOpen, setUsageOpen] = useState(false);
@@ -53,7 +62,19 @@ export function ChatPanel() {
   const [contextOpen, setContextOpen] = useState(false);
   const [contextMessageId, setContextMessageId] = useState<string | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  /** 도구가 붙잡고 있는 시간(초). "언제 끝나나" 를 사람이 셀 수 있어야 한다. */
+  const [toolElapsed, setToolElapsed] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // `@` 파일 참조 자동완성. 텍스트 규칙은 `lib/mention.ts`, 목록은 Rust 가 훑는다.
+  const mention = useMentionPicker({
+    textareaRef,
+    text: draft,
+    setText: setDraft,
+    enabled: Boolean(project),
+    projectPath: project?.rootPath,
+  });
 
   // 활성 경로(루트 → activeParent)가 곧 "지금 보고 있는 대화".
   // tool 노드는 자기를 부른 assistant 말풍선 안으로 접어 넣는다.
@@ -65,6 +86,27 @@ export function ChatPanel() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [path.length, streamingText]);
+
+  /**
+   * 도구가 몇 초째 붙잡고 있는지 센다.
+   *
+   * 화면에 "도구 실행 중" 만 떠 있으면 **승인을 기다리는 중인지 진짜로 도는 중인지**
+   * 구별할 수 없고, 3초든 3분이든 똑같이 보인다 — 그래서 멀쩡히 도는 명령이
+   * "무한 로딩" 으로 읽힌다. 상태 이름과 경과 시간을 같이 적어 그 오해를 없앤다.
+   */
+  useEffect(() => {
+    if (pendingToolCalls.length === 0) {
+      setToolElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setToolElapsed(0);
+    const timer = setInterval(
+      () => setToolElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+      1_000,
+    );
+    return () => clearInterval(timer);
+  }, [pendingToolCalls.length]);
 
   /**
    * 다음 메시지가 붙을 자리를 **턴 이름**으로 말한다.
@@ -96,7 +138,12 @@ export function ChatPanel() {
     const payload = contextPayloadOf(
       path,
       messages,
-      composeSystemPrompt(systemPrompt, useProjectInstructions ? instructions : null),
+      composeSystemPrompt(
+        systemPrompt,
+        useProjectInstructions ? instructions : null,
+        // 게이지도 실제로 나갈 것과 같아야 한다 — 시각 블록도 페이로드의 일부다.
+        injectDateTime ? new Date() : null,
+      ),
     );
 
     const last = lastCallUsage(path, modelId);
@@ -108,7 +155,16 @@ export function ChatPanel() {
       // 세션 합계는 활성 경로가 아니라 세션의 **모든** 노드를 센다.
       sessionUsage: summarizeLiveUsage(messages, agentRuns, modelId),
     };
-  }, [path, messages, agentRuns, modelId, systemPrompt, useProjectInstructions, instructions]);
+  }, [
+    path,
+    messages,
+    agentRuns,
+    modelId,
+    systemPrompt,
+    useProjectInstructions,
+    instructions,
+    injectDateTime,
+  ]);
 
   const modelLabel = findModelOption(modelId)?.label ?? modelId;
   const canSend = Boolean(project && activeSessionId) && !running;
@@ -167,15 +223,33 @@ export function ChatPanel() {
         </div>
       )}
 
+      <ApprovalPrompt />
+
       {pendingToolCalls.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-hairline bg-surface-1 px-3 py-1.5 text-caption text-ink">
-          <span className="animate-pulse text-accent">●</span>
-          <span className="text-body-emphasis">도구 실행 중</span>
+          <span
+            className={`animate-pulse ${approvalQueue.length > 0 ? "text-warning" : "text-accent"}`}
+          >
+            ●
+          </span>
+          <span className="text-body-emphasis">
+            {approvalQueue.length > 0 ? "승인 대기 중" : "도구 실행 중"}
+          </span>
           {pendingToolCalls.map((call) => (
             <span key={call.toolCallId} className="rounded-full bg-surface-2 px-2 py-0.5 font-mono">
               {summarizeToolCall(call.toolName, call.input)}
             </span>
           ))}
+          <span
+            className="ml-auto shrink-0 tabular-nums text-ink-muted"
+            title={
+              approvalQueue.length > 0
+                ? "위 카드에서 [실행] 또는 [거부] 를 누를 때까지 기다립니다."
+                : "셸 명령은 기본 2분, 최대 10분에서 자동으로 끊깁니다. 그 전에 멈추려면 [중지] 를 누르세요."
+            }
+          >
+            {toolElapsed}초
+          </span>
         </div>
       )}
 
@@ -216,6 +290,21 @@ export function ChatPanel() {
 
         <div className="mb-2 flex flex-wrap items-center gap-3 text-caption text-ink-muted">
           <span className="text-ink">{modelLabel}</span>
+          <button
+            className="rounded-full border border-hairline px-2 py-0.5 transition-colors hover:bg-hover"
+            title={
+              APPROVAL_MODES.find((mode) => mode.id === shellApproval)?.description ??
+              "셸 실행 권한 모드를 바꿉니다"
+            }
+            onClick={() =>
+              void updateSettings({ shellApproval: shellApproval === "auto" ? "ask" : "auto" })
+            }
+          >
+            셸{" "}
+            <span className={shellApproval === "auto" ? "text-warning" : "text-ink"}>
+              {shellApproval === "auto" ? "자동 실행" : "승인 필요"}
+            </span>
+          </button>
           {target ? (
             <span
               title={`다음 메시지는 노드 ${activeParentId} 뒤에 붙습니다.${
@@ -268,20 +357,35 @@ export function ChatPanel() {
         </div>
 
         <div className="flex items-end gap-2">
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submit();
+          <div className="relative min-w-0 flex-1">
+            <MentionPicker state={mention} />
+            <textarea
+              ref={textareaRef}
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                mention.sync();
+              }}
+              onClick={mention.sync}
+              onKeyUp={mention.sync}
+              onKeyDown={(event) => {
+                // 목록이 열려 있으면 방향키·엔터는 목록이 먼저 가져간다.
+                if (mention.onKeyDown(event)) return;
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              placeholder={
+                canSend
+                  ? "메시지 입력 (Enter 전송, Shift+Enter 줄바꿈, @ 파일 참조)"
+                  : "대기 중…"
               }
-            }}
-            placeholder={canSend ? "메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)" : "대기 중…"}
-            rows={3}
-            disabled={!project}
-            className="min-h-0 flex-1 resize-none rounded-md border border-field-rule bg-field px-3.5 py-2.5 text-body-sm text-ink transition-colors placeholder:text-ink-subtle hover:border-ink-subtle focus:border-accent disabled:cursor-not-allowed disabled:border-hairline disabled:bg-surface-1 disabled:text-ink-disabled"
-          />
+              rows={3}
+              disabled={!project}
+              className="min-h-0 w-full resize-none rounded-md border border-field-rule bg-field px-3.5 py-2.5 text-body-sm text-ink transition-colors placeholder:text-ink-subtle hover:border-ink-subtle focus:border-accent disabled:cursor-not-allowed disabled:border-hairline disabled:bg-surface-1 disabled:text-ink-disabled"
+            />
+          </div>
           {running ? (
             <Button
               variant="danger"

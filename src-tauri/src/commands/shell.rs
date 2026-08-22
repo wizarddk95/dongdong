@@ -25,6 +25,13 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+
+/// 한 번의 실행이 붙잡을 수 있는 최대 시간 (10분).
+///
+/// 프론트도 같은 값으로 접지만(`lib/ai/tools.ts` 의 `MAX_SHELL_TIMEOUT_MS`) 한쪽만 믿지
+/// 않는다 — 여기가 실제로 기다리는 쪽이다. 상한이 없으면 모델이 크게 잡아 온 값 하나로
+/// 턴이 몇 시간이고 멈춰 서고, 화면에서는 그게 "무한 로딩" 과 구별되지 않는다.
+const MAX_TIMEOUT_MS: u64 = 600_000;
 const MAX_OUTPUT_BYTES: usize = 1_000_000;
 
 /// 자식이 정상 종료했을 때 남은 파이프를 마저 비우며 기다리는 시간.
@@ -455,7 +462,7 @@ pub async fn execute_shell_command(
         command.clone()
     };
 
-    let timeout = Duration::from_millis(options.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
+    let timeout = effective_timeout(options.timeout_ms);
     let started = Instant::now();
 
     let worker_program = program.clone();
@@ -495,6 +502,11 @@ pub async fn execute_shell_command(
     })
 }
 
+/// 실제로 기다릴 시간. 생략하면 기본값, 크게 잡아 오면 상한으로 접는다.
+fn effective_timeout(requested: Option<u64>) -> Duration {
+    Duration::from_millis(requested.unwrap_or(DEFAULT_TIMEOUT_MS).clamp(1, MAX_TIMEOUT_MS))
+}
+
 /// 실행 중인 셸 명령을 중단한다. 프론트의 [중단] 이 여기까지 내려온다.
 /// taskkill 자체가 프로세스를 띄우므로 워커 스레드에서 돌린다.
 #[tauri::command]
@@ -510,6 +522,21 @@ mod tests {
 
     fn shell_for_test() -> (String, Vec<String>) {
         resolve_shell(None).expect("기본 쉘 해석 실패")
+    }
+
+    #[test]
+    fn 타임아웃은_기본값과_상한_사이로_접힌다() {
+        // 상한이 없으면 모델이 크게 잡아 온 값 하나로 턴이 몇 시간이고 멈춰 선다.
+        assert_eq!(
+            effective_timeout(None),
+            Duration::from_millis(DEFAULT_TIMEOUT_MS)
+        );
+        assert_eq!(effective_timeout(Some(5_000)), Duration::from_millis(5_000));
+        assert_eq!(
+            effective_timeout(Some(24 * 60 * 60 * 1000)),
+            Duration::from_millis(MAX_TIMEOUT_MS)
+        );
+        assert_eq!(effective_timeout(Some(0)), Duration::from_millis(1));
     }
 
     /// 오래 걸리는 명령을 취소하면 타임아웃을 기다리지 않고 즉시 끝나야 한다.

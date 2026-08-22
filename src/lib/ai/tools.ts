@@ -9,8 +9,9 @@
  * 경로 제한(프로젝트 루트 밖 금지)도 Rust `paths::resolve_within` 이 담당한다.
  * 여기서는 스키마 정의와 LLM 이 읽기 좋은 형태로의 결과 정리만 한다.
  *
- * 도구 실행 자체는 승인 절차 없이 바로 이루어진다. 무엇을 켤지는
- * 설정의 도구 토글(`ToolToggles`)로 사용자가 결정한다.
+ * 무엇을 켤지는 설정의 도구 토글(`ToolToggles`)로 사용자가 정한다.
+ * 그 위에 **셸만은 실행 직전 승인**을 한 겹 더 받는다 — `requestApproval` 이 넘어오면
+ * 게이트가 열릴 때까지 도구가 그 자리에서 기다린다(`store/approvals.ts`).
  */
 import { tool, type ToolSet } from "@ai-sdk/provider-utils";
 import { z } from "zod";
@@ -52,6 +53,21 @@ export interface DelegateResult {
   error?: string;
 }
 
+/** 승인 게이트에 넘어가는 사실들. 화면의 카드가 이 값을 그대로 읽는다. */
+export interface ApprovalAsk {
+  /** 생략하면 셸 실행 */
+  kind?: "shell" | "delete";
+  toolName: string;
+  /** 셸이면 명령 원문, 삭제면 지울 경로 */
+  command: string;
+  /** 명령만으로는 안 보이는 사실 한 줄 */
+  detail?: string;
+  cwd?: string;
+  /** 서브에이전트가 부른 것이면 그 이름 */
+  origin?: string;
+  signal?: AbortSignal;
+}
+
 export interface ToolOptions {
   enabled?: Partial<ToolToggles>;
   /** `scope: "session"` 메모리의 기준 세션 */
@@ -68,6 +84,13 @@ export interface ToolOptions {
     /** 메인 턴이 중단되면 함께 끊긴다 */
     signal?: AbortSignal;
   }) => Promise<DelegateResult>;
+  /**
+   * 실행 승인 게이트 — 셸 실행과 **삭제**가 지난다.
+   * 넘기지 않으면 예전처럼 곧바로 실행한다(테스트와 승인이 필요 없는 호출 경로).
+   */
+  requestApproval?: (ask: ApprovalAsk) => Promise<{ approved: boolean; reason?: string }>;
+  /** 승인 카드에 "누가 요청했는지" 를 적기 위한 이름. 서브에이전트가 채운다. */
+  origin?: string;
 }
 
 /**
@@ -82,6 +105,15 @@ export function newCancelToken(prefix = "call"): string {
 /** 도구 하나가 LLM 컨텍스트를 통째로 잡아먹지 않도록 출력에 상한을 둔다. MCP 도구도 같은 자를 쓴다. */
 export const MAX_TOOL_OUTPUT_CHARS = 20_000;
 const MAX_DIR_ENTRIES = 300;
+
+/**
+ * 셸 한 번이 붙잡을 수 있는 최대 시간 (10분).
+ *
+ * 모델이 `timeoutMs` 를 크게 잡으면 턴이 그만큼 멈춰 서고, 화면에서는 그게 "무한 로딩" 과
+ * 구별되지 않는다. 상한을 여기서 한 번 접어 두면 어떤 입력이 와도 끝은 온다.
+ * (Rust 도 같은 값으로 다시 조인다 — 한쪽만 믿지 않는다)
+ */
+export const MAX_SHELL_TIMEOUT_MS = 600_000;
 
 /**
  * 도구 출력에 상한을 씌우고, **그 전에 비밀값을 지운다**.
@@ -203,15 +235,44 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
 
     tools.delete_path = tool({
       description:
-        "파일이나 디렉터리를 삭제한다. 디렉터리를 지우려면 recursive 를 true 로 줘야 한다. 되돌릴 수 없으니 신중히 쓸 것.",
+        "파일이나 디렉터리를 삭제한다. 디렉터리를 지우려면 recursive 를 true 로 줘야 한다. " +
+        "되돌릴 수 없어서 **사용자 승인을 받은 뒤에** 실행된다 — 거부되면 같은 경로를 다시 시도하지 말 것.",
       inputSchema: z.object({
         path: z.string().describe("삭제할 경로"),
         recursive: z.boolean().optional().describe("디렉터리를 하위까지 통째로 지울 때 true"),
       }),
-      execute: async ({ path, recursive }) => ({
-        path,
-        deleted: await ipc.deletePath(path, { projectPath, recursive }),
-      }),
+      execute: async ({ path, recursive }, { abortSignal }) => {
+        // 삭제는 되돌릴 수 없다 → 셸과 같은 게이트를 지난다. 규칙으로 미리 열어 둘 수는 없다
+        // ("비슷한 삭제도 함께 허용" 이라는 개념이 성립하지 않는다).
+        if (options.requestApproval) {
+          const outcome = await options.requestApproval({
+            kind: "delete",
+            toolName: "delete_path",
+            command: path,
+            detail: recursive
+              ? "디렉터리를 하위 내용까지 통째로 지웁니다. 되돌릴 수 없습니다."
+              : "이 경로를 지웁니다. 되돌릴 수 없습니다.",
+            origin: options.origin,
+            signal: abortSignal,
+          });
+          if (!outcome.approved) {
+            return {
+              path,
+              approved: false,
+              denied: true,
+              deleted: false,
+              reason: clip(outcome.reason ?? "사용자가 삭제를 거부했습니다.", 1_000).text,
+              hint: "같은 경로를 다시 지우려 하지 말고, 사유를 반영해 다른 방법을 찾거나 사용자에게 물어보세요.",
+            };
+          }
+        }
+
+        return {
+          path,
+          approved: true,
+          deleted: await ipc.deletePath(path, { projectPath, recursive }),
+        };
+      },
     });
   }
 
@@ -222,9 +283,36 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
       inputSchema: z.object({
         command: z.string().describe("실행할 명령 한 줄"),
         cwd: z.string().optional().describe("작업 디렉터리 (생략 시 프로젝트 루트)"),
-        timeoutMs: z.number().int().positive().optional().describe("타임아웃 (기본 120000ms)"),
+        timeoutMs: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(`타임아웃 (기본 120000ms, 최대 ${600_000}ms)`),
       }),
       execute: async ({ command, cwd, timeoutMs }, { abortSignal }) => {
+        // 실행 전 승인. 거부는 예외가 아니라 **정상적인 결말**이다 — 던지면 턴이
+        // 에러로 끊기지만, 결과로 돌려주면 모델이 다른 수를 고를 수 있다.
+        if (options.requestApproval) {
+          const outcome = await options.requestApproval({
+            toolName: "execute_shell_command",
+            command,
+            cwd,
+            origin: options.origin,
+            signal: abortSignal,
+          });
+          if (!outcome.approved) {
+            return {
+              command,
+              approved: false,
+              denied: true,
+              // 사용자가 적은 사유도 컨텍스트로 들어간다 → 가리기·상한을 함께 지난다.
+              reason: clip(outcome.reason ?? "사용자가 실행을 거부했습니다.", 1_000).text,
+              hint: "같은 명령을 다시 시도하지 말고, 사유를 반영해 다른 방법을 찾거나 사용자에게 물어보세요.",
+            };
+          }
+        }
+
         // 중단을 누르면 프로세스를 실제로 죽여야 한다. 토큰으로 Rust 쪽 실행을 찾아 트리째 정리한다.
         const cancelToken = newCancelToken("shell");
         const onAbort = () => {
@@ -233,12 +321,19 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
         abortSignal?.addEventListener("abort", onAbort, { once: true });
 
         const result = await ipc
-          .executeShellCommand(command, { cwd, timeoutMs, projectPath, cancelToken })
+          .executeShellCommand(command, {
+            cwd,
+            // 모델이 크게 잡아 온 값은 여기서 접는다. 안 접으면 턴이 그만큼 멈춰 선다.
+            timeoutMs: timeoutMs ? Math.min(timeoutMs, MAX_SHELL_TIMEOUT_MS) : undefined,
+            projectPath,
+            cancelToken,
+          })
           .finally(() => abortSignal?.removeEventListener("abort", onAbort));
         const stdout = clip(result.stdout);
         const stderr = clip(result.stderr, 4_000);
         return {
           command: result.command,
+          approved: true,
           cwd: result.cwd,
           exitCode: result.exitCode,
           success: result.success,

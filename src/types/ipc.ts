@@ -291,6 +291,14 @@ export interface DirEntry {
   modified: string | null;
 }
 
+/** `@` 자동완성 목록의 항목 하나. 내용은 없고 이름·경로·종류만 온다. */
+export interface ProjectFile {
+  name: string;
+  relativePath: string;
+  isDir: boolean;
+  size: number;
+}
+
 export interface PathInfo {
   path: string;
   exists: boolean;

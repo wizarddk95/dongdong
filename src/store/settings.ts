@@ -16,6 +16,7 @@ import {
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
+import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "@/lib/ai/approval";
 import { setRedactionSecrets } from "@/lib/ai/redact";
 import { DEFAULT_TOOLS, type ToolToggles } from "@/lib/ai/tools";
 import type { HookConfig } from "@/lib/hooks";
@@ -35,6 +36,17 @@ interface SettingsState extends ProviderCredentials {
   maxSteps: number;
   /** 프로젝트 루트의 AGENTS.md 를 컨텍스트 맨 앞에 자동으로 싣는다 */
   useProjectInstructions: boolean;
+  /**
+   * 지금 시각을 시스템 프롬프트에 싣는다. 안 실으면 모델은 학습 시점을 "지금" 으로
+   * 착각해서 최신 정보를 한두 해 전 기준으로 찾는다.
+   */
+  injectDateTime: boolean;
+  /**
+   * 셸 실행 권한 모드 — 매번 물을지, 묻지 않고 돌릴지.
+   * [항상 허용]으로 쌓이는 규칙은 여기 없다 — **세션 수명**이라 디스크에 남기지 않는다
+   * (`store/approvals.ts`).
+   */
+  shellApproval: ApprovalMode;
   /** 에이전트에게 열어 줄 도구 묶음 */
   tools: ToolToggles;
   /**
@@ -90,6 +102,8 @@ type PersistedSettings = Pick<
   | "effort"
   | "maxSteps"
   | "useProjectInstructions"
+  | "injectDateTime"
+  | "shellApproval"
   | "tools"
   | "skillsEnabled"
   | "builtinHooks"
@@ -115,6 +129,8 @@ const PERSISTED_KEYS: (keyof PersistedSettings)[] = [
   "effort",
   "maxSteps",
   "useProjectInstructions",
+  "injectDateTime",
+  "shellApproval",
   "tools",
   "skillsEnabled",
   "builtinHooks",
@@ -155,6 +171,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
   effort: "high",
   maxSteps: 8,
   useProjectInstructions: true,
+  injectDateTime: true,
+  // 기본은 "묻는다". 샌드박스가 없는 도구라 무엇을 돌릴지는 사람이 정하는 게 맞다.
+  shellApproval: DEFAULT_APPROVAL_MODE,
   tools: DEFAULT_TOOLS,
   skillsEnabled: {},
   builtinHooks: {},
@@ -170,7 +189,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
   load: async () => {
     try {
       const [stored, path] = await Promise.all([ipc.readAppSettings(), ipc.appSettingsPath()]);
-      const persisted = stored as Partial<SettingsState>;
+      const persisted = stored as Partial<SettingsState> & { allowedCommands?: unknown };
+      // 옛 키. [항상 허용] 규칙은 세션 수명으로 옮겼으므로 디스크에서 걷어낸다
+      // (다음 저장에서 파일에서도 사라진다).
+      delete persisted.allowedCommands;
       set({
         ...persisted,
         // 새 도구가 추가돼도 예전 settings.json 이 덮어쓰지 않도록 기본값 위에 병합한다.
@@ -178,6 +200,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
         // 이미 저장된 설정을 고아로 만들지 않으려고 여기서 한 번 받아 준다.
         tools: { ...DEFAULT_TOOLS, ...(legacyTools(stored) ?? {}), ...(persisted.tools ?? {}) },
         skillsEnabled: persisted.skillsEnabled ?? {},
+        // 예전 settings.json 에는 없던 키다. 없으면 안전한 쪽(승인 필요)으로 시작한다.
+        shellApproval: persisted.shellApproval === "auto" ? "auto" : DEFAULT_APPROVAL_MODE,
+        injectDateTime: persisted.injectDateTime ?? true,
         builtinHooks: persisted.builtinHooks ?? {},
         hooks: persisted.hooks ?? [],
         // 카탈로그에서 id 가 바뀐 모델(예: 날짜 접미사가 붙은 Haiku 4.5)을 되돌린다.
