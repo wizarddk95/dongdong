@@ -11,8 +11,10 @@ import { useWorkspace } from "@/store/workspace";
  *
  * 예전에는 채팅 앞단에 세션 맵(분기 트리)이 따로 있었지만, 세션 분기를 만드는 길이
  * 사라지면서 그릴 나무도 사라졌다 → 목록 하나로 합쳤다.
+ *
+ * 폭은 App 이 들고 있다 — 분할선을 끄는 주체가 App 이라 여기서 상태를 또 두면 어긋난다.
  */
-export function SessionSidebar() {
+export function SessionSidebar({ width }: { width: number }) {
   const project = useWorkspace((state) => state.project);
   const sessions = useWorkspace((state) => state.sessions);
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
@@ -41,7 +43,10 @@ export function SessionSidebar() {
   }
 
   return (
-    <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-hairline bg-surface-1">
+    <aside
+      style={{ width }}
+      className="flex h-full min-h-0 shrink-0 flex-col bg-surface-1"
+    >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-hairline px-3 py-2">
         <span className="text-body-emphasis text-ink">
           세션 {sessions.length > 0 && `(${sessions.length})`}

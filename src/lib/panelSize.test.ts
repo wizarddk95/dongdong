@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { CHAT_MIN, RIGHT_MIN, clampRightWidth, defaultRightWidth } from "@/lib/panelSize";
+import {
+  CHAT_MIN,
+  RIGHT_MIN,
+  SIDEBAR_MAX,
+  SIDEBAR_MIN,
+  clampRightWidth,
+  clampSidebarWidth,
+  defaultRightWidth,
+} from "@/lib/panelSize";
 
 describe("clampRightWidth", () => {
   it("범위 안의 값은 그대로 둔다", () => {
@@ -31,5 +39,28 @@ describe("defaultRightWidth", () => {
 
   it("좁은 창에서도 최소 폭을 지킨다", () => {
     expect(defaultRightWidth(800)).toBe(RIGHT_MIN);
+  });
+});
+
+describe("clampSidebarWidth", () => {
+  it("범위 안의 값은 그대로 둔다", () => {
+    expect(clampSidebarWidth(300, 1600)).toBe(300);
+  });
+
+  it("세션 제목이 사라질 만큼 좁히지 못한다", () => {
+    expect(clampSidebarWidth(20, 1600)).toBe(SIDEBAR_MIN);
+  });
+
+  it("아무리 끌어도 상한을 넘지 않는다", () => {
+    expect(clampSidebarWidth(2000, 4000)).toBe(SIDEBAR_MAX);
+  });
+
+  it("창이 좁으면 채팅과 우측 패널의 하한만큼 자리를 내준다", () => {
+    // 1000 - 420(채팅) - 320(우측) = 260 만 남는다.
+    expect(clampSidebarWidth(400, 1000)).toBe(260);
+  });
+
+  it("남는 자리가 없어도 최소 폭은 지킨다 (창이 아주 좁을 때)", () => {
+    expect(clampSidebarWidth(400, 500)).toBe(SIDEBAR_MIN);
   });
 });

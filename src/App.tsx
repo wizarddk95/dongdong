@@ -8,7 +8,12 @@ import { SessionSidebar } from "@/components/SessionSidebar";
 import { SettingsModal } from "@/components/SettingsModal";
 import { ShellConsole } from "@/components/ShellConsole";
 import { TopBar } from "@/components/TopBar";
-import { clampRightWidth, defaultRightWidth } from "@/lib/panelSize";
+import {
+  SIDEBAR_DEFAULT,
+  clampRightWidth,
+  clampSidebarWidth,
+  defaultRightWidth,
+} from "@/lib/panelSize";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import { useAgents } from "@/store/agents";
 import { useChat } from "@/store/chat";
@@ -51,10 +56,15 @@ export default function App() {
   // 채팅 ↔ 우측 패널 분할. null 이면 아직 폭을 모른다는 뜻이라 기본 비율로 잡는다.
   const splitRef = useRef<HTMLDivElement | null>(null);
   const [rightWidth, setRightWidth] = useState<number | null>(null);
-  const [dragging, setDragging] = useState(false);
+  // 세션 목록도 같은 방식으로 늘린다. 이쪽은 창 기준이라 기본값을 바로 안다.
+  const mainRef = useRef<HTMLElement | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  /** 지금 끌고 있는 분할선. 둘이 동시에 끌리는 일은 없다. */
+  const [dragging, setDragging] = useState<"sidebar" | "right" | null>(null);
 
   // 컨테이너가 생기거나 창 크기가 바뀌면 폭을 다시 범위 안으로 넣는다.
   const fitToContainer = useCallback(() => {
+    setSidebarWidth((current) => clampSidebarWidth(current, window.innerWidth));
     const box = splitRef.current?.getBoundingClientRect();
     if (!box || box.width === 0) return;
     setRightWidth((current) =>
@@ -73,12 +83,17 @@ export default function App() {
     if (!dragging) return;
 
     function onMove(event: PointerEvent) {
+      if (dragging === "sidebar") {
+        const left = mainRef.current?.getBoundingClientRect().left ?? 0;
+        setSidebarWidth(clampSidebarWidth(event.clientX - left, window.innerWidth));
+        return;
+      }
       const box = splitRef.current?.getBoundingClientRect();
       if (!box) return;
       setRightWidth(clampRightWidth(box.right - event.clientX, box.width));
     }
     function onUp() {
-      setDragging(false);
+      setDragging(null);
     }
 
     window.addEventListener("pointermove", onMove);
@@ -132,8 +147,25 @@ export default function App() {
         </div>
       )}
 
-      <main className="flex min-h-0 flex-1">
-        <SessionSidebar />
+      <main ref={mainRef} className="flex min-h-0 flex-1">
+        <SessionSidebar width={sidebarWidth} />
+
+        {/* 세션 목록 분할선 — 우측 것과 같은 부품이다(잡히는 영역만 좌우로 넓힌 1px 선). */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          title="드래그해서 세션 목록 폭 조절 · 더블클릭하면 기본값"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            setDragging("sidebar");
+          }}
+          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+          className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
+            dragging === "sidebar" ? "bg-accent" : "bg-hairline hover:bg-accent"
+          }`}
+        >
+          <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+        </div>
 
         <div
           ref={splitRef}
@@ -151,14 +183,14 @@ export default function App() {
             title="드래그해서 채팅 폭 조절 · 더블클릭하면 기본값"
             onPointerDown={(event) => {
               event.preventDefault();
-              setDragging(true);
+              setDragging("right");
             }}
             onDoubleClick={() => {
               const box = splitRef.current?.getBoundingClientRect();
               if (box) setRightWidth(defaultRightWidth(box.width));
             }}
             className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
-              dragging ? "bg-accent" : "bg-hairline hover:bg-accent"
+              dragging === "right" ? "bg-accent" : "bg-hairline hover:bg-accent"
             }`}
           >
             {/* 1px 선은 집기 어려워 잡히는 영역만 좌우로 넓힌다 */}
