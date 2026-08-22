@@ -53,9 +53,14 @@ fn resolve_within_blocks_escaping_the_project_root() {
     let root = std::env::temp_dir().join("dongdong-tests-paths");
     std::fs::create_dir_all(&root).unwrap();
     let root_str = root.to_string_lossy().into_owned();
+    // `resolve_within` 은 링크를 풀어서 돌려주므로 비교 기준도 풀어 둔 것이어야 한다.
+    // `temp_dir()` 이 실제 위치가 아닌 OS 가 있다 — macOS 는 `/var` → `/private/var`,
+    // Windows 는 `C:\Users\RUNNER~1\...` 같은 8.3 단축 경로다(리눅스의 `/tmp` 만 그대로다).
+    // 날것으로 비교하면 그 두 곳에서만 조용히 어긋난다.
+    let root_real = resolve_through_links(&root);
 
     let inside = resolve_within(Some(&root_str), "src/main.rs").expect("루트 안은 허용");
-    assert!(is_within(&root, &inside));
+    assert!(is_within(&root_real, &inside));
 
     let escaped = resolve_within(Some(&root_str), "../../etc/passwd");
     assert!(escaped.is_err(), "상위 디렉터리 탈출은 막아야 한다");
@@ -146,3 +151,4 @@ fn workspace_paths_live_under_the_project_root() {
     assert!(db_path(root).ends_with("local.db"));
     assert!(is_within(root, &db_path(root)));
 }
+
