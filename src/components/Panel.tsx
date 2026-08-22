@@ -5,7 +5,7 @@
  * 색·모서리·패딩을 손으로 적지 말고 여기서 가져다 쓴다.
  * 모서리 규칙은 `index.css` 그대로 — 칩 xs · 버튼/입력 sm · 패널 md · 모달 lg.
  */
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 /* ─────────────────────────── 입력 크롬 ───────────────────────────
  * 사방을 두른 1px 테두리 + 둥근 모서리. 포커스는 전역 `:focus-visible` 링이 받고,
@@ -183,7 +183,73 @@ export function Hint({
   );
 }
 
+/* ─────────────────────────── 접기 ─────────────────────────── */
+
+interface DisclosureProps {
+  open: boolean;
+  onToggle: () => void;
+  /** 접혀 있을 때도 보이는 제목 */
+  title: ReactNode;
+  /** 제목 오른쪽에 서는 한 줄 요약 — 펼치지 않고도 상태를 알 수 있게 한다 */
+  summary?: ReactNode;
+  children: ReactNode;
+}
+
+/**
+ * 접었다 펴는 행 하나.
+ *
+ * 항목이 늘어날수록 아래로만 길어지는 목록(공급자별 API 키처럼)에 쓴다.
+ * **접힌 상태에서도 요약은 보여야 한다** — 다 접어 두면 무엇이 채워져 있는지 알려고
+ * 전부 열어 봐야 하고, 그러면 접은 의미가 없다.
+ */
+export function Disclosure({ open, onToggle, title, summary, children }: DisclosureProps) {
+  return (
+    <div className="overflow-hidden rounded-md border border-hairline bg-surface-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-hover"
+      >
+        {/* 삼각형은 회전만 시킨다 — 다른 글리프로 갈아 끼우면 줄 높이가 흔들린다. */}
+        <span
+          aria-hidden
+          className={`text-caption text-ink-subtle transition-transform ${open ? "rotate-90" : ""}`}
+        >
+          ▶
+        </span>
+        <span className="min-w-0 flex-1 truncate text-body-sm text-ink">{title}</span>
+        {summary && <span className="shrink-0 text-caption text-ink-muted">{summary}</span>}
+      </button>
+      {open && <div className="border-t border-hairline bg-canvas px-3 py-3">{children}</div>}
+    </div>
+  );
+}
+
 /* ─────────────────────────── 모달 ─────────────────────────── */
+
+/**
+ * 배경을 눌러 닫는 오버레이에 붙이는 핸들러.
+ *
+ * `onClick` 하나로 닫으면 **모달 안에서 드래그를 시작해 밖에서 손을 뗄 때도 닫힌다** —
+ * 눌린 곳과 뗀 곳이 다르면 브라우저가 둘의 공통 조상(= 배경)에서 click 을 내기 때문이다.
+ * 입력칸의 글자를 긁다가 커서가 살짝 밖으로 나가면 창이 통째로 꺼져 입력이 날아간다.
+ * → **누르기 시작한 곳도 배경이었을 때만** 닫는다.
+ */
+export function useBackdropDismiss(onClose: () => void) {
+  const startedOnBackdrop = useRef(false);
+
+  return {
+    onPointerDown: (event: React.PointerEvent) => {
+      startedOnBackdrop.current = event.target === event.currentTarget;
+    },
+    onClick: (event: React.MouseEvent) => {
+      const onBackdrop = event.target === event.currentTarget && startedOnBackdrop.current;
+      startedOnBackdrop.current = false;
+      if (onBackdrop) onClose();
+    },
+  };
+}
 
 interface ModalProps {
   open: boolean;
@@ -206,16 +272,16 @@ export function Modal({
   children,
   widthClass = "max-w-lg",
 }: ModalProps) {
+  const backdrop = useBackdropDismiss(onClose);
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 backdrop-blur-[2px]"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className={`flex max-h-full w-full flex-col overflow-hidden rounded-lg border border-hairline bg-canvas elevate-lg ${widthClass}`}
-        onClick={(event) => event.stopPropagation()}
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-hairline px-5 py-4">
           <div className="min-w-0">
