@@ -1,300 +1,149 @@
-import { asSchema } from "@ai-sdk/provider-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { buildSkills, skillNames, summarizeToolCall } from "@/lib/ai/skills";
+import {
+  appendSkillCatalog,
+  buildSkillTools,
+  builtinSkills,
+  enabledSkills,
+  mergeSkills,
+  parseSkillDoc,
+  skillCatalogBlock,
+  type SkillDoc,
+} from "@/lib/ai/skills";
+import type { SkillFile } from "@/types/ipc";
 
-// 실제 IPC 는 Tauri 런타임이 필요하므로 통째로 가짜로 바꾼다.
-vi.mock("@/lib/ipc", () => ({
-  readFile: vi.fn(),
-  writeFile: vi.fn(),
-  listDirectory: vi.fn(),
-  createDirectory: vi.fn(),
-  deletePath: vi.fn(),
-  pathInfo: vi.fn(),
-  executeShellCommand: vi.fn(),
-  cancelShellCommand: vi.fn(),
-  upsertMemory: vi.fn(),
-  listMemories: vi.fn(),
-}));
-
-import * as ipc from "@/lib/ipc";
-
-const mocked = vi.mocked(ipc);
-
-/** 도구 실행 헬퍼 — 테스트에서 필요 없는 실행 옵션은 비워 둔다. */
-async function run(tool: unknown, input: unknown) {
-  const executable = tool as {
-    execute: (input: unknown, options: unknown) => Promise<unknown>;
-    inputSchema: { parse?: (value: unknown) => unknown };
+function file(partial: Partial<SkillFile> & Pick<SkillFile, "folder" | "content">): SkillFile {
+  return {
+    source: "user",
+    path: `C:/skills/${partial.folder}/SKILL.md`,
+    truncated: false,
+    ...partial,
   };
-  return executable.execute(input, { toolCallId: "call-1", messages: [], context: undefined });
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
+/** 도구의 execute 를 부르기 좋게 감싼다 (AI SDK 는 두 번째 인자로 실행 맥락을 준다). */
+async function run(tool: unknown, input: unknown) {
+  const execute = (tool as { execute: (input: unknown, options: unknown) => Promise<unknown> })
+    .execute;
+  return execute(input, { toolCallId: "t1", messages: [] });
+}
+
+describe("parseSkillDoc", () => {
+  it("frontmatter 의 name·description 을 읽고 본문만 남긴다", () => {
+    const skill = parseSkillDoc(
+      "---\nname: xlsx\ndescription: 엑셀을 다룰 때\n---\n# 본문\n절차",
+      { folder: "excel", source: "user" },
+    );
+    expect(skill.name).toBe("xlsx");
+    expect(skill.description).toBe("엑셀을 다룰 때");
+    expect(skill.body.startsWith("# 본문")).toBe(true);
+  });
+
+  it("따옴표로 감싼 값도 받는다", () => {
+    const skill = parseSkillDoc('---\nname: "pdf"\ndescription: \'PDF 다루기\'\n---\n본문', {
+      folder: "x",
+      source: "user",
+    });
+    expect(skill.name).toBe("pdf");
+    expect(skill.description).toBe("PDF 다루기");
+  });
+
+  it("frontmatter 가 없으면 폴더 이름과 첫 줄을 쓴다", () => {
+    const skill = parseSkillDoc("# 사내 보고서 양식\n1. 표지를 만든다", {
+      folder: "report",
+      source: "project",
+    });
+    expect(skill.name).toBe("report");
+    expect(skill.description).toBe("사내 보고서 양식");
+    expect(skill.body).toContain("표지를 만든다");
+  });
 });
 
-describe("buildSkills", () => {
-  it("토글에 따라 노출되는 도구가 달라진다", () => {
-    const all = Object.keys(buildSkills());
-    expect(all).toContain("read_file");
-    expect(all).toContain("write_file");
-    expect(all).toContain("execute_shell_command");
-    expect(all).toContain("remember");
-
-    const readOnly = Object.keys(
-      buildSkills({ enabled: { fsWrite: false, shell: false, memory: false } }),
-    );
-    expect(readOnly).toEqual(["read_file", "list_directory", "path_info"]);
-
-    expect(Object.keys(buildSkills({ enabled: { fsRead: false } }))).not.toContain("read_file");
+describe("mergeSkills", () => {
+  it("내장 스킬이 기본으로 들어간다", () => {
+    const names = mergeSkills([]).map((skill) => skill.name);
+    expect(names).toEqual(expect.arrayContaining(["xlsx", "docx", "pdf"]));
   });
 
-  it("delegate_task 는 위임 실행기를 넘겼을 때만 노출된다", async () => {
-    // 서브에이전트에게 도구를 만들어 줄 때는 실행기를 생략해 재위임을 막는다.
-    expect(Object.keys(buildSkills())).not.toContain("delegate_task");
-
-    const onDelegate = vi.fn().mockResolvedValue({
-      runId: "r1",
-      name: "테스트 러너",
-      status: "succeeded",
-      result: "3건 실패",
-    });
-    const tools = buildSkills({ onDelegate });
-    expect(Object.keys(tools)).toContain("delegate_task");
-
-    const outcome = await run(tools.delegate_task, { name: "테스트 러너", task: "테스트 돌려" });
-    expect(onDelegate).toHaveBeenCalledWith({ name: "테스트 러너", task: "테스트 돌려" });
-    expect(outcome).toMatchObject({ runId: "r1", status: "succeeded" });
-
-    // 토글을 끄면 실행기가 있어도 안 나온다.
-    expect(
-      Object.keys(buildSkills({ onDelegate, enabled: { subagents: false } })),
-    ).not.toContain("delegate_task");
-  });
-
-  it("skillNames 는 활성 도구 이름만 돌려준다", () => {
-    expect(skillNames({ enabled: { fsRead: false, fsWrite: false, memory: false } })).toEqual([
-      "execute_shell_command",
+  it("같은 이름이면 프로젝트가 전역을, 전역이 내장을 이긴다", () => {
+    const merged = mergeSkills([
+      file({ folder: "xlsx", source: "user", content: "---\nname: xlsx\n---\n전역판" }),
+      file({ folder: "xlsx", source: "project", content: "---\nname: xlsx\n---\n프로젝트판" }),
     ]);
+    const xlsx = merged.find((skill) => skill.name === "xlsx");
+    expect(xlsx?.source).toBe("project");
+    expect(xlsx?.body).toBe("프로젝트판");
+    // 덮어썼을 뿐 개수가 늘지는 않는다.
+    expect(merged.filter((skill) => skill.name === "xlsx")).toHaveLength(1);
   });
 
-  it("모든 도구가 설명과 입력 스키마를 갖는다", () => {
-    for (const [name, tool] of Object.entries(buildSkills())) {
-      const definition = tool as { description?: string; inputSchema?: unknown };
-      expect(definition.description, `${name} 설명 누락`).toBeTruthy();
-      expect(definition.inputSchema, `${name} 스키마 누락`).toBeTruthy();
-    }
-  });
-
-  it("zod 스키마가 공급자에 보낼 JSON Schema 로 변환된다", () => {
-    // 이 변환은 실제 요청 직전에 일어나므로, 여기서 막히면 런타임에야 터진다.
-    for (const [name, tool] of Object.entries(buildSkills())) {
-      const schema = asSchema((tool as { inputSchema: never }).inputSchema);
-      const json = schema.jsonSchema as { type?: string; properties?: Record<string, unknown> };
-      expect(json.type, `${name} JSON Schema 변환 실패`).toBe("object");
-      expect(Object.keys(json.properties ?? {}).length, `${name} 속성 없음`).toBeGreaterThan(0);
-    }
+  it("본문이 빈 파일은 스킬로 세지 않는다", () => {
+    const before = mergeSkills([]).length;
+    const after = mergeSkills([file({ folder: "empty", content: "---\nname: empty\n---\n   " })]);
+    expect(after).toHaveLength(before);
   });
 });
 
-describe("도구 실행", () => {
-  it("read_file 은 IPC 결과를 LLM 이 읽기 좋은 형태로 줄인다", async () => {
-    mocked.readFile.mockResolvedValue({
-      path: "C:/p/src/App.tsx",
-      relativePath: "src/App.tsx",
-      content: "export default App",
-      size: 18,
-      truncated: false,
-      isBinary: false,
-    });
+describe("enabledSkills", () => {
+  const skills: SkillDoc[] = [
+    { name: "a", description: "", body: "본문", source: "builtin" },
+    { name: "b", description: "", body: "본문", source: "user" },
+  ];
 
-    const tools = buildSkills({ projectPath: "C:/p" });
-    const result = await run(tools.read_file, { path: "src/App.tsx" });
-
-    expect(mocked.readFile).toHaveBeenCalledWith("src/App.tsx", "C:/p");
-    expect(result).toEqual({
-      path: "src/App.tsx",
-      content: "export default App",
-      size: 18,
-      truncated: false,
-      isBinary: false,
-    });
+  it("설정에 없는 스킬은 켜진 것으로 본다", () => {
+    expect(enabledSkills(skills, {}).map((skill) => skill.name)).toEqual(["a", "b"]);
   });
 
-  it("execute_shell_command 는 종료 코드와 출력을 함께 돌려준다", async () => {
-    mocked.executeShellCommand.mockResolvedValue({
-      command: "pnpm test",
-      shell: "cmd",
-      cwd: "C:/p",
-      stdout: "ok",
-      stderr: "",
-      exitCode: 0,
-      success: true,
-      timedOut: false,
-      cancelled: false,
-      truncated: false,
-      durationMs: 42,
-    });
-
-    const tools = buildSkills();
-    const result = (await run(tools.execute_shell_command, { command: "pnpm test" })) as Record<
-      string,
-      unknown
-    >;
-
-    expect(result.exitCode).toBe(0);
-    expect(result.success).toBe(true);
-    expect(result.stdout).toBe("ok");
-  });
-
-  it("중단하면 실행 중인 셸 프로세스를 취소 토큰으로 죽인다", async () => {
-    const controller = new AbortController();
-    let sentToken: string | undefined;
-
-    // 끝나지 않는 명령: 취소가 들어와야 풀린다.
-    mocked.executeShellCommand.mockImplementation(async (_command, options) => {
-      sentToken = options?.cancelToken;
-      return new Promise((resolve) => {
-        mocked.cancelShellCommand.mockImplementation(async (token: string) => {
-          resolve({
-            command: "pnpm dev",
-            shell: "cmd",
-            cwd: "C:/p",
-            stdout: "",
-            stderr: "",
-            exitCode: null,
-            success: false,
-            timedOut: false,
-            cancelled: token === sentToken,
-            truncated: false,
-            durationMs: 10,
-          });
-          return true;
-        });
-      });
-    });
-
-    const tool = buildSkills().execute_shell_command as unknown as {
-      execute: (input: unknown, options: unknown) => Promise<{ cancelled: boolean }>;
-    };
-    const pending = tool.execute(
-      { command: "pnpm dev" },
-      { toolCallId: "call-1", messages: [], abortSignal: controller.signal },
-    );
-
-    controller.abort();
-    const result = await pending;
-
-    expect(mocked.cancelShellCommand).toHaveBeenCalledWith(sentToken);
-    expect(result.cancelled).toBe(true);
-  });
-
-  it("긴 쉘 출력은 잘라서 컨텍스트를 지킨다", async () => {
-    mocked.executeShellCommand.mockResolvedValue({
-      command: "cat big",
-      shell: "cmd",
-      cwd: "C:/p",
-      stdout: "x".repeat(25_000),
-      stderr: "",
-      exitCode: 0,
-      success: true,
-      timedOut: false,
-      cancelled: false,
-      truncated: false,
-      durationMs: 1,
-    });
-
-    const result = (await run(buildSkills().execute_shell_command, { command: "cat big" })) as {
-      stdout: string;
-      truncated: boolean;
-    };
-
-    expect(result.stdout.length).toBeLessThan(25_000);
-    expect(result.truncated).toBe(true);
-  });
-
-  it("remember 는 세션 스코프를 그대로 전달한다", async () => {
-    mocked.upsertMemory.mockResolvedValue({
-      id: "mem-1",
-      projectId: "p1",
-      sessionId: "s1",
-      scope: "session",
-      key: "할일",
-      value: "테스트 붙이기",
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-    });
-
-    const tools = buildSkills({ sessionId: "s1" });
-    const result = await run(tools.remember, {
-      key: "할일",
-      value: "테스트 붙이기",
-      scope: "session",
-    });
-
-    expect(mocked.upsertMemory).toHaveBeenCalledWith(
-      { key: "할일", value: "테스트 붙이기", scope: "session", sessionId: "s1" },
-      undefined,
-    );
-    expect(result).toEqual({ key: "할일", scope: "session", updatedAt: "2026-01-01T00:00:00Z" });
-  });
-
-  it("recall 은 key 로 걸러 준다", async () => {
-    mocked.listMemories.mockResolvedValue([
-      {
-        id: "m1",
-        projectId: "p1",
-        sessionId: null,
-        scope: "project",
-        key: "빌드",
-        value: "pnpm build",
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-      },
-      {
-        id: "m2",
-        projectId: "p1",
-        sessionId: null,
-        scope: "project",
-        key: "테스트",
-        value: "pnpm test",
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-      },
-    ]);
-
-    const tools = buildSkills({ sessionId: "s1" });
-    const all = (await run(tools.recall, {})) as { total: number };
-    const one = (await run(tools.recall, { key: "빌드" })) as {
-      total: number;
-      memories: { value: string }[];
-    };
-
-    expect(mocked.listMemories).toHaveBeenCalledWith("s1", undefined);
-    expect(all.total).toBe(2);
-    expect(one.total).toBe(1);
-    expect(one.memories[0].value).toBe("pnpm build");
+  it("false 로 적힌 것만 뺀다", () => {
+    expect(enabledSkills(skills, { a: false }).map((skill) => skill.name)).toEqual(["b"]);
   });
 });
 
-describe("summarizeToolCall", () => {
-  it("경로/명령/키를 골라 한 줄로 줄인다", () => {
-    expect(summarizeToolCall("read_file", { path: "src/App.tsx" })).toBe("read_file(src/App.tsx)");
-    expect(summarizeToolCall("execute_shell_command", { command: "pnpm test" })).toBe(
-      "execute_shell_command(pnpm test)",
-    );
-    expect(summarizeToolCall("remember", { key: "빌드", value: "…" })).toBe("remember(빌드)");
-    expect(summarizeToolCall("delegate_task", { name: "테스트 러너", task: "…" })).toBe(
-      "delegate_task(테스트 러너)",
-    );
-    expect(summarizeToolCall("recall", {})).toBe("recall");
+describe("skillCatalogBlock", () => {
+  it("이름과 설명만 싣고 본문은 넣지 않는다", () => {
+    const block = skillCatalogBlock(builtinSkills());
+    expect(block).toContain("xlsx:");
+    expect(block).toContain("load_skill");
+    // 본문의 코드 예제가 새어 나오면 스킬의 존재 이유가 사라진다.
+    // (설명 줄에 라이브러리 이름은 나올 수 있으므로 본문에만 있는 문장으로 본다)
+    expect(block).not.toContain("data_only=True");
   });
 
-  it("아주 긴 인자는 잘라 낸다", () => {
-    const summary = summarizeToolCall("execute_shell_command", { command: "x".repeat(200) });
-    // 도구 이름 + 60자 + 말줄임 괄호
-    expect(summary.length).toBe("execute_shell_command".length + 63);
-    expect(summary.endsWith("…)")).toBe(true);
+  it("스킬이 없으면 빈 문자열이라 프롬프트가 그대로다", () => {
+    expect(skillCatalogBlock([])).toBe("");
+    expect(appendSkillCatalog("기본 프롬프트", [])).toBe("기본 프롬프트");
+  });
+
+  it("목록은 시스템 프롬프트 뒤에 붙는다", () => {
+    const composed = appendSkillCatalog("기본 프롬프트", builtinSkills());
+    expect(composed.startsWith("기본 프롬프트")).toBe(true);
+  });
+});
+
+describe("buildSkillTools", () => {
+  it("스킬이 없으면 도구를 만들지 않는다", () => {
+    expect(Object.keys(buildSkillTools([]))).toEqual([]);
+  });
+
+  it("load_skill 이 본문을 돌려준다", async () => {
+    const tools = buildSkillTools(builtinSkills());
+    const result = (await run(tools.load_skill, { name: "docx" })) as {
+      found: boolean;
+      content: string;
+      source: string;
+    };
+    expect(result.found).toBe(true);
+    expect(result.source).toBe("builtin");
+    expect(result.content).toContain("python-docx");
+  });
+
+  it("없는 이름을 부르면 목록을 되돌려준다", async () => {
+    const tools = buildSkillTools(builtinSkills());
+    const result = (await run(tools.load_skill, { name: "hwp" })) as {
+      found: boolean;
+      available: string[];
+    };
+    expect(result.found).toBe(false);
+    expect(result.available).toContain("xlsx");
   });
 });

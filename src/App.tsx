@@ -19,6 +19,7 @@ import { useAgents } from "@/store/agents";
 import { useChat } from "@/store/chat";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
+import { useSkills } from "@/store/skills";
 import { useWorkspace } from "@/store/workspace";
 
 type RightTab = "tree" | "agents" | "files" | "shell";
@@ -49,6 +50,8 @@ export default function App() {
   const settingsLoaded = useSettings((state) => state.loaded);
   const theme = useSettings((state) => state.theme);
   const connectMcp = useMcp((state) => state.connectEnabled);
+  // 스킬 문서는 프로젝트마다 다르다(.dongdong/skills) → 폴더를 열 때 다시 읽는다.
+  const refreshSkills = useSkills((state) => state.refresh);
 
   const [tab, setTab] = useState<RightTab>("tree");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -127,6 +130,12 @@ export default function App() {
     if (!settingsLoaded) return;
     void connectMcp();
   }, [settingsLoaded, project?.rootPath, connectMcp]);
+
+  // 턴을 시작할 때도 다시 읽지만(파일이 바뀔 수 있다), 설정 화면과 인스펙터가
+  // 첫 턴 전에도 목록을 보여줘야 하므로 여기서 한 번 미리 읽어 둔다.
+  useEffect(() => {
+    void refreshSkills();
+  }, [project?.rootPath, refreshSkills]);
 
   return (
     <div className="flex h-full flex-col bg-canvas text-ink">

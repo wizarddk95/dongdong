@@ -298,3 +298,25 @@ export interface PathInfo {
   isFile: boolean;
   size: number;
 }
+
+// ------------------------------------------------------------- 스킬 문서
+
+/**
+ * 디스크에서 읽어 온 스킬 문서 원문. **파싱은 프론트가 한다**(`lib/ai/skills.ts`) —
+ * frontmatter 규칙을 두 언어로 나눠 적으면 반드시 어긋난다.
+ */
+export interface SkillFile {
+  /** `user`(전역 설정 디렉터리) | `project`(리포의 .dongdong/skills) */
+  source: "user" | "project";
+  /** 폴더(또는 파일) 이름. frontmatter 에 name 이 없을 때 이 이름을 쓴다. */
+  folder: string;
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
+/** 스킬 문서를 두는 두 곳. 프로젝트를 열지 않았으면 `project` 는 null. */
+export interface SkillDirs {
+  user: string;
+  project: string | null;
+}

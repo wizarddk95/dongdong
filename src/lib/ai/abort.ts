@@ -11,7 +11,7 @@
  * 도구가 거절되면 tool-error 청크가 흐르고, 그 순간 AI SDK 가 abort 를 관측해 스트림을 닫는다.
  *
  * 백그라운드에 남는 실제 작업(셸 프로세스 등)은 각 도구가 따로 정리한다
- * (`skills.ts` 의 `execute_shell_command` → `cancelShellCommand`).
+ * (`tools.ts` 의 `execute_shell_command` → `cancelShellCommand`).
  */
 import type { ToolSet } from "@ai-sdk/provider-utils";
 
@@ -51,7 +51,7 @@ export function raceAbort<T>(
 
 /**
  * ToolSet 의 모든 도구에 중단을 붙인다. `runner.ts` 가 streamText 에 넘기기 직전에 한 번 감싼다.
- * (Skill · MCP · 위임까지 한 곳에서 처리된다)
+ * (내장 도구 · MCP · 위임까지 한 곳에서 처리된다)
  */
 export function abortableTools<T extends ToolSet>(tools: T): T {
   const wrapped: Record<string, unknown> = {};

@@ -8,7 +8,7 @@ import { ContextRing, UsageBreakdown } from "@/components/UsageMeter";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { findModelOption } from "@/lib/ai/providers";
 import { contextPayloadOf } from "@/lib/ai/runner";
-import { summarizeToolCall } from "@/lib/ai/skills";
+import { summarizeToolCall } from "@/lib/ai/tools";
 import {
   contextStatus,
   formatCost,

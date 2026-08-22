@@ -22,6 +22,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState::default())
         .manage(McpRegistry::default())
         .invoke_handler(tauri::generate_handler![
@@ -37,6 +38,11 @@ pub fn run() {
             commands::settings::read_app_settings,
             commands::settings::write_app_settings,
             commands::settings::app_settings_path,
+            // 스킬 문서 (절차서 — 도구와 다르다)
+            commands::skills::skill_dirs,
+            commands::skills::list_skill_files,
+            commands::skills::create_skill_file,
+            commands::skills::delete_skill_file,
             // shell
             commands::shell::execute_shell_command,
             commands::shell::cancel_shell_command,

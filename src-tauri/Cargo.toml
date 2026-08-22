@@ -19,6 +19,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 # LLM 공급자 호출용. 웹뷰 fetch 는 CORS 에 막히므로 Rust 를 경유한다.
 tauri-plugin-http = "2"
+# 답변 완료 훅이 창 밖으로 알림을 띄운다 (OS 알림 센터).
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # bundled: 시스템에 SQLite 가 없어도 되도록 소스 동봉 빌드

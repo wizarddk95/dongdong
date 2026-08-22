@@ -2,7 +2,7 @@
  * Tauri IPC 얇은 래퍼.
  *
  * 앱 코드는 `invoke()` 를 직접 부르지 않고 항상 이 모듈을 통한다.
- * Phase 3 에서 이 함수들을 Vercel AI SDK 의 `tools` 로 그대로 감싸 Skill 로 노출할 것이다.
+ * 여기 함수들을 Vercel AI SDK 의 도구로 감싼 것이 `lib/ai/tools.ts` 다.
  */
 import { invoke } from "@tauri-apps/api/core";
 
@@ -28,6 +28,8 @@ import type {
   SessionOverview,
   ShellOptions,
   ShellResult,
+  SkillDirs,
+  SkillFile,
   SystemInfo,
   WriteResult,
 } from "@/types/ipc";
@@ -68,6 +70,26 @@ export const writeAppSettings = (settings: Record<string, unknown>) =>
   call<Record<string, unknown>>("write_app_settings", { settings });
 
 export const appSettingsPath = () => call<string>("app_settings_path");
+
+// ------------------------------------------------------------- 스킬 문서
+
+/** 스킬 문서를 두는 두 디렉터리. 전역 쪽은 없으면 만들어 준다. */
+export const skillDirs = (projectPath?: string) => call<SkillDirs>("skill_dirs", { projectPath });
+
+/** 전역 + 프로젝트의 스킬 문서 원문. 프로젝트가 뒤에 오므로 같은 이름이면 프로젝트가 이긴다. */
+export const listSkillFiles = (projectPath?: string) =>
+  call<SkillFile[]>("list_skill_files", { projectPath });
+
+export const createSkillFile = (
+  name: string,
+  scope: "user" | "project",
+  content: string,
+  projectPath?: string,
+) => call<string>("create_skill_file", { name, scope, content, projectPath });
+
+/** 스킬 디렉터리 안의 경로만 받는다 (Rust 가 확인한다). */
+export const deleteSkillFile = (path: string, projectPath?: string) =>
+  call<boolean>("delete_skill_file", { path, projectPath });
 
 // ----------------------------------------------------------------- shell
 

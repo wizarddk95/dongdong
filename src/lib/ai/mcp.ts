@@ -1,12 +1,12 @@
 /**
  * MCP 도구를 AI SDK 의 ToolSet 으로 감싼다.
  *
- * 내장 Skill 과 달리 도구 이름·스키마를 실행 시점에야 알 수 있으므로
+ * 내장 도구와 달리 이름·스키마를 실행 시점에야 알 수 있으므로
  * zod 대신 서버가 준 JSON Schema 를 그대로 쓰고 `dynamicTool` 로 만든다.
  */
 import { dynamicTool, jsonSchema, type ToolSet } from "@ai-sdk/provider-utils";
 
-import { clip, newCancelToken } from "@/lib/ai/skills";
+import { clip, newCancelToken } from "@/lib/ai/tools";
 import * as ipc from "@/lib/ipc";
 import type { McpServerInfo } from "@/types/ipc";
 
@@ -21,7 +21,7 @@ export function slugify(value: string): string {
   return slug || "server";
 }
 
-/** `mcp__<서버>__<도구>` — 내장 Skill 과 이름이 부딪히지 않게 접두사를 붙인다. */
+/** `mcp__<서버>__<도구>` — 내장 도구와 이름이 부딪히지 않게 접두사를 붙인다. */
 export function mcpToolName(serverSlug: string, toolName: string): string {
   return `mcp__${serverSlug}__${slugify(toolName)}`.slice(0, MAX_TOOL_NAME);
 }
@@ -96,7 +96,7 @@ export function buildMcpTools(
           const result = await callTool(server.id, definition.name, input ?? {}, cancelToken)
             .finally(() => abortSignal?.removeEventListener("abort", onAbort));
 
-          // 내장 스킬과 같은 자로 자른다 — 검색·크롤 결과는 한 번에 컨텍스트를 통째로 먹는다.
+          // 내장 도구와 같은 자로 자른다 — 검색·크롤 결과는 한 번에 컨텍스트를 통째로 먹는다.
           const { text, clipped } = clip(result.text);
           // 도구가 스스로 실패를 알린 경우도 모델이 읽고 대응해야 하므로 그대로 돌려준다.
           return {

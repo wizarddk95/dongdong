@@ -2,7 +2,7 @@ import { asSchema } from "@ai-sdk/provider-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildMcpTools, mcpToolName, slugify } from "@/lib/ai/mcp";
-import { MAX_TOOL_OUTPUT_CHARS } from "@/lib/ai/skills";
+import { MAX_TOOL_OUTPUT_CHARS } from "@/lib/ai/tools";
 import type { McpServerInfo } from "@/types/ipc";
 
 function server(partial: Partial<McpServerInfo> & Pick<McpServerInfo, "id" | "name">): McpServerInfo {

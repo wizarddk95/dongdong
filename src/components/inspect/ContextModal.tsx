@@ -11,11 +11,13 @@ import {
   payloadChars,
   type TurnContext,
 } from "@/lib/ai/runner";
-import { skillNames } from "@/lib/ai/skills";
+import { appendSkillCatalog, buildSkillTools } from "@/lib/ai/skills";
+import { enabledToolNames } from "@/lib/ai/tools";
 import { formatExact, lastCallUsage, projectTokens, readNodeUsage } from "@/lib/ai/usage";
 import { pathTo } from "@/lib/tree";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
+import { useSkills } from "@/store/skills";
 import { useWorkspace } from "@/store/workspace";
 
 interface ContextModalProps {
@@ -53,6 +55,9 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
   const instructions = useWorkspace((state) => state.instructions);
   const mcpServers = useMcp((state) => state.servers);
   const settings = useSettings();
+  // 미리보기(아직 안 보낸 턴)에는 지금 켜져 있는 스킬 목록이 그대로 실린다.
+  const skillFiles = useSkills((state) => state.files);
+  const skills = useSkills.getState().enabled();
 
   const [raw, setRaw] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -71,7 +76,7 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
       system:
         snapshot?.system ??
         composeSystemPrompt(
-          settings.systemPrompt,
+          appendSkillCatalog(settings.systemPrompt, skills),
           settings.useProjectInstructions ? instructions : null,
         ),
       chain: pathTo(messages, leafId),
@@ -81,14 +86,24 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
         snapshot?.toolNames ??
         // 미리보기에는 지금 연결된 MCP 서버의 도구도 함께 나가야 한다.
         [
-          ...skillNames({ enabled: settings.skills, sessionId: activeSessionId }),
-          ...(settings.skills.mcp
+          ...enabledToolNames({ enabled: settings.tools, sessionId: activeSessionId }),
+          ...(settings.tools.mcp
             ? Object.keys(buildMcpTools(mcpServers).tools)
             : []),
+          ...Object.keys(buildSkillTools(skills)),
         ],
     });
     return { context, source: node ? "derived" : "preview" };
-  }, [messageId, messages, activeParentId, activeSessionId, instructions, mcpServers, settings]);
+  }, [
+    messageId,
+    messages,
+    activeParentId,
+    activeSessionId,
+    instructions,
+    mcpServers,
+    settings,
+    skillFiles,
+  ]);
 
   const json = useMemo(() => JSON.stringify(context, null, 2), [context]);
 

@@ -16,12 +16,15 @@ import { create } from "zustand";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { errorMessage } from "@/lib/ai/errors";
 import { buildTurnContext, runTurn, type StepRecord, type StoredToolCall } from "@/lib/ai/runner";
-import { buildSkills, summarizeToolCall } from "@/lib/ai/skills";
+import { appendSkillCatalog, buildSkillTools } from "@/lib/ai/skills";
+import { buildTools, summarizeToolCall } from "@/lib/ai/tools";
 import { toStoredUsage } from "@/lib/ai/usage";
+import { dispatchHooks, type HookEvent } from "@/lib/hooks";
 import * as ipc from "@/lib/ipc";
 import { useAgents } from "@/store/agents";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
+import { useSkills } from "@/store/skills";
 import { useWorkspace } from "@/store/workspace";
 
 interface ChatState {
@@ -52,6 +55,25 @@ async function autoTitleSession(sessionId: string, firstMessage: string) {
 
   const title = firstMessage.replace(/\s+/g, " ").trim().slice(0, 40);
   if (title) await workspace.renameSession(sessionId, title);
+}
+
+/**
+ * 훅을 쏜다. 기다리지 않고, 실패해도 삼킨다 — 훅 때문에 턴이 흔들리면 안 된다.
+ * (판정과 실행은 `lib/hooks.ts`)
+ */
+function fireHooks(event: HookEvent, status: string, startedAt: number, error?: string) {
+  const settings = useSettings.getState();
+  void dispatchHooks(
+    {
+      event,
+      status,
+      sessionId: useWorkspace.getState().activeSessionId ?? "",
+      projectPath: useWorkspace.getState().project?.rootPath ?? "",
+      durationMs: Date.now() - startedAt,
+      error,
+    },
+    { builtinToggles: settings.builtinHooks, hooks: settings.hooks },
+  ).catch(() => undefined);
 }
 
 /** tool 노드의 본문 — 트리 카드에서 한눈에 보이는 요약. */
@@ -101,6 +123,14 @@ export const useChat = create<ChatState>((set, get) => ({
     });
     controller = new AbortController();
 
+    const startedAt = Date.now();
+    // 오류로 끝난 턴에 "완료" 알림을 띄우지 않으려고 결말을 들고 다닌다.
+    let outcome: { event: HookEvent; status: string; error?: string } = {
+      event: "turnComplete",
+      status: "complete",
+    };
+    fireHooks("turnStart", "running", startedAt);
+
     // 스텝이 진행되면서 "지금 쓰고 있는 assistant 노드"가 계속 바뀐다.
     let assistantId: string | null = null;
 
@@ -116,20 +146,27 @@ export const useChat = create<ChatState>((set, get) => ({
       const instructions = settings.useProjectInstructions
         ? await workspace.loadInstructions()
         : null;
+
+      // 스킬 문서도 같은 이유로 매 턴 다시 읽는다(에이전트가 직접 쓰기도 한다).
+      // 실리는 것은 이름과 설명뿐이고, 본문은 모델이 `load_skill` 을 부를 때 들어간다.
+      await useSkills.getState().refresh();
+      const skills = useSkills.getState().enabled();
       const tools = {
-        ...buildSkills({
-          enabled: settings.skills,
+        ...buildTools({
+          enabled: settings.tools,
           sessionId,
           // 위임은 서브에이전트 스토어가 실행한다. 결과 요약만 도구 결과로 돌아온다.
           onDelegate: ({ name, task, signal }) =>
             useAgents.getState().spawn({ name, task, signal, parentMessageId: assistantId }),
         }),
         // 연결된 MCP 서버의 도구도 같은 ToolSet 에 합친다.
-        ...(settings.skills.mcp ? useMcp.getState().tools() : {}),
+        ...(settings.tools.mcp ? useMcp.getState().tools() : {}),
+        // 스킬이 하나라도 있으면 본문을 끌어올 통로(`load_skill`)를 함께 연다.
+        ...buildSkillTools(skills),
       };
       const context = buildTurnContext({
         modelId: settings.modelId,
-        system: composeSystemPrompt(settings.systemPrompt, instructions),
+        system: composeSystemPrompt(appendSkillCatalog(settings.systemPrompt, skills), instructions),
         chain,
         effort: settings.effort,
         maxSteps: settings.maxSteps,
@@ -233,6 +270,8 @@ export const useChat = create<ChatState>((set, get) => ({
         useWorkspace.getState().replaceMessage(saved);
       }
 
+      if (result.aborted) outcome = { event: "turnComplete", status: "aborted" };
+
       // 도구를 더 부르려는데 스텝 예산이 떨어진 상태 — 조용히 끝내면 사용자가 오해한다.
       if (result.finishReason === "tool-calls" && !result.aborted) {
         set({
@@ -244,6 +283,9 @@ export const useChat = create<ChatState>((set, get) => ({
       const aborted = controller?.signal.aborted ?? false;
       const messageText = errorMessage(error);
 
+      outcome = aborted
+        ? { event: "turnComplete", status: "aborted" }
+        : { event: "turnError", status: "error", error: messageText };
       if (!aborted) set({ error: messageText });
 
       // 빈 껍데기 노드가 트리에 남지 않도록 상태를 기록해 둔다.
@@ -269,6 +311,7 @@ export const useChat = create<ChatState>((set, get) => ({
         streamingReasoning: "",
         pendingToolCalls: [],
       });
+      fireHooks(outcome.event, outcome.status, startedAt, outcome.error);
     }
   },
 

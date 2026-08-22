@@ -16,7 +16,8 @@ import {
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
-import { DEFAULT_SKILLS, type SkillToggles } from "@/lib/ai/skills";
+import { DEFAULT_TOOLS, type ToolToggles } from "@/lib/ai/tools";
+import type { HookConfig } from "@/lib/hooks";
 import { DEFAULT_THEME, applyTheme, normalizeTheme, type ThemePreference } from "@/lib/theme";
 
 export const DEFAULT_SYSTEM_PROMPT = `당신은 사용자의 로컬 머신에서 동작하는 코딩 에이전트입니다.
@@ -33,8 +34,17 @@ interface SettingsState extends ProviderCredentials {
   maxSteps: number;
   /** 프로젝트 루트의 AGENTS.md 를 컨텍스트 맨 앞에 자동으로 싣는다 */
   useProjectInstructions: boolean;
-  /** 에이전트에게 열어 줄 스킬 묶음 */
-  skills: SkillToggles;
+  /** 에이전트에게 열어 줄 도구 묶음 */
+  tools: ToolToggles;
+  /**
+   * 스킬 활성 여부 — 키는 스킬 이름이다. 목록에 없으면 켜진 것으로 본다
+   * (새 내장 스킬이 추가돼도 예전 settings.json 이 그걸 끄지 않게).
+   */
+  skillsEnabled: Record<string, boolean>;
+  /** 내장 훅 활성 여부 — 키는 훅 id. 목록에 없으면 기본값(`BUILTIN_HOOKS`)을 따른다. */
+  builtinHooks: Record<string, boolean>;
+  /** 사용자가 등록한 훅 (이벤트 → 셸 명령) */
+  hooks: HookConfig[];
   /** 서브에이전트가 쓸 모델. 비우면 메인 모델과 같다. */
   subagentModelId: string;
   /** 서브에이전트 한 명의 스텝 예산 */
@@ -79,7 +89,10 @@ type PersistedSettings = Pick<
   | "effort"
   | "maxSteps"
   | "useProjectInstructions"
-  | "skills"
+  | "tools"
+  | "skillsEnabled"
+  | "builtinHooks"
+  | "hooks"
   | "subagentModelId"
   | "subagentMaxSteps"
   | "mcpServers"
@@ -101,11 +114,20 @@ const PERSISTED_KEYS: (keyof PersistedSettings)[] = [
   "effort",
   "maxSteps",
   "useProjectInstructions",
-  "skills",
+  "tools",
+  "skillsEnabled",
+  "builtinHooks",
+  "hooks",
   "subagentModelId",
   "subagentMaxSteps",
   "mcpServers",
 ];
+
+/** 옛 키(`skills`)에 담겨 있던 도구 토글. 없으면 `undefined`. */
+function legacyTools(stored: Record<string, unknown>): Partial<ToolToggles> | undefined {
+  const legacy = stored.skills;
+  return legacy && typeof legacy === "object" ? (legacy as Partial<ToolToggles>) : undefined;
+}
 
 function pickPersisted(state: SettingsState): PersistedSettings {
   const out = {} as Record<string, unknown>;
@@ -132,7 +154,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
   effort: "high",
   maxSteps: 8,
   useProjectInstructions: true,
-  skills: DEFAULT_SKILLS,
+  tools: DEFAULT_TOOLS,
+  skillsEnabled: {},
+  builtinHooks: {},
+  hooks: [],
   subagentModelId: "",
   subagentMaxSteps: 12,
   mcpServers: [],
@@ -147,8 +172,13 @@ export const useSettings = create<SettingsState>((set, get) => ({
       const persisted = stored as Partial<SettingsState>;
       set({
         ...persisted,
-        // 새 스킬이 추가돼도 예전 settings.json 이 덮어쓰지 않도록 기본값 위에 병합한다.
-        skills: { ...DEFAULT_SKILLS, ...(persisted.skills ?? {}) },
+        // 새 도구가 추가돼도 예전 settings.json 이 덮어쓰지 않도록 기본값 위에 병합한다.
+        // `skills` 는 옛 이름이다 — 도구와 스킬을 가르면서 `tools` 로 옮겼고,
+        // 이미 저장된 설정을 고아로 만들지 않으려고 여기서 한 번 받아 준다.
+        tools: { ...DEFAULT_TOOLS, ...(legacyTools(stored) ?? {}), ...(persisted.tools ?? {}) },
+        skillsEnabled: persisted.skillsEnabled ?? {},
+        builtinHooks: persisted.builtinHooks ?? {},
+        hooks: persisted.hooks ?? [],
         // 카탈로그에서 id 가 바뀐 모델(예: 날짜 접미사가 붙은 Haiku 4.5)을 되돌린다.
         // 안 하면 드롭다운이 "직접 입력" 으로 떨어지고 모델 능력 조회도 빗나간다.
         modelId: canonicalModelId(persisted.modelId ?? DEFAULT_MODEL_ID),

@@ -5,6 +5,7 @@ pub mod memory;
 pub mod session;
 pub mod settings;
 pub mod shell;
+pub mod skills;
 pub mod workspace;
 
 use std::path::PathBuf;

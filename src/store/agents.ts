@@ -12,12 +12,14 @@ import { create } from "zustand";
 import { isRunActive } from "@/lib/agentRuns";
 import { instructionBlock } from "@/lib/ai/instructions";
 import { errorMessage } from "@/lib/ai/errors";
-import { buildSkills } from "@/lib/ai/skills";
+import { buildSkillTools, skillCatalogBlock } from "@/lib/ai/skills";
+import { buildTools } from "@/lib/ai/tools";
 import { runSubagent } from "@/lib/ai/subagent";
 import { toStoredUsage } from "@/lib/ai/usage";
 import * as ipc from "@/lib/ipc";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
+import { useSkills } from "@/store/skills";
 import { useWorkspace } from "@/store/workspace";
 import type { AgentRun, AgentRunPatch, AgentStatus } from "@/types/ipc";
 
@@ -53,6 +55,13 @@ interface AgentsState {
 }
 
 const FINISHED: string[] = ["succeeded", "failed", "cancelled"];
+
+/** 지침 블록 사이의 가름선. 메인 턴의 시스템 프롬프트와 같은 모양이다. */
+const BLOCK_SEPARATOR = `
+
+---
+
+`;
 
 const CANCELLED_MESSAGE = "사용자가 중단했습니다";
 
@@ -131,10 +140,14 @@ export const useAgents = create<AgentsState>((set, get) => {
       try {
         await persist(run.id, { status: "running" });
 
+        // 스킬은 메인이 방금 읽어 둔 목록을 그대로 쓴다 (서브에이전트도 절차를 따라야 한다).
+        const skills = useSkills.getState().enabled();
+
         // 서브에이전트에게는 `delegate_task` 를 주지 않는다 (재위임 금지).
         const tools = {
-          ...buildSkills({ enabled: settings.skills, sessionId }),
-          ...(settings.skills.mcp ? useMcp.getState().tools() : {}),
+          ...buildTools({ enabled: settings.tools, sessionId }),
+          ...(settings.tools.mcp ? useMcp.getState().tools() : {}),
+          ...buildSkillTools(skills),
         };
 
         // 서브에이전트도 프로젝트 지침을 따라야 한다 (메인이 방금 읽어 둔 것을 쓴다).
@@ -144,12 +157,19 @@ export const useAgents = create<AgentsState>((set, get) => {
         // 세션 비용에 잡힌다. 어느 모델이었는지도 함께 남긴다(메인과 다를 수 있다).
         const modelId = settings.subagentModelId || settings.modelId;
 
+        // 프로젝트 지침과 스킬 목록을 한 덩이로 묶어 넘긴다 (둘 다 없으면 undefined).
+        // 둘 사이의 가름선은 메인 턴의 시스템 프롬프트와 같은 모양으로 둔다.
+        const extraInstructions =
+          [
+            settings.useProjectInstructions && instructions ? instructionBlock(instructions) : "",
+            skillCatalogBlock(skills),
+          ]
+            .filter(Boolean)
+            .join(BLOCK_SEPARATOR) || undefined;
+
         const result = await runSubagent({
           task,
-          extraInstructions:
-            settings.useProjectInstructions && instructions
-              ? instructionBlock(instructions)
-              : undefined,
+          extraInstructions,
           modelId,
           credentials: settings.credentials(),
           tools,

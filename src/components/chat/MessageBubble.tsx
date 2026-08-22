@@ -8,7 +8,7 @@ import {
   type StoredToolCall,
   type StoredToolResult,
 } from "@/lib/ai/runner";
-import { summarizeToolCall } from "@/lib/ai/skills";
+import { summarizeToolCall } from "@/lib/ai/tools";
 import { readNodeUsage } from "@/lib/ai/usage";
 import { Tag } from "@/components/Panel";
 import { UsageTag } from "@/components/UsageMeter";
