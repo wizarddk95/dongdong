@@ -35,7 +35,7 @@
 
 | 도구 | 버전 | 비고 |
 | --- | --- | --- |
-| Node.js | 20+ | 확인됨: v22 |
+| Node.js | 22.13+ | 못 박아 둔 pnpm 11 이 요구한다 (`engines: node >=22.13`) |
 | pnpm | 10+ | 확인됨: v11 |
 | Rust | 1.77.2+ | **필수** — https://rustup.rs |
 | MSVC Build Tools | Windows 전용 | "Desktop development with C++" 워크로드 |

@@ -98,7 +98,7 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
 
 | | Version | Notes |
 | --- | --- | --- |
-| Node.js | 20+ | tested on v22 |
+| Node.js | 22.13+ | required by the pinned pnpm 11 |
 | pnpm | 10+ | tested on v11 |
 | Rust | 1.77.2+ | **required** — <https://rustup.rs> |
 | Platform deps | — | see [Tauri prerequisites](https://tauri.app/start/prerequisites/) |

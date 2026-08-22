@@ -23,7 +23,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-You need Node 20+, pnpm, and the Rust toolchain plus your platform's Tauri
+You need Node 22.13+ (the pinned pnpm 11 requires it), and the Rust toolchain plus your platform's Tauri
 prerequisites (<https://tauri.app/start/prerequisites/>).
 
 ## The gate
