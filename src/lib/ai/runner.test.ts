@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildTurnContext,
   contextPayloadOf,
   payloadChars,
   readToolCalls,
   readToolResults,
   toModelMessages,
 } from "@/lib/ai/runner";
+import { extraContentFor, forgetExtraContent } from "@/lib/ai/thoughtSignature";
 import type { Message } from "@/types/ipc";
 
 function node(partial: Partial<Message> & Pick<Message, "role" | "content">): Message {
@@ -236,5 +238,48 @@ describe("contextPayloadOf — 게이지가 쓸 페이로드 크기", () => {
   it("실측 호출이 하나도 없으면 비율을 만들 수 없다", () => {
     const fresh = [node({ id: "u1", role: "user", content: "안녕" })];
     expect(contextPayloadOf(fresh, fresh, "SYS").measuredChars).toBeNull();
+  });
+});
+
+describe("buildTurnContext — 공급자 부가 필드 되살리기", () => {
+  const signature = { google: { thought_signature: "EpoE" } };
+
+  it("저장된 호출의 extraContent 를 다시 기억시킨다", () => {
+    // 앱을 다시 켠 직후처럼 창고가 빈 상태.
+    forgetExtraContent();
+    const [assistant, tool] = toolStep("s1", "call-1", { content: "ok" });
+    const chain = [
+      node({ id: "u", role: "user", content: "읽어줘" }),
+      {
+        ...assistant,
+        toolCalls: [
+          { toolCallId: "call-1", toolName: "read_file", input: {}, extraContent: signature },
+        ],
+      },
+      tool,
+    ];
+
+    buildTurnContext({
+      modelId: "google:gemini-3.7-flash",
+      system: "",
+      chain,
+      effort: "medium",
+      maxSteps: 12,
+    });
+
+    // 요청에 되붙이는 일은 fetch 겹이 한다 — 여기서는 창고가 찼는지만 본다.
+    expect(extraContentFor("call-1")).toEqual(signature);
+  });
+
+  it("부가 필드가 없던 대화는 아무것도 담지 않는다", () => {
+    forgetExtraContent();
+    buildTurnContext({
+      modelId: "anthropic:claude-opus-5",
+      system: "",
+      chain: [node({ id: "u", role: "user", content: "안녕" }), ...toolStep("s1", "call-9", {})],
+      effort: "medium",
+      maxSteps: 12,
+    });
+    expect(extraContentFor("call-9")).toBeUndefined();
   });
 });

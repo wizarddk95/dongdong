@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 310 / cargo 45. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 334 / cargo 45. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -84,6 +84,22 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
   번호만 채운다 — **호출 id 기준 등장 순서**로 매기는 게 핵심이다(전부 0 으로 채우면 한 턴에 도구를
   둘 이상 부를 때 SDK 가 서로 다른 호출을 한 호출의 조각으로 이어 붙인다). 같은 이유로 청크 경계가
   줄 한복판에 떨어질 수 있으니 줄 단위 버퍼링이 필요하고, 손대지 않는 줄은 원문 바이트 그대로 흘린다.
+- **Gemini 3.x 는 도구 호출의 `thought_signature` 를 되돌려받아야 한다**. 바로 위 index 문제와
+  같은 계층에서 나오는 **두 번째** 구멍이다. 구글은 호출 청크에
+  `extra_content.google.thought_signature` 를 실어 보내고 그 호출을 다시 올릴 때 같은 값을
+  요구하는데, `@ai-sdk/openai` 는 모르는 필드라 재조립하면서 떨어뜨린다 → 도구를 부른
+  **다음** 요청이 `Function call is missing a thought_signature in functionCall parts` 로
+  400 이 된다. 도구 실행은 성공하고 결과 노드까지 남은 **뒤에** 죽으므로 "방금 붙인 도구가
+  깨졌다"(MCP 를 막 등록했을 때 특히) 처럼 보이지만 도구와 무관하다 — 내장 스킬도 똑같이
+  죽는다. `lib/ai/thoughtSignature.ts` 가 응답 SSE 에서 서명을 주워 두고 나가는 요청의
+  `tool_calls[]` 에 되붙인다. **메모리에만 두면 앱을 다시 켠 뒤 그 대화를 이어갈 때 다시
+  400 이 나므로** `StoredToolCall.extraContent` 로 노드에 함께 저장하고
+  `buildTurnContext()` 가 창고를 다시 채운다.
+- **공급자 400 의 원인은 `APICallError.message` 에 없다**. 거기 담기는 건 상태 문구
+  ("Bad Request") 뿐이고 진짜 이유는 `responseBody` 에 있다 → `error.message` 만 배너에
+  띄우면 원인을 좁힐 방법이 사라진다(실제로 위 400 을 한참 못 찾았다). 스토어는
+  `lib/ai/errors.ts` 의 `errorMessage()` 를 쓴다 — 재시도 래퍼를 벗기고 공급자마다 다른
+  본문 모양도 여기서 접는다.
 - **로컬 모델(`local:` 공급자)은 `createOpenAI(...).chat()` 로 부른다**. 기본 팩토리(`createOpenAI(...)(id)`)는
   Responses API 로 가는데 Ollama/LM Studio 는 `/v1/chat/completions` 만 구현했다. 키가 비면 SDK 가 예외를 내므로
   자리채움 키를 넣는다. 자세한 운용은 `docs/local-llm.md`.
@@ -136,6 +152,8 @@ src/
   lib/useResolvedTheme.ts  지금 적용된 테마를 React 로 (React Flow 처럼 JS 로 명암을 넘겨야 하는 곳만)
   lib/ai/abort.ts       도구 실행에 중단 붙이기 (ToolSet 래퍼)
   lib/ai/sseRepair.ts   OpenAI 호환 SSE 보정 (Gemini 가 빠뜨리는 tool_calls index 채우기)
+  lib/ai/thoughtSignature.ts  Gemini 3.x thought_signature 왕복 (응답에서 줍고 다음 요청에 되붙이기)
+  lib/ai/errors.ts      공급자 에러 → 읽을 수 있는 한 줄 (APICallError.responseBody 를 편다)
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입 + 로컬 서버(OpenAI 호환) 탐색
   lib/ai/usage.ts       토큰 사용량 정규화 + 요금 추정 + 컨텍스트 잔량 (순수 파생)
   lib/ai/runner.ts      streamText 한 턴 (DB 안 건드림) + tool 파트 변환

@@ -18,6 +18,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { LanguageModel } from "ai";
 
 import { withSseRepair } from "@/lib/ai/sseRepair";
+import { withThoughtSignatures } from "@/lib/ai/thoughtSignature";
 
 export type ProviderId = "anthropic" | "openai" | "google" | "local";
 
@@ -115,11 +116,18 @@ export interface ModelOption {
 const localFetch = tauriFetch as unknown as typeof globalThis.fetch;
 
 /**
- * 구글의 OpenAI 호환 계층은 도구 호출 청크에 `tool_calls[].index` 를 넣지 않는데,
- * `@ai-sdk/openai` 의 스키마는 그걸 필수로 본다 → 도구를 부르는 순간 타입 검증 실패로
- * 턴이 통째로 날아간다. 응답 스트림을 지나가며 빠진 번호만 채워 준다(`lib/ai/sseRepair.ts`).
+ * 구글의 OpenAI 호환 계층은 도구를 쓸 때 두 군데가 어긋난다. 둘 다 fetch 를 감싸 메운다.
+ *
+ * 1. 도구 호출 청크에 `tool_calls[].index` 를 넣지 않는데 `@ai-sdk/openai` 의 스키마는
+ *    그걸 필수로 본다 → 도구를 부르는 **그 순간** 타입 검증 실패로 턴이 날아간다
+ *    (`lib/ai/sseRepair.ts`).
+ * 2. Gemini 3.x 는 호출에 `extra_content.google.thought_signature` 를 실어 보내고 다시
+ *    올릴 때 그 값을 요구하는데 SDK 가 모르고 떨어뜨린다 → 도구를 부른 **다음** 요청이
+ *    400 이 된다 (`lib/ai/thoughtSignature.ts`).
+ *
+ * 바깥 겹이 요청을 손보므로 순서가 이렇다 — 안쪽(sseRepair)이 고친 응답을 바깥이 읽는다.
  */
-const geminiFetch = withSseRepair(localFetch);
+const geminiFetch = withThoughtSignatures(withSseRepair(localFetch));
 
 /**
  * Tauri HTTP 플러그인(Rust)은 요청마다 웹뷰 주소로 `Origin` 헤더를 강제로 붙인다

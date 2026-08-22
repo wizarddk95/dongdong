@@ -15,6 +15,7 @@ import {
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
+import { extraContentFor, rememberExtraContent } from "@/lib/ai/thoughtSignature";
 import { lastCallNode, readUsage, type ContextPayload, type Usage } from "@/lib/ai/usage";
 import { pathTo } from "@/lib/tree";
 import type { Message } from "@/types/ipc";
@@ -36,6 +37,13 @@ export interface StoredToolCall {
   toolCallId: string;
   toolName: string;
   input: unknown;
+  /**
+   * 공급자가 이 호출에 붙여 보낸, SDK 가 모르는 부가 필드
+   * (구글의 `extra_content.google.thought_signature`).
+   * 여기 남겨 두지 않으면 앱을 다시 켠 뒤 그 대화를 이어갈 때 같은 400 이 다시 난다
+   * — 서명은 메모리에만 있었으니까. `lib/ai/thoughtSignature.ts` 참고.
+   */
+  extraContent?: unknown;
 }
 
 /** tool 노드의 `toolResults`. 실행이 실패했으면 `errorText` 가 채워진다. */
@@ -257,6 +265,15 @@ export function buildTurnContext(options: {
   maxSteps: number;
   toolNames?: string[];
 }): TurnContext {
+  // 저장해 둔 공급자 부가 필드를 다시 기억시킨다. 요청에 되붙이는 일은 fetch 겹이 하므로
+  // 여기서는 앱을 다시 켠 직후·앞 턴으로 분기한 경우에 창고를 채워 주는 역할만 한다.
+  for (const node of options.chain) {
+    if (node.role !== "assistant") continue;
+    for (const call of readToolCalls(node.toolCalls)) {
+      rememberExtraContent(call.toolCallId, call.extraContent);
+    }
+  }
+
   return {
     modelId: options.modelId,
     system: options.system,
@@ -322,10 +339,14 @@ export async function runTurn({
         onReasoningDelta?.(part.text);
         break;
       case "tool-call": {
+        // 공급자 부가 필드는 SDK 파트에 실려 오지 않는다 — fetch 겹이 원문 SSE 에서
+        // 주워 둔 것을 id 로 찾아 노드에 함께 남긴다.
+        const extraContent = extraContentFor(part.toolCallId);
         const call: StoredToolCall = {
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           input: part.input,
+          ...(extraContent === undefined ? {} : { extraContent }),
         };
         stepCalls.push(call);
         onToolCall?.(call);
