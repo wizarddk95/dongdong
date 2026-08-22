@@ -64,6 +64,38 @@ pub fn absolutize(input: &str) -> AppResult<PathBuf> {
     }
 }
 
+/// 아직 없는 경로도 심볼릭 링크를 지나 실제 위치로 되돌린다.
+///
+/// `canonicalize()` 는 **존재하는** 경로만 받는다. 그래서 없는 경로는 렉시컬 정규화로만
+/// 처리했었는데, 그러면 루트 안의 링크를 타고 밖으로 나가는 길이 열린다 —
+/// `<root>/link -> C:\Windows` 일 때 `<root>/link/evil.exe` 는 아직 없는 파일이라
+/// 링크가 풀리지 않고, 문자열로만 보면 루트 안이다(`write_file` 이 통과한다).
+/// **있는 조상까지 먼저 풀고 나머지를 다시 붙이면** 그 구멍이 닫힌다.
+pub fn resolve_through_links(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return strip_extended_prefix(&canonical);
+    }
+
+    // 없는 꼬리를 하나씩 떼면서 존재하는 조상을 찾는다.
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = path.to_path_buf();
+    while let Some(parent) = cursor.parent().map(Path::to_path_buf) {
+        let Some(name) = cursor.file_name().map(|n| n.to_os_string()) else {
+            break;
+        };
+        tail.push(name);
+        if let Ok(canonical) = parent.canonicalize() {
+            let mut out = strip_extended_prefix(&canonical);
+            for segment in tail.iter().rev() {
+                out.push(segment);
+            }
+            return out;
+        }
+        cursor = parent;
+    }
+    path.to_path_buf()
+}
+
 /// 경로 비교용 키. Windows 는 대소문자를 구분하지 않는다.
 pub fn compare_key(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
@@ -91,11 +123,8 @@ pub fn resolve_within(root: Option<&str>, path: &str) -> AppResult<PathBuf> {
 
     let root_abs = absolutize(root)?;
     let native = to_native_separators(path);
-    let resolved = lexical_absolute(&root_abs, &native);
-    let resolved = match resolved.canonicalize() {
-        Ok(canonical) => strip_extended_prefix(&canonical),
-        Err(_) => resolved,
-    };
+    // 링크까지 풀고 나서 담장을 넘는지 본다. 문자열만 보면 링크로 걸어 나갈 수 있다.
+    let resolved = resolve_through_links(&lexical_absolute(&root_abs, &native));
 
     if !is_within(&root_abs, &resolved) {
         return Err(AppError::PathDenied(format!(

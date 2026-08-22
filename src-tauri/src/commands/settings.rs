@@ -21,18 +21,37 @@ fn settings_path(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(dir.join("settings.json"))
 }
 
-/// 소유자만 읽을 수 있게 제한한다. (Windows 는 기본 ACL 로 사용자 프로필이 이미 보호된다)
-#[cfg(unix)]
-fn restrict_permissions(path: &std::path::Path) -> AppResult<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(path, perms)?;
-    Ok(())
-}
+/// 소유자만 읽을 수 있게 **파일을 만들 때부터** 제한한다.
+///
+/// 예전에는 평범하게 쓰고 나서 `set_permissions` 로 조였는데, 그 사이(umask 에 따라
+/// 0644 로 만들어진 순간)에 같은 머신의 다른 사용자가 키를 읽을 수 있는 틈이 있었다.
+/// 만드는 시점에 0600 을 걸면 그 틈이 없다.
+/// (Windows 는 기본 ACL 로 사용자 프로필이 이미 보호된다)
+fn write_private(path: &std::path::Path, contents: &str) -> AppResult<()> {
+    use std::io::Write;
 
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &std::path::Path) -> AppResult<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path)?;
+    file.write_all(contents.as_bytes())?;
+    file.flush()?;
+
+    // 이미 있던 파일이라면 create 의 mode 가 적용되지 않는다 — 그때는 조여 준다.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = file.metadata()?.permissions();
+        if perms.mode() & 0o077 != 0 {
+            perms.set_mode(0o600);
+            std::fs::set_permissions(path, perms)?;
+        }
+    }
     Ok(())
 }
 
@@ -53,8 +72,7 @@ pub fn write_app_settings(app: AppHandle, settings: Value) -> AppResult<Value> {
         return Err(AppError::invalid("설정은 JSON 객체여야 합니다"));
     }
     let path = settings_path(&app)?;
-    std::fs::write(&path, serde_json::to_string_pretty(&settings)?)?;
-    restrict_permissions(&path)?;
+    write_private(&path, &serde_json::to_string_pretty(&settings)?)?;
     Ok(settings)
 }
 

@@ -76,6 +76,69 @@ fn resolve_within_blocks_escaping_the_project_root() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 루트 안에 밖을 가리키는 링크를 두고, **아직 없는** 파일을 그 링크 너머에 쓰려 해 본다.
+/// 문자열로만 보면 루트 안이라 예전에는 통과했다.
+#[test]
+fn resolve_within_blocks_escaping_through_a_symlink() {
+    let base = std::env::temp_dir().join("dongdong-tests-symlink");
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("project");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(&outside, root.join("link")).is_ok();
+    // Windows 의 심볼릭 링크는 개발자 모드나 관리자 권한을 요구한다. 실패하면 **정션**으로
+    // 물러난다 — 권한 없이 만들 수 있고, 링크를 지나 밖으로 나간다는 점은 똑같다.
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_dir(&outside, root.join("link")).is_ok()
+        || std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join("link"))
+            .arg(&outside)
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+
+    if !linked {
+        eprintln!("심볼릭 링크를 만들 수 없어 탈출 테스트를 건너뜁니다");
+        let _ = std::fs::remove_dir_all(&base);
+        return;
+    }
+
+    let root_str = root.to_string_lossy().into_owned();
+
+    // 아직 없는 파일(= canonicalize 가 실패하는 경로)이 핵심이다.
+    // 문자열만 보는 예전 검사로는 통과한다 — 그게 이 테스트가 지키는 구멍이다.
+    assert!(is_within(&root, &lexical_absolute(&root, Path::new("link/not-yet.txt"))));
+    let escaped = resolve_within(Some(&root_str), "link/not-yet.txt");
+    assert!(escaped.is_err(), "링크를 타고 루트 밖으로 나가는 쓰기는 막아야 한다");
+
+    // 이미 있는 경로도 마찬가지.
+    std::fs::write(outside.join("already.txt"), "x").unwrap();
+    assert!(resolve_within(Some(&root_str), "link/already.txt").is_err());
+
+    // 링크와 무관한 평범한 경로는 그대로 통과해야 한다.
+    let inside = resolve_within(Some(&root_str), "src/main.rs").expect("루트 안은 허용");
+    assert!(is_within(&resolve_through_links(&root), &inside));
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn resolve_through_links_keeps_missing_tails_attached() {
+    let root = std::env::temp_dir().join("dongdong-tests-tail");
+    std::fs::create_dir_all(&root).unwrap();
+
+    // 없는 조상이 여러 겹이어도 꼬리는 순서대로 되붙어야 한다.
+    let resolved = resolve_through_links(&root.join("a/b/c.txt"));
+    assert!(resolved.ends_with("a/b/c.txt") || resolved.ends_with(r"a\b\c.txt"));
+    assert!(is_within(&resolve_through_links(&root), &resolved));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn workspace_paths_live_under_the_project_root() {
     let root = Path::new(if cfg!(windows) { r"C:\work\p" } else { "/work/p" });

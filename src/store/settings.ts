@@ -16,6 +16,7 @@ import {
   type Effort,
   type ProviderCredentials,
 } from "@/lib/ai/providers";
+import { setRedactionSecrets } from "@/lib/ai/redact";
 import { DEFAULT_TOOLS, type ToolToggles } from "@/lib/ai/tools";
 import type { HookConfig } from "@/lib/hooks";
 import { DEFAULT_THEME, applyTheme, normalizeTheme, type ThemePreference } from "@/lib/theme";
@@ -253,3 +254,21 @@ export const useSettings = create<SettingsState>((set, get) => ({
     };
   },
 }));
+
+/**
+ * 도구 출력에서 가려야 할 값들. API 키뿐 아니라 **MCP 서버에 넘긴 환경 변수 값**도 넣는다 —
+ * 거기에도 토큰을 적어 두는 게 보통이고, `env` 를 그대로 찍는 명령 한 줄이면 되돌아온다.
+ */
+function secretsOf(state: SettingsState): (string | undefined)[] {
+  return [
+    state.anthropicApiKey,
+    state.openaiApiKey,
+    state.googleApiKey,
+    state.localApiKey,
+    ...state.mcpServers.flatMap((server) => Object.values(server.env ?? {})),
+  ];
+}
+
+// 설정이 바뀔 때마다 가릴 목록을 갈아 끼운다. 스토어 안에서 부르지 않고 밖에서 구독하는 이유는
+// 키를 넣는 길이 `load`·`update` 둘만이 아니기 때문이다 — 어디서 set 하든 여기로 모인다.
+useSettings.subscribe((state) => setRedactionSecrets(secretsOf(state)));

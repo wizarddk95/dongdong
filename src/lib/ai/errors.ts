@@ -8,11 +8,14 @@
  */
 import { APICallError, RetryError } from "ai";
 
+import { redact } from "@/lib/ai/redact";
+
 /** 배너 한 줄에 담을 수 있는 만큼만. 원문은 대개 스택 트레이스까지 붙어 온다. */
 const MAX_DETAIL_CHARS = 600;
 
+/** 공급자가 요청을 되비추는 400 본문도 있어(헤더가 섞여 온다) 여기서도 키를 지운다. */
 function clip(text: string): string {
-  const single = text.replace(/\s+/g, " ").trim();
+  const single = redact(text).replace(/\s+/g, " ").trim();
   return single.length <= MAX_DETAIL_CHARS ? single : `${single.slice(0, MAX_DETAIL_CHARS)}…`;
 }
 
@@ -67,7 +70,7 @@ export function describeApiError(error: unknown): string | null {
 
 /** 스토어의 에러 배너에 넣을 문구. 공급자 응답이 있으면 그쪽을 우선한다. */
 export function errorMessage(error: unknown): string {
-  return (
-    describeApiError(error) ?? (error instanceof Error ? error.message : String(error))
+  return redact(
+    describeApiError(error) ?? (error instanceof Error ? error.message : String(error)),
   );
 }

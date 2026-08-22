@@ -12,7 +12,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 368 / cargo 50. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 376 / cargo 53. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -29,7 +29,10 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - **타입 동기화**: Rust 모델(serde `camelCase`)을 고치면 `src/types/ipc.ts` 도 같이 고친다.
 - **DB**: 모든 SQL 은 `db/queries.rs` 에만. 커넥션 접근은 `state.rs` 의 `with_conn()` 이 유일한 통로.
 - **마이그레이션**: `db/schema.rs` 의 `MIGRATIONS` 배열 **끝에만 추가**. 기존 항목 수정 금지(이미 만들어진 DB 와 어긋난다).
-- **경로**: 파일 경로는 `paths.rs` 경유. `resolve_within()` 이 프로젝트 루트 밖 접근을 막는다.
+- **경로**: 파일 경로는 `paths.rs` 경유. `resolve_within()` 이 프로젝트 루트 밖 접근을 막는다 —
+  **아직 없는 경로도 존재하는 조상까지 먼저 canonicalize 해서** 심볼릭 링크·정션으로 걸어 나가는 길을 닫는다
+  (`resolve_through_links()`). 문자열 비교만 하면 `<root>/link/새파일` 이 통과한다.
+  다만 셸이 켜져 있으면 이 담장은 실수를 막는 장치일 뿐이다 — `cd ..` 한 줄이면 그만이다.
 - **오래 걸리는 command 는 `async` + `spawn_blocking`**. 동기 command 는 메인 스레드를 막아 UI 가 언다.
 - **중단 경로를 끊지 말 것**: 새 도구를 붙이면 `abortSignal` 을 반드시 존중한다. `runner.ts` 가 `abortableTools()` 로 한 번 감싸 주지만, 백그라운드에서 진짜 돌고 있는 작업(프로세스·자식 프로세스)은 도구가 스스로 정리해야 한다(`execute_shell_command` → `cancel_shell_command`, `mcp_call_tool` → `mcp_cancel_tool`).
 - **도구와 스킬은 다른 층이다**: 도구(`lib/ai/tools.ts`)는 스키마째 매 턴 실리는 **실행 경로**,
@@ -38,7 +41,17 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
   (설정의 옛 키 `skills` 는 이제 도구 토글이다. `store/settings.ts` 가 `tools` 로 옮겨 읽는다)
 - **훅은 비차단이다**: 턴을 막거나 되돌리지 못하고, 실패해도 대화에 영향이 없다(`lib/hooks.ts`).
   도구 실행을 거부하는 훅을 붙이려면 `abort.ts` 의 중단 경주까지 손봐야 하므로 지금은 열지 않았다.
-- **도구 출력에는 상한을 둔다**: `skills.ts` 의 `clip()`(20,000자)을 지난다. MCP 도구도 예외가 아니다 — 검색·크롤 결과 하나가 컨텍스트를 통째로 먹는다.
+- **도구 출력에는 상한을 둔다**: `tools.ts` 의 `clip()`(20,000자)을 지난다. MCP 도구도 예외가 아니다 — 검색·크롤 결과 하나가 컨텍스트를 통째로 먹는다.
+- **LLM 컨텍스트로 들어가는 텍스트는 전부 `clip()` 을 지난다**. 상한만이 아니라 **비밀값 가리기**
+  (`lib/ai/redact.ts`)가 거기 붙어 있기 때문이다 — `cat settings.json` 한 줄이면 API 키가 도구
+  출력으로 돌아오고, 그건 DB 에 남아 다음 턴에 공급자 서버로 나간다. 새 도구를 붙이면서 `clip()`
+  을 건너뛰면 그 구멍이 다시 열린다. 가릴 값은 `store/settings.ts` 의 구독이 갈아 끼운다
+  (API 키 + MCP 서버 env 값). 완벽하지 않다 — 모델이 키를 잘라 붙이면 못 잡는다. 그물이지 방벽이 아니다.
+- **웹뷰는 CSP 아래 있다**(`tauri.conf.json` 의 `csp` / `devCsp`). 인라인 `<script>` 는 실행되지
+  않는다 — Tauri 가 nonce 를 넣어 주는 대상은 `src` 가 http 로 시작하는 스크립트뿐이라 예외가 없다.
+  그래서 첫 페인트 전 테마 스크립트도 `public/theme-boot.js` 로 빼 두었다. 원격 자원(CDN·폰트·이미지)을
+  새로 들이려면 CSP 와 `capabilities/default.json` 을 함께 고쳐야 한다. 새 LLM 도메인도 마찬가지.
+  (`style-src` 의 `'unsafe-inline'` 은 React Flow 가 인라인 style 로 뷰포트를 옮기기 때문에 뺄 수 없다)
 - **스트리밍 중 DB 쓰기 금지**. 토큰은 Zustand 에만 쌓고 **스텝 경계**(도구 호출 확정 / 턴 종료)에서만 저장한다.
 - **`MODEL_CATALOG`(`lib/ai/providers.ts`) 는 사용자 소유** — 임의로 고치지 않는다.
 - **색·활자는 토큰만 쓴다**: 컴포넌트에 `zinc-800` 같은 팔레트 값이나 `#hex` 를 직접 적지 않는다.
@@ -166,6 +179,7 @@ src/
   lib/ai/sseRepair.ts   OpenAI 호환 SSE 보정 (Gemini 가 빠뜨리는 tool_calls index 채우기)
   lib/ai/thoughtSignature.ts  Gemini 3.x thought_signature 왕복 (응답에서 줍고 다음 요청에 되붙이기)
   lib/ai/errors.ts      공급자 에러 → 읽을 수 있는 한 줄 (APICallError.responseBody 를 편다)
+  lib/ai/redact.ts      비밀값 가리기 — 도구 출력·에러 문구에서 API 키를 지운다 (`clip()` 이 부른다)
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입 + 로컬 서버(OpenAI 호환) 탐색
   lib/ai/usage.ts       토큰 사용량 정규화 + 요금 추정 + 컨텍스트 잔량 (순수 파생)
   lib/ai/runner.ts      streamText 한 턴 (DB 안 건드림) + tool 파트 변환
@@ -247,4 +261,6 @@ src-tauri/src/
   읽기를 푸는 길이 서버를 죽이는 것밖에 없어서 중단하면 그 연결도 끊긴다 → `store/mcp.ts` 가
   곧바로 다시 붙인다(안 그러면 다음 턴에 도구가 조용히 사라진다).
 
-설계 배경과 상세는 `README.md`. 로컬 오픈소스 모델 운용은 `docs/local-llm.md`. 디자인 규율은 `docs/design.md`.
+설계 배경과 상세는 `README.md`. 로컬 오픈소스 모델 운용은 `docs/local-llm.md`.
+디자인 규율은 `docs/design.md`. **보안 모델(무엇을 막고 무엇을 못 막는지)은 `docs/security.md`**
+— 도구·경로·프로세스·설정을 건드릴 때 먼저 읽는다.

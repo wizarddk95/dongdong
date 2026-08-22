@@ -15,6 +15,7 @@
 import { tool, type ToolSet } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
+import { redact } from "@/lib/ai/redact";
 import * as ipc from "@/lib/ipc";
 
 /** 설정에서 켜고 끄는 도구 묶음. */
@@ -82,9 +83,18 @@ export function newCancelToken(prefix = "call"): string {
 export const MAX_TOOL_OUTPUT_CHARS = 20_000;
 const MAX_DIR_ENTRIES = 300;
 
+/**
+ * 도구 출력에 상한을 씌우고, **그 전에 비밀값을 지운다**.
+ *
+ * 자르기와 가리기를 한 함수에 묶은 이유는 하나다 — 도구 출력이 컨텍스트로 들어가는 목이
+ * 여기 하나뿐이라(내장 도구·MCP·스킬 본문이 전부 이 함수를 지난다) 새 도구를 붙이는 사람이
+ * 가리기를 따로 기억할 필요가 없다. 순서도 중요하다: 먼저 가리고 나서 잘라야
+ * 경계에 걸친 키가 반쪽만 남는 일이 없다.
+ */
 export function clip(text: string, limit = MAX_TOOL_OUTPUT_CHARS) {
-  if (text.length <= limit) return { text, clipped: false };
-  return { text: `${text.slice(0, limit)}\n…(이하 ${text.length - limit}자 생략)`, clipped: true };
+  const safe = redact(text);
+  if (safe.length <= limit) return { text: safe, clipped: false };
+  return { text: `${safe.slice(0, limit)}\n…(이하 ${safe.length - limit}자 생략)`, clipped: true };
 }
 
 /** 묶음별 도구 이름. 컨텍스트 인스펙터와 설정 UI 가 함께 쓴다. */
