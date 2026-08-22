@@ -261,6 +261,6 @@ src-tauri/src/
   읽기를 푸는 길이 서버를 죽이는 것밖에 없어서 중단하면 그 연결도 끊긴다 → `store/mcp.ts` 가
   곧바로 다시 붙인다(안 그러면 다음 턴에 도구가 조용히 사라진다).
 
-설계 배경과 상세는 `README.md`. 로컬 오픈소스 모델 운용은 `docs/local-llm.md`.
-디자인 규율은 `docs/design.md`. **보안 모델(무엇을 막고 무엇을 못 막는지)은 `docs/security.md`**
-— 도구·경로·프로세스·설정을 건드릴 때 먼저 읽는다.
+설계 배경과 상세는 `README.ko.md`(영문 표지는 `README.md`). 로컬 오픈소스 모델 운용은
+`docs/local-llm.md`. 디자인 규율은 `docs/design.md`. **보안 모델(무엇을 막고 무엇을 못 막는지)은
+`docs/security.md`** — 도구·경로·프로세스·설정을 건드릴 때 먼저 읽는다.

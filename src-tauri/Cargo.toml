@@ -2,7 +2,9 @@
 name = "dongdong"
 version = "0.1.0"
 description = "Local-first coding agent with node-based conversation visualization"
-authors = ["dongdong"]
+authors = ["wizarddk95"]
+license = "Apache-2.0"
+repository = "https://github.com/wizarddk95/dongdong"
 edition = "2021"
 rust-version = "1.77.2"
 

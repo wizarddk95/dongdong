@@ -13,3 +13,14 @@ src-tauri/gen
 
 # Agent workspace (프로젝트 로컬 스토리지)
 .agent_workspace/
+
+# 편집기 · OS 부산물
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+
+# 실수로 리포에 떨군 자격 증명 (settings.json 은 원래 앱 설정 디렉터리에 있다)
+settings.json
+*.pem
+*.key

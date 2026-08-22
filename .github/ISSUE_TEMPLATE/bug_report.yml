@@ -1,0 +1,52 @@
+name: 버그 신고 / Bug report
+description: 재현되는 문제를 알려 주세요. Report a reproducible problem.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **보안 취약점은 여기 올리지 마세요.** [SECURITY.md](../blob/main/SECURITY.md) 를 따라 비공개로 신고해 주세요.
+        **Do not report security vulnerabilities here** — follow SECURITY.md instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: 무슨 일이 있었나 / What happened
+      description: 기대한 동작과 실제 동작을 나란히 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 재현 방법 / Steps to reproduce
+      placeholder: |
+        1. 프로젝트를 열고
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: 모델 / Model
+      description: 공급자와 모델 id (예 anthropic:claude-opus-5, local:qwen3-coder)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 버전 / Version
+      description: 릴리스 태그 또는 커밋 해시
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 오류 문구 / Error output
+      description: 배너 문구, 콘솔 로그, 인스펙터 스크린샷 등. **API 키가 섞이지 않았는지 확인해 주세요.**
+      render: text

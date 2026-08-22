@@ -1,0 +1,28 @@
+name: 기능 제안 / Feature request
+description: 새 기능이나 개선을 제안합니다.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [CLAUDE.md](../blob/main/CLAUDE.md) 의 "절대 규칙" 과 기술 스택은 바꾸지 않습니다.
+        그 선을 넘는 제안은 이유를 함께 적어 주세요.
+  - type: textarea
+    id: problem
+    attributes:
+      label: 어떤 문제를 풀고 싶나 / What problem does this solve
+      description: 해결책보다 문제를 먼저 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 제안 / Proposal
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: 어느 층인가 / Which layer
+      description: 도구는 매 턴 스키마째 실리는 실행 경로, 스킬은 부를 때만 실리는 절차서입니다.
+      options: [도구 (tool), 스킬 (skill), 훅 (hook), UI, MCP, 그 외 / other]

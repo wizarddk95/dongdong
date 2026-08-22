@@ -1,0 +1,16 @@
+dongdong
+Copyright 2026 wizarddk95
+
+This product includes software developed as part of the dongdong project
+(https://github.com/wizarddk95/dongdong), licensed under the Apache License,
+Version 2.0.
+
+Third-party components are distributed under their own licenses; see
+package.json / pnpm-lock.yaml (npm) and src-tauri/Cargo.toml / Cargo.lock (crates)
+for the full dependency list. Notable bundled assets:
+
+  - KaTeX (MIT) — https://github.com/KaTeX/KaTeX
+    src/styles/katex.css is a generated, woff2-only copy of the upstream
+    stylesheet (see scripts/gen-katex-css.mjs).
+  - Pretendard (SIL Open Font License 1.1) — https://github.com/orioncactus/pretendard
+  - JetBrains Mono (SIL Open Font License 1.1) — https://github.com/JetBrains/JetBrainsMono

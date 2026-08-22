@@ -4,6 +4,25 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Local-first coding agent with node-based conversation visualization (Tauri + React)",
+  "license": "Apache-2.0",
+  "author": "wizarddk95",
+  "homepage": "https://github.com/wizarddk95/dongdong",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wizarddk95/dongdong.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wizarddk95/dongdong/issues"
+  },
+  "keywords": [
+    "coding-agent",
+    "tauri",
+    "local-first",
+    "llm",
+    "mcp",
+    "react-flow",
+    "ai-agent"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
