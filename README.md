@@ -15,6 +15,9 @@
 - **모델 넷.** Anthropic · OpenAI · Google Gemini · **이 PC 에서 도는 OpenAI 호환 서버**(Ollama · LM Studio …).
   `provider:modelId` 문자열 하나로 갈아 끼운다.
 - **도구는 확인 없이 바로 실행.** 파일 · 쉘 · 메모리 · 서브에이전트 위임, 그리고 MCP 서버가 내주는 도구.
+- **스킬은 판단해서 열어 본다.** 엑셀 · 워드 · PDF 절차서가 내장돼 있고 직접 추가할 수 있다.
+  이름과 설명만 매 턴 실리고 본문은 모델이 필요할 때 끌어오므로, 절차가 길어도 컨텍스트가 안 는다.
+- **훅으로 자동화한다.** 답변이 끝나면 OS 알림 — 딴 창을 보고 있어도 끝난 줄 안다. 셸 명령도 붙는다.
 - **무엇이 나갔는지 숨기지 않는다.** 노드마다 그때 보낸 컨텍스트 원문 · 실측 토큰 · 요금,
   그리고 "지금 [전송]을 누르면 얼마가 나가는가" 까지 화면에 적는다.
 - 라이트/다크 두 벌 테마. 색과 활자는 `src/index.css` 의 의미 토큰 한 곳에서만 나온다.
@@ -30,6 +33,7 @@
 | Rust | 1.77.2+ | **필수** — https://rustup.rs |
 | MSVC Build Tools | Windows 전용 | "Desktop development with C++" 워크로드 |
 | WebView2 | Windows 전용 | Win11 기본 탑재 |
+| Python | 3.10+ | **선택** — 내장 문서 스킬(엑셀·워드·PDF)을 쓸 때만 |
 
 Rust 설치 (Windows):
 
@@ -43,6 +47,54 @@ macOS:
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
+
+### 클론 받은 뒤 한 번 해 둘 것
+
+```bash
+pnpm install          # 프런트 의존성 (Rust 쪽은 첫 실행 때 cargo 가 알아서 받는다)
+pnpm typecheck && pnpm test && pnpm build
+cd src-tauri && cargo test --lib
+```
+
+리포에 **따라오지 않는 것**이 셋 있으니 새 PC 에서는 다시 채워야 한다.
+
+1. **API 키 · MCP 서버 목록 · 도구/스킬/훅 설정** — 프로젝트가 아니라 OS 앱 설정 디렉터리의
+   `settings.json` 에 있다(위 표 참고). 새 PC 에서는 [설정] → [공급자] 에서 키를 다시 넣는다.
+   파일을 통째로 복사해 와도 되지만 **키가 평문**이라는 점을 알고 옮긴다.
+2. **대화 기록** — 프로젝트 루트의 `.agent_workspace/local.db`. 그 폴더의 `.gitignore` 가 `*` 라
+   커밋되지 않는다. 대화를 옮기려면 이 파일을 직접 복사한다(스키마는 앱이 열 때 자동 마이그레이션).
+3. **전역 스킬** — 앱 설정 디렉터리의 `skills/`. 반면 **프로젝트 스킬**(`.dongdong/skills/`)은
+   리포에 들어 있으므로 클론만 하면 그대로 따라온다.
+
+### 내장 문서 스킬(엑셀 · 워드 · PDF)을 쓸 거라면
+
+절차서가 Python 기준으로 적혀 있다. 에이전트가 스킬을 열면 스스로 `python --version` 과
+`import` 를 확인하고 없으면 설치를 제안하지만, 미리 깔아 두면 첫 요청부터 막히지 않는다.
+
+```bash
+python --version                     # 없으면: winget install Python.Python.3.12 (Windows)
+python -m pip install openpyxl python-docx pypdf pdfplumber reportlab
+```
+
+| 스킬 | 패키지 | 쓰는 곳 |
+| --- | --- | --- |
+| `xlsx` | `openpyxl` (+ 집계에 `pandas`) | 엑셀 읽기 · 생성 · 수정 |
+| `docx` | `python-docx` | 워드 읽기 · 생성 · 수정 |
+| `pdf` | `pypdf` `pdfplumber` `reportlab` | PDF 텍스트/표 추출 · 생성 · 병합 |
+
+- `python-docx` 의 import 이름은 `docx` 다. `pip install docx` 는 **다른 패키지**이니 주의.
+- 구형 `.xls` / `.doc` 는 못 연다. LibreOffice 가 있으면
+  `libreoffice --headless --convert-to xlsx` 로 바꿔 쓴다.
+- 스캔 이미지 PDF 는 OCR(`ocrmypdf`, Tesseract)이 따로 필요하다 — 스킬은 필요 여부만 알리고
+  임의로 설치하지 않는다.
+- 회사 PC 처럼 `pip` 가 막혀 있으면 가상환경(`python -m venv .venv`)을 만들어 두고
+  프로젝트 `AGENTS.md` 에 "파이썬은 `.venv\Scripts\python.exe` 를 쓸 것" 이라고 적어 두면 된다.
+  그 파일은 매 턴 컨텍스트 맨 앞에 실린다.
+
+### 알림(훅)
+
+`답변 완료 시 알림` 훅이 기본으로 켜져 있다. 첫 알림에서 OS 가 권한을 한 번 묻는다(Windows·macOS).
+거절하면 조용히 넘어가고, 창을 보고 있을 때는 애초에 뜨지 않는다.
 
 ## 실행
 
@@ -62,7 +114,8 @@ pnpm tauri:dev
    그 폴더에 `.agent_workspace/local.db` 가 생기고, 세션이 없으면 "새 대화"가 자동으로 만들어진다.
 2. 상단 **[설정]** — Anthropic · OpenAI · Google Gemini 중 쓸 곳의 **API 키**를 넣고 모델을 고른다.
    셋 다 없어도 되지만 그때는 **로컬 모델 서버**를 대신 붙여야 한다 (아래 [로컬 오픈소스 모델](#로컬-오픈소스-모델)).
-   같은 화면에서 사고 강도 · 최대 스텝 · 스킬(도구) 토글 · 서브에이전트 · MCP 서버 · 테마도 정한다.
+   설정 창은 왼쪽 목록으로 갈라져 있다 — **일반 · 모델 · 공급자 · 도구 · 스킬 · 훅 · MCP**.
+   공급자 키는 한 줄씩 접혀 있고 쓰는 것만 펼쳐 채운다(접힌 줄에도 채움 여부는 보인다).
 3. 채팅창에 입력하면 시작. 좌측 사이드바의 **[+]** 로 세션을 더 만든다.
 
 앱은 마지막에 연 프로젝트를 기억하지 않는다. 실행할 때마다 **[폴더 열기]** 로 다시 연다.
@@ -117,7 +170,9 @@ src/                        프론트엔드 (React + TS + Tailwind v4)
   lib/ai/runner.ts          streamText 한 턴 실행 (DB 는 건드리지 않음) + 도구 파트 변환
   lib/ai/abort.ts           도구 실행을 중단 시그널과 경주시키는 ToolSet 래퍼
   lib/ai/sseRepair.ts       OpenAI 호환 SSE 보정 (Gemini 가 빠뜨리는 tool_calls index 채우기)
-  lib/ai/skills.ts          IPC 를 AI SDK 도구로 노출 (zod 스키마 + 설정 토글 + delegate_task)
+  lib/ai/tools.ts           IPC 를 AI SDK 도구로 노출 (zod 스키마 + 설정 토글 + delegate_task)
+  lib/ai/skills.ts          스킬(절차서) 파싱·병합 + load_skill — 본문은 부를 때만 컨텍스트에 실린다
+  lib/ai/builtinSkills.ts   내장 스킬 원문 (엑셀 · 워드 · PDF — Python 절차)
   lib/ai/subagent.ts        서브에이전트 한 명의 격리된 실행 루프
   lib/ai/mcp.ts             MCP 도구 → AI SDK dynamicTool 변환 (JSON Schema 그대로)
   lib/ai/instructions.ts    프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합
@@ -125,12 +180,16 @@ src/                        프론트엔드 (React + TS + Tailwind v4)
   store/chat.ts             턴 실행 오케스트레이션 + 스트리밍 상태
   store/agents.ts           서브에이전트 인스턴스 (실행 + agent_runs 영속화)
   store/mcp.ts              MCP 서버 연결 상태 + 도구 병합
-  store/settings.ts         API 키 · 모델 · 사고 강도 · 시스템 프롬프트 · 스킬 토글 · 테마
+  store/skills.ts           디스크의 스킬 문서 (전역 + 프로젝트)
+  lib/hooks.ts              훅 판정 + 실행 (내장 알림 · 사용자 셸 명령)
+  store/settings.ts         API 키 · 모델 · 사고 강도 · 시스템 프롬프트 · 도구/스킬/훅 · 테마
   components/chat/          ChatPanel / MessageBubble (tool 노드 흡수) / Markdown 렌더러
   components/flow/          FlowCanvas / TurnNode / AgentNode (대화 턴 그래프)
   components/inspect/       ContextModal / MemoryModal / JsonTree (투명성 UI)
   components/agents/        AgentDashboard (서브에이전트 칸반)
   components/mcp/           McpServers (서버 등록 · 연결 · 도구 목록)
+  components/skills/        SkillList (스킬 켜고 끄기 · 만들기 · 본문 보기)
+  components/hooks/         HookList (내장 훅 토글 · 사용자 훅 등록)
   components/Panel.tsx      공통 부품 (Button · Panel · Modal · Tag · Hint · 입력 크롬) — 새 UI 는 여기서 가져다 쓴다
   components/UsageMeter.tsx 토큰 · 요금 · 컨텍스트 링 (채팅 / 턴 / 세션 공용)
   components/ErrorBoundary.tsx  렌더 예외로 창이 새까매지는 것을 막는다
@@ -165,6 +224,10 @@ docs/local-llm.md           로컬 오픈소스 모델 운용 (모델 선택 · 
 줄마다 노드 수 · 비용 · 마지막 활동과 컨텍스트 링이 붙는데, 세션마다 메시지를 따로 읽지 않고
 `list_sessions` 가 집계까지 한 번에 내려준다(`SessionOverview`). 맨 아래는 프로젝트 합계다.
 
+목록의 오른쪽 경계선을 끌면 폭이 바뀐다(더블클릭하면 기본값). 채팅 ↔ 트리 분할선과 같은
+부품이고, 폭 계산도 `lib/panelSize.ts` 한 곳에서 한다 — 채팅과 우측 패널이 각자의 하한을
+지킬 수 있는 만큼만 내준다.
+
 > 예전에는 채팅 앞단에 **세션 맵**(분기 세션 트리)이 따로 있었다. 세션 분기를 만드는
 > 길이 사라지면서 그릴 나무도 사라져 목록 하나로 합쳤다.
 
@@ -186,7 +249,7 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
   LLM 을 부른 적이 없으므로 그대로 옮기면 비용이 이중으로 잡히고, 스냅샷은
   붙여넣은 자리와 어긋난 거짓 원문이 된다.
 - **위임된 서브에이전트**는 발화한 턴 카드에서 위/아래로 점선 분기해 붙는다.
-  진행률과 현재 Skill 이 노드에서 바로 보이고, 상세·중단은 [서브에이전트] 탭에서 한다.
+  진행률과 지금 실행 중인 도구가 노드에서 바로 보이고, 상세·중단은 [서브에이전트] 탭에서 한다.
 
 분기는 **그래프에서만** 만든다. 턴 카드를 클릭하면 그 턴의 끝이 "다음 메시지의 부모"가 되고,
 앞선 턴을 고르고 다시 질문하면 형제 턴이 생기며 그래프가 갈라진다.
@@ -258,9 +321,11 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 - 표시는 원형 링(`ContextRing`)이고 채팅 입력칸 위와 세션 카드가 **같은 부품 · 같은 페이로드
   계산기**를 쓴다. 두 자리가 다른 수를 말하면 그 자체가 버그로 읽힌다.
 
-## Skill (도구)
+## 도구 (Tool)
 
-`lib/ipc.ts` 의 IPC 함수를 그대로 AI SDK 도구로 감싼 것이 Skill 이다 (`lib/ai/skills.ts`).
+`lib/ipc.ts` 의 IPC 함수를 그대로 AI SDK 도구로 감싼 것이 도구다 (`lib/ai/tools.ts`).
+**스킬과는 다른 층이다** — 도구는 스키마째 매 턴 실리는 실행 경로이고, 스킬은 필요할 때
+본문을 끌어오는 절차서다 (아래 [스킬](#스킬-절차서)).
 
 | 묶음 | 도구 |
 | --- | --- |
@@ -271,7 +336,7 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 | 서브에이전트 | `delegate_task` |
 | MCP | 연결된 서버의 도구 (`mcp__서버__도구`) |
 
-- 켜 둔 도구는 **확인 없이 바로 실행**된다. 무엇을 열어 줄지는 [설정] 의 스킬 토글로 정한다.
+- 켜 둔 도구는 **확인 없이 바로 실행**된다. 무엇을 열어 줄지는 [설정] → [도구] 에서 정한다.
 - 경로가 프로젝트 루트를 벗어나지 못하게 막는 것은 Rust `paths::resolve_within` 의 몫이다.
 - 도구를 쓰면 한 턴이 여러 스텝으로 늘어난다. 스텝마다 트리에
   `assistant`(호출) → `tool`(결과) → `assistant`(다음 응답) 노드가 쌓이고,
@@ -283,6 +348,50 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
   흐르고 그때 스트림이 닫힌다. 다만 백그라운드에서 진짜 돌고 있는 작업은 도구가 스스로 정리해야
   한다 — `execute_shell_command` 는 `cancel_shell_command` 로 프로세스 트리를 죽인다.
   새 도구를 붙일 때도 이 경로를 끊지 않는다.
+
+## 스킬 (절차서)
+
+스킬은 **어떤 작업을 어떤 순서로 하는가**를 적어 둔 마크다운 문서다. 도구와 달리 본문이
+매 턴 실리지 않는다 — 시스템 프롬프트에는 `이름: 설명` 한 줄씩만 서고, 모델이 "이건 그 절차가
+필요하겠다" 고 판단할 때 `load_skill` 로 본문을 끌어온다. 그래서 절차를 아무리 길게 적어도
+평소 컨텍스트는 늘지 않는다.
+
+```
+---
+name: xlsx
+description: 엑셀 파일을 읽거나 만들거나 고칠 때. openpyxl 로 시트·셀·수식을 다룬다.
+---
+
+# 엑셀 파일 다루기
+## 0. 환경 확인 …
+```
+
+- **내장 스킬**: 엑셀(`xlsx`) · 워드(`docx`) · PDF(`pdf`). 어떤 라이브러리를 쓰고 무엇을 먼저
+  확인하며 무엇이 보존되지 않는지까지 Python 기준으로 적혀 있다. 코드에 박혀 있어 준비 없이 쓴다.
+- **사용자 스킬**: 두 곳에 둘 수 있다.
+  - 전역 — OS 앱 설정 디렉터리의 `skills/` (모든 프로젝트 공용, `settings.json` 옆)
+  - 프로젝트 — 리포의 `.dongdong/skills/` (커밋되어 팀과 공유된다)
+  - 배치는 `<이름>/SKILL.md` 또는 `<이름>.md`. 같은 이름이면 **프로젝트 > 전역 > 내장** 순으로 이긴다.
+- [설정] → [스킬] 에서 켜고 끄고, 새 스킬의 뼈대를 만들고, 본문을 그 자리에서 확인한다.
+  파일은 매 턴 다시 읽으므로 편집기에서 고치면 다음 턴부터 바로 반영된다(AGENTS.md 와 같은 규칙).
+- 서브에이전트도 같은 목록과 `load_skill` 을 받는다.
+
+## 훅
+
+정해진 시점에 도는 부수 동작이다. **턴을 막거나 되돌리지 못한다**(비차단) — 실패해도 대화에
+영향이 없다.
+
+| 시점 | 언제 |
+| --- | --- |
+| 턴 시작 | 사용자 메시지를 보내 턴이 시작될 때 |
+| 답변 완료 | 턴이 끝났을 때 (중단으로 끝난 경우 포함) |
+| 턴 오류 | 턴이 오류로 끊겼을 때 |
+
+- **내장 훅**: `답변 완료 시 알림`(기본 켜짐) · `오류 시 알림`. OS 알림으로 뜨고,
+  **창을 보고 있을 때는 뜨지 않는다** — 이미 보고 있는 사람에게 알릴 것이 없다.
+- **사용자 훅**: 그 시점에 실행할 셸 명령 한 줄. 자리표로 `{{event}}` `{{status}}`
+  `{{sessionId}}` `{{durationMs}}` `{{project}}` 를 쓴다. 값에서 셸을 가를 수 있는 글자는
+  걷어내고, 공급자 에러 문자열은 자리표로 주지 않는다(알림 문구로만 쓴다).
 
 ## 서브에이전트
 
@@ -298,7 +407,7 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 - 진행률은 **스텝 예산 대비 비율**이지 작업 완성도가 아니다 (끝나기 전에는 95% 를 넘지 않는다).
 - 요약 없이 스텝 예산을 다 쓰면 성공으로 포장하지 않고 `failed` 로 기록한다.
 - 앱이 죽어 `running` 인 채 남은 실행은 세션을 열 때 `reap_agent_runs` 가 실패로 정리한다.
-- 우측 **[서브에이전트]** 탭이 상태별 칸반이다. 진행바 · 지금 실행 중인 Skill · 소요 시간을
+- 우측 **[서브에이전트]** 탭이 상태별 칸반이다. 진행바 · 지금 실행 중인 도구 · 소요 시간을
   실시간으로 보여주고, 개별 중단 / 삭제 / 끝난 것 정리를 할 수 있다.
 - 모델과 스텝 예산은 [설정] 에서 따로 정한다 (기본값은 메인 모델과 동일).
 - 서브에이전트는 대화 노드를 남기지 않으므로 자기가 쓴 토큰을 `agent_runs.token_usage` 에 적는다.
@@ -311,7 +420,7 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 - **전송 계층은 stdio.** 줄바꿈으로 구분된 JSON-RPC 2.0 메시지를 주고받는다 (`src-tauri/src/mcp.rs`).
   `initialize` → `notifications/initialized` → `tools/list` 까지 마쳐야 연결로 친다.
 - 서버 목록은 API 키와 같은 곳(OS 앱 설정 디렉터리의 `settings.json`)에 저장한다. [설정] 에서 등록·연결한다.
-- 도구 이름은 `mcp__<서버>__<도구>` 로 붙여 내장 Skill 과 충돌하지 않게 한다. 이름이 겹치면 번호를 덧붙인다.
+- 도구 이름은 `mcp__<서버>__<도구>` 로 붙여 내장 도구와 충돌하지 않게 한다. 이름이 겹치면 번호를 덧붙인다.
 - 스키마는 서버가 준 **JSON Schema 를 그대로** 공급자에게 넘긴다 (zod 로 다시 쓰지 않는다).
 - MCP 의 `isError` 는 프로토콜 실패가 아니라 "도구가 실패를 보고한 것"이므로, 모델이 읽고 대응하도록 결과에 담아 넘긴다.
 - 파이프 읽기는 블로킹이라 IPC 는 전부 `async + spawn_blocking`. 응답이 없는 서버에 매달리지 않도록
@@ -352,7 +461,7 @@ DB 는 여전히 노드 단위(`messages.parent_id`)로 저장한다.
 - **`projects`** — 프로젝트 루트 경로, 설정 메타데이터
 - **`sessions`** — 대화방. `parent_session_id` + `branched_from_message_id` 로 분기 이력 추적
 - **`messages`** — 대화 **트리**. `parent_id` 가 트리 간선, `context_snapshot` 에 그 시점 LLM 입력 원문 보관
-- **`agent_runs`** — 서브에이전트 실행 상태 (진행률 · 실행 중인 Skill · 결과 · 소요 시간)
+- **`agent_runs`** — 서브에이전트 실행 상태 (진행률 · 실행 중인 도구 · 결과 · 소요 시간)
 - **`memories`** — 에이전트 메모리. `scope`(project/session) + `key` 가 유일 키 (마이그레이션 v2)
 
 마이그레이션은 `PRAGMA user_version` 기반으로 현재 v3 까지다 —

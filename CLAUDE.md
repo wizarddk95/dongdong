@@ -2,7 +2,8 @@
 
 `dongdong` — 노드 기반 대화 시각화를 갖춘 **로컬 코딩 에이전트** (Tauri 2 + React 19).
 도커/샌드박스 없이 사용자 OS 권한으로 직접 실행하고, 프로젝트 루트의 `.agent_workspace/local.db`(SQLite)에 저장한다.
-Phase 1~4 완료: 워크스페이스·대화 트리 → LLM 스트리밍 → Skill/Inspector → 서브에이전트 + MCP 브리지.
+Phase 1~4 완료: 워크스페이스·대화 트리 → LLM 스트리밍 → 도구/Inspector → 서브에이전트 + MCP 브리지.
+그 위에 스킬(절차서) · 훅(비차단 자동 동작)이 올라가 있다.
 
 ## 작업 후 반드시 통과시킬 것
 
@@ -11,7 +12,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 338 / cargo 46. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 368 / cargo 50. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -31,6 +32,12 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - **경로**: 파일 경로는 `paths.rs` 경유. `resolve_within()` 이 프로젝트 루트 밖 접근을 막는다.
 - **오래 걸리는 command 는 `async` + `spawn_blocking`**. 동기 command 는 메인 스레드를 막아 UI 가 언다.
 - **중단 경로를 끊지 말 것**: 새 도구를 붙이면 `abortSignal` 을 반드시 존중한다. `runner.ts` 가 `abortableTools()` 로 한 번 감싸 주지만, 백그라운드에서 진짜 돌고 있는 작업(프로세스·자식 프로세스)은 도구가 스스로 정리해야 한다(`execute_shell_command` → `cancel_shell_command`, `mcp_call_tool` → `mcp_cancel_tool`).
+- **도구와 스킬은 다른 층이다**: 도구(`lib/ai/tools.ts`)는 스키마째 매 턴 실리는 **실행 경로**,
+  스킬(`lib/ai/skills.ts`)은 이름·설명만 실렸다가 `load_skill` 로 본문을 끌어오는 **절차서**다.
+  새 기능을 붙일 때 어느 쪽인지부터 정한다 — 절차를 도구 description 에 적으면 매 턴 그 비용을 낸다.
+  (설정의 옛 키 `skills` 는 이제 도구 토글이다. `store/settings.ts` 가 `tools` 로 옮겨 읽는다)
+- **훅은 비차단이다**: 턴을 막거나 되돌리지 못하고, 실패해도 대화에 영향이 없다(`lib/hooks.ts`).
+  도구 실행을 거부하는 훅을 붙이려면 `abort.ts` 의 중단 경주까지 손봐야 하므로 지금은 열지 않았다.
 - **도구 출력에는 상한을 둔다**: `skills.ts` 의 `clip()`(20,000자)을 지난다. MCP 도구도 예외가 아니다 — 검색·크롤 결과 하나가 컨텍스트를 통째로 먹는다.
 - **스트리밍 중 DB 쓰기 금지**. 토큰은 Zustand 에만 쌓고 **스텝 경계**(도구 호출 확정 / 턴 종료)에서만 저장한다.
 - **`MODEL_CATALOG`(`lib/ai/providers.ts`) 는 사용자 소유** — 임의로 고치지 않는다.
@@ -150,6 +157,9 @@ src/
   lib/agentRuns.ts      서브에이전트 상태 색·경과 시간 (트리 노드와 대시보드 공용)
   lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음). 수식은 구분 기호만 걷어 원문을 넘긴다
   styles/katex.css      KaTeX 스타일시트 사본 — 생성 파일(`scripts/gen-katex-css.mjs`), 직접 고치지 않는다
+  lib/hooks.ts          훅 판정(순수) + 실행. 내장(알림) · 사용자(셸 명령)
+  lib/notify.ts         OS 알림 한 줄 (tauri-plugin-notification 을 부를 때만 동적 로드)
+  lib/panelSize.ts      세션 목록 ↔ 채팅 ↔ 우측 패널 분할 폭(순수). App 의 분할선이 쓴다
   lib/theme.ts          테마 결정(순수) + <html data-theme> 적용. 색값은 안 갖는다
   lib/useResolvedTheme.ts  지금 적용된 테마를 React 로 (React Flow 처럼 JS 로 명암을 넘겨야 하는 곳만)
   lib/ai/abort.ts       도구 실행에 중단 붙이기 (ToolSet 래퍼)
@@ -159,12 +169,15 @@ src/
   lib/ai/providers.ts   "provider:modelId" 라우팅 + Tauri fetch 주입 + 로컬 서버(OpenAI 호환) 탐색
   lib/ai/usage.ts       토큰 사용량 정규화 + 요금 추정 + 컨텍스트 잔량 (순수 파생)
   lib/ai/runner.ts      streamText 한 턴 (DB 안 건드림) + tool 파트 변환
-  lib/ai/skills.ts      IPC → AI SDK 도구 (zod 스키마 · 토글 · delegate_task)
+  lib/ai/tools.ts       IPC → AI SDK 도구 (zod 스키마 · 토글 · delegate_task). 매 턴 실린다
+  lib/ai/skills.ts      스킬(절차서) 파싱·병합·목록 블록 + `load_skill`. 본문은 부를 때만 실린다
+  lib/ai/builtinSkills.ts  내장 스킬 원문 (xlsx · docx · pdf — Python 절차). 코드에 박아 둔다
   lib/ai/subagent.ts    서브에이전트 한 명의 격리된 실행
   lib/ai/mcp.ts         MCP 도구 → dynamicTool (서버의 JSON Schema 그대로)
   lib/ai/instructions.ts 프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합
-  store/                workspace(트리) · chat(턴) · agents(서브) · mcp · settings
-  components/           chat · flow(턴 그래프) · agents · mcp · inspect
+  store/                workspace(트리) · chat(턴) · agents(서브) · mcp · skills · settings
+  components/           chat · flow(턴 그래프) · agents · mcp · inspect · skills · hooks
+                        SettingsModal.tsx — 좌측 섹션 목록 + 한 번에 한 섹션 (일반·모델·공급자·도구·스킬·훅·MCP)
                         ErrorBoundary.tsx — 렌더 예외로 창이 새까매지는 것을 막는다
                         UsageMeter.tsx — 토큰·요금·컨텍스트 게이지 (채팅/턴/세션 공용)
                         Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·Hint·입력 크롬). 새 UI 는 여기서 가져다 쓴다
@@ -174,7 +187,8 @@ src-tauri/src/
   paths.rs              경로 정규화 + 루트 밖 차단
   process.rs            프로세스 트리 kill (셸·MCP 공용 — 손자까지 죽여야 파이프가 닫힌다)
   db/{schema,models,queries}.rs
-  commands/{workspace,shell,fs,session,settings,memory,agent,mcp}.rs
+  commands/{workspace,shell,fs,session,settings,skills,memory,agent,mcp}.rs
+                        skills.rs 만 프로젝트 루트 밖(앱 설정 디렉터리)을 연다 — 전역 스킬이 거기 산다
   mcp.rs                MCP stdio 클라이언트 (JSON-RPC 피어 + 프로세스 레지스트리)
 ```
 
@@ -219,6 +233,15 @@ src-tauri/src/
 - **투명성이 이 툴의 경쟁력**: assistant 노드의 `context_snapshot` 에 그 시점 LLM 입력 원문을 남기고 인스펙터로 보여준다. 새 기능도 "무엇이 LLM 에 갔는지" 숨기지 않게 만든다.
 - **프로젝트 지침**: 연 프로젝트 루트의 `AGENTS.md` 를 매 턴 다시 읽어 시스템 프롬프트 맨 앞에 원문 그대로 싣는다(서브에이전트에도 전달).
 - **서브에이전트**: `delegate_task` → 컨텍스트가 격리된 별도 실행, 요약만 상위로. `parent_message_id` 가 가리키는 노드의 턴에서 위/아래로 분기해 그려진다(대시보드 탭과 병행). `onDelegate` 없이 ToolSet 을 만들면 도구가 노출되지 않아 재위임이 구조적으로 불가능하다. 상태는 `agent_runs`.
+- **스킬**: 절차서(`SKILL.md`)다. 시스템 프롬프트에는 `이름: 설명` 한 줄씩만 실리고, 모델이
+  필요하다고 판단하면 `load_skill` 로 본문을 끌어온다 — 절차를 길게 적어도 평소 컨텍스트가 안 는다.
+  세 곳에서 오고 **뒤엣것이 같은 이름을 덮어쓴다**: 내장(코드) → 전역(앱 설정 디렉터리의 `skills/`)
+  → 프로젝트(`.dongdong/skills/`). 프로젝트 쪽을 `.agent_workspace` 에 두지 않은 이유는 그 폴더의
+  `.gitignore` 가 `*` 라 리포와 함께 공유될 수 없기 때문이다. 파싱(frontmatter)은 **TS 가 한다** —
+  Rust 는 파일만 읽어 온다(규칙을 두 언어로 나눠 적으면 반드시 어긋난다).
+- **훅**: 턴 시작·완료·오류 시점에 도는 부수 동작. 내장(OS 알림)은 켜고 끄기만 하고, 사용자 훅은
+  셸 명령 한 줄이다. 자리표(`{{status}}` 등)에 들어가는 값은 셸을 가를 수 있는 글자를 걷어내고,
+  **공급자 에러 문자열은 자리표로 주지 않는다**(알림 문구로만 쓴다).
 - **MCP**: 외부 서버를 stdio 자식 프로세스로 띄워 도구를 `mcp__서버__도구` 이름으로 합친다.
   파이프 읽기는 블로킹이라 요청마다 감시 스레드로 타임아웃을 건다. **중단도 같은 방법뿐이다** —
   읽기를 푸는 길이 서버를 죽이는 것밖에 없어서 중단하면 그 연결도 끊긴다 → `store/mcp.ts` 가
