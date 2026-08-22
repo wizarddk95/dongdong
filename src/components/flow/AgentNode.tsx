@@ -49,7 +49,7 @@ export function AgentNode({ data }: NodeProps<AgentFlowNode>) {
 
       <p className="line-clamp-2 flex-1 overflow-hidden text-caption leading-snug text-ink-muted">
         {isRunActive(run)
-          ? (run.currentSkill ? `▶ ${run.currentSkill}` : "▶ 생각 중…")
+          ? (run.currentTool ? `▶ ${run.currentTool}` : "▶ 생각 중…")
           : (run.error ?? run.result ?? run.task)}
       </p>
     </div>

@@ -52,7 +52,7 @@ describe("buildSubagentContext", () => {
 });
 
 describe("runSubagent", () => {
-  it("스텝이 끝날 때마다 진행률과 실행 중인 Skill 을 알린다", async () => {
+  it("스텝이 끝날 때마다 진행률과 실행 중인 도구를 알린다", async () => {
     vi.mocked(runTurn).mockImplementation(async (options: RunTurnOptions) => {
       options.onToolCall?.({ toolCallId: "c1", toolName: "execute_shell_command", input: {} });
       await options.onStepFinish?.({
@@ -79,7 +79,7 @@ describe("runSubagent", () => {
 
     expect(result.text).toBe("3건 실패, 타임존 문제");
     expect(result.toolCalls).toBe(1);
-    expect(updates.at(0)?.currentSkill).toBe("execute_shell_command");
+    expect(updates.at(0)?.currentTool).toBe("execute_shell_command");
     // 스텝 예산(4) 대비 2스텝 → 0.5. 끝나기 전에는 1.0 이 되지 않는다.
     expect(updates.at(-1)?.progress).toBeCloseTo(0.5);
     expect(updates.every((update) => update.progress < 1)).toBe(true);

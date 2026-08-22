@@ -118,6 +118,12 @@ CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id, updated_
     r#"
 ALTER TABLE agent_runs ADD COLUMN token_usage TEXT;
 "#,
+    // v4 — 이름 정정: 이 칸에 담기는 것은 스킬이 아니라 **도구 이름**이다.
+    //   도구(실행 경로)와 스킬(절차서)을 가르면서 옛 이름이 거짓말이 됐다.
+    //   v1 의 정의는 손대지 않는다(이미 만들어진 DB 와 어긋난다) → 여기서 이름만 바꾼다.
+    r#"
+ALTER TABLE agent_runs RENAME COLUMN current_skill TO current_tool;
+"#,
 ];
 
 /// 커넥션에 공통 PRAGMA 를 적용한다.

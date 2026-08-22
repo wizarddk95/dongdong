@@ -179,7 +179,7 @@ export const useAgents = create<AgentsState>((set, get) => {
           onProgress: (progress) =>
             patchLocal(run.id, {
               progress: progress.progress,
-              currentSkill: progress.currentSkill,
+              currentTool: progress.currentTool,
             }),
         });
 
@@ -203,7 +203,7 @@ export const useAgents = create<AgentsState>((set, get) => {
           status: "succeeded",
           progress: 1,
           result: text,
-          currentSkill: "",
+          currentTool: "",
           tokenUsage,
         });
         return { runId: run.id, name, status: "succeeded", result: text };

@@ -352,6 +352,48 @@ fn migrates_v2_agent_runs_by_adding_the_token_column() {
 }
 
 #[test]
+fn migrates_v3_by_renaming_current_skill_to_current_tool() {
+    // 이름을 고치기 전(v3)까지 쓰던 DB 를 재현한 뒤 v4 로 올린다.
+    // 담겨 있던 값(도구 이름)은 그대로 남아야 한다 — 컬럼 이름만 바뀌는 마이그레이션이다.
+    let project = TempProject::new("migrate-v4");
+    let db_path = paths::db_path(&project.0);
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    let mut conn = rusqlite::Connection::open(&db_path).unwrap();
+    super::schema::apply_pragmas(&conn).unwrap();
+
+    for index in 0..3 {
+        conn.execute_batch(super::schema::MIGRATIONS[index]).unwrap();
+    }
+    conn.pragma_update(None, "user_version", 3i64).unwrap();
+
+    let ts = queries::now();
+    conn.execute(
+        "INSERT INTO projects (id, root_path, name, settings, created_at, updated_at)
+         VALUES ('p1', 'C:/old', 'old', '{}', ?1, ?1)",
+        rusqlite::params![ts],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO sessions (id, project_id, title, metadata, created_at, updated_at)
+         VALUES ('s1', 'p1', '옛 세션', '{}', ?1, ?1)",
+        rusqlite::params![ts],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO agent_runs (id, session_id, name, task, status, progress, current_skill, created_at)
+         VALUES ('r1', 's1', '옛 실행', '일', 'running', 0.5, 'read_file', ?1)",
+        rusqlite::params![ts],
+    )
+    .unwrap();
+
+    let version = super::schema::migrate(&mut conn).unwrap();
+    assert_eq!(version, super::schema::MIGRATIONS.len() as i64);
+
+    let run = queries::get_agent_run(&conn, "r1").unwrap().unwrap();
+    assert_eq!(run.current_tool.as_deref(), Some("read_file"));
+}
+
+#[test]
 fn tracks_agent_run_lifecycle() {
     let project = TempProject::new("agent-run");
     let conn = open_workspace_db(&project.0).unwrap();
@@ -383,14 +425,14 @@ fn tracks_agent_run_lifecycle() {
         &AgentRunPatch {
             status: Some("running".into()),
             progress: Some(0.5),
-            current_skill: Some("execute_shell_command".into()),
+            current_tool: Some("execute_shell_command".into()),
             ..Default::default()
         },
     )
     .unwrap();
     assert!(running.started_at.is_some());
     assert!(running.finished_at.is_none());
-    assert_eq!(running.current_skill.as_deref(), Some("execute_shell_command"));
+    assert_eq!(running.current_tool.as_deref(), Some("execute_shell_command"));
 
     // 종료 — finished_at 이 찍히고 결과가 남는다.
     let done = queries::update_agent_run(

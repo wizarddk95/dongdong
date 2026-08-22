@@ -158,7 +158,7 @@ export interface AgentRun {
   status: string;
   /** 0.0 ~ 1.0 */
   progress: number;
-  currentSkill: string | null;
+  currentTool: string | null;
   result: string | null;
   error: string | null;
   /** 이 실행이 쓴 토큰 (`StoredUsage` JSON). 서브에이전트는 노드를 남기지 않는다 */
@@ -178,7 +178,7 @@ export interface NewAgentRun {
 export interface AgentRunPatch {
   status?: AgentStatus;
   progress?: number;
-  currentSkill?: string;
+  currentTool?: string;
   result?: string;
   error?: string;
   tokenUsage?: unknown;

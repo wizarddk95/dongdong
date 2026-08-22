@@ -125,7 +125,7 @@ function RunCard({ run }: { run: AgentRun }) {
 
       {active && (
         <p className="mb-1 truncate font-mono text-caption text-accent">
-          {run.currentSkill ? `▶ ${run.currentSkill}` : "▶ 생각 중…"}
+          {run.currentTool ? `▶ ${run.currentTool}` : "▶ 생각 중…"}
         </p>
       )}
 

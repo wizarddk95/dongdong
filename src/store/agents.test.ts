@@ -51,7 +51,7 @@ beforeEach(() => {
       task: input.task,
       status: "pending",
       progress: 0,
-      currentSkill: null,
+      currentTool: null,
       tokenUsage: null,
       result: null,
       error: null,
@@ -99,8 +99,8 @@ describe("useAgents.spawn", () => {
 
   it("진행 상황은 DB 를 거치지 않고 로컬 상태만 갱신한다", async () => {
     vi.mocked(runSubagent).mockImplementation(async (options) => {
-      options.onProgress?.({ progress: 0.4, currentSkill: "read_file", steps: 1 });
-      expect(useAgents.getState().runs[0].currentSkill).toBe("read_file");
+      options.onProgress?.({ progress: 0.4, currentTool: "read_file", steps: 1 });
+      expect(useAgents.getState().runs[0].currentTool).toBe("read_file");
       expect(useAgents.getState().runs[0].progress).toBeCloseTo(0.4);
       return finished;
     });
@@ -320,7 +320,7 @@ describe("useAgents.refresh / 정리", () => {
       task: "일",
       status: "failed",
       progress: 0.2,
-      currentSkill: null,
+      currentTool: null,
       tokenUsage: null,
       result: null,
       error: "앱이 종료되어 중단되었습니다",

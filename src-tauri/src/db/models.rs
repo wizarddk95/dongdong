@@ -206,8 +206,8 @@ pub struct AgentRun {
     pub status: String,
     /// 0.0 ~ 1.0
     pub progress: f64,
-    /// 지금 실행 중인 Skill 이름
-    pub current_skill: Option<String>,
+    /// 지금 실행 중인 도구 이름 (스킬이 아니다 — v4 에서 이름을 고쳤다)
+    pub current_tool: Option<String>,
     pub result: Option<String>,
     pub error: Option<String>,
     /// 이 실행이 쓴 토큰 (`StoredUsage` JSON). 서브에이전트는 대화 트리에
@@ -236,7 +236,7 @@ pub struct AgentRunPatch {
     #[serde(default)]
     pub progress: Option<f64>,
     #[serde(default)]
-    pub current_skill: Option<String>,
+    pub current_tool: Option<String>,
     #[serde(default)]
     pub result: Option<String>,
     #[serde(default)]

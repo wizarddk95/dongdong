@@ -968,7 +968,7 @@ pub fn delete_memory(conn: &Connection, id: &str) -> AppResult<bool> {
 
 // -------------------------------------------------------------- agent runs
 
-const AGENT_RUN_COLUMNS: &str = "id, session_id, parent_message_id, name, task, status, progress, current_skill, result, error, token_usage, created_at, started_at, finished_at";
+const AGENT_RUN_COLUMNS: &str = "id, session_id, parent_message_id, name, task, status, progress, current_tool, result, error, token_usage, created_at, started_at, finished_at";
 const AGENT_STATUSES: [&str; 5] = ["pending", "running", "succeeded", "failed", "cancelled"];
 /// 실행이 끝난 상태들 — 여기 들어오면 finished_at 을 찍는다.
 const AGENT_TERMINAL: [&str; 3] = ["succeeded", "failed", "cancelled"];
@@ -982,7 +982,7 @@ fn map_agent_run(row: &Row<'_>) -> rusqlite::Result<AgentRun> {
         task: row.get(4)?,
         status: row.get(5)?,
         progress: row.get(6)?,
-        current_skill: row.get(7)?,
+        current_tool: row.get(7)?,
         result: row.get(8)?,
         error: row.get(9)?,
         token_usage: from_text(row.get(10)?),
@@ -1045,7 +1045,7 @@ pub fn update_agent_run(conn: &Connection, id: &str, patch: &AgentRunPatch) -> A
         .progress
         .unwrap_or(existing.progress)
         .clamp(0.0, 1.0);
-    let current_skill = patch.current_skill.clone().or(existing.current_skill);
+    let current_tool = patch.current_tool.clone().or(existing.current_tool);
     let result = patch.result.clone().or(existing.result);
     let error = patch.error.clone().or(existing.error);
     let token_usage = to_text(&patch.token_usage.clone().or(existing.token_usage));
@@ -1062,14 +1062,14 @@ pub fn update_agent_run(conn: &Connection, id: &str, patch: &AgentRunPatch) -> A
     };
 
     conn.execute(
-        "UPDATE agent_runs SET status = ?2, progress = ?3, current_skill = ?4, result = ?5,
+        "UPDATE agent_runs SET status = ?2, progress = ?3, current_tool = ?4, result = ?5,
              error = ?6, token_usage = ?7, started_at = ?8, finished_at = ?9
          WHERE id = ?1",
         params![
             id,
             status,
             progress,
-            current_skill,
+            current_tool,
             result,
             error,
             token_usage,

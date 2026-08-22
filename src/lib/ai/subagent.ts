@@ -20,8 +20,8 @@ export const SUBAGENT_SYSTEM_PROMPT = `당신은 코딩 에이전트의 서브�
 export interface SubagentProgress {
   /** 0.0 ~ 1.0 — 스텝 예산 대비 진행률이지 작업 완성도가 아니다 */
   progress: number;
-  /** 방금 실행한 Skill */
-  currentSkill: string | null;
+  /** 방금 실행한 도구 이름 */
+  currentTool: string | null;
   steps: number;
 }
 
@@ -72,7 +72,7 @@ export function buildSubagentContext(options: RunSubagentOptions): TurnContext {
 export async function runSubagent(options: RunSubagentOptions): Promise<SubagentResult> {
   const context = buildSubagentContext(options);
   let toolCalls = 0;
-  let currentSkill: string | null = null;
+  let currentTool: string | null = null;
 
   const result = await runTurn({
     context,
@@ -83,17 +83,17 @@ export async function runSubagent(options: RunSubagentOptions): Promise<Subagent
     onTextDelta: () => {},
     onToolCall: (call) => {
       toolCalls += 1;
-      currentSkill = call.toolName;
+      currentTool = call.toolName;
       options.onProgress?.({
         progress: stepProgress(toolCalls, options.maxSteps),
-        currentSkill,
+        currentTool,
         steps: toolCalls,
       });
     },
     onStepFinish: (step) => {
       options.onProgress?.({
         progress: stepProgress(step.index + 1, options.maxSteps),
-        currentSkill: step.toolCalls.at(-1)?.toolName ?? currentSkill,
+        currentTool: step.toolCalls.at(-1)?.toolName ?? currentTool,
         steps: step.index + 1,
       });
     },
