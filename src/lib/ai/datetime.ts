@@ -10,6 +10,8 @@
  * (`composeSystemPrompt`). 무엇이 실제로 나갔는지는 인스펙터로 그대로 보인다.
  */
 
+import { t } from "@/lib/i18n";
+
 /** 프롬프트에 실을 시각 정보. 사람이 읽는 줄과 기계가 읽는 ISO 를 함께 준다. */
 export interface NowInfo {
   /** `2026-08-22 (토) 14:03` — 사용자의 로컬 시각 */
@@ -24,7 +26,15 @@ export interface NowInfo {
   year: number;
 }
 
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+const WEEKDAY_KEYS = [
+  "datetime.weekday.sun",
+  "datetime.weekday.mon",
+  "datetime.weekday.tue",
+  "datetime.weekday.wed",
+  "datetime.weekday.thu",
+  "datetime.weekday.fri",
+  "datetime.weekday.sat",
+] as const;
 
 function pad(value: number, size = 2): string {
   return String(Math.trunc(Math.abs(value))).padStart(size, "0");
@@ -58,7 +68,7 @@ export function describeNow(now: Date = new Date()): NowInfo {
   const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
   return {
-    local: `${date} (${WEEKDAYS[now.getDay()]}) ${time}`,
+    local: `${date} (${t(WEEKDAY_KEYS[now.getDay()])}) ${time}`,
     iso: now.toISOString(),
     timeZone: localTimeZone(),
     offset: formatOffset(offsetMinutes),
@@ -77,12 +87,12 @@ export function datetimeBlock(now: Date = new Date()): string {
   const zone = info.timeZone ? `${info.timeZone}, ${info.offset}` : info.offset;
 
   return [
-    "# 현재 시각",
+    t("datetime.heading"),
     `${info.local} (${zone})`,
-    `UTC 기준: ${info.iso}`,
+    t("datetime.utc", { iso: info.iso }),
     "",
-    `- 사용자가 말하는 "오늘 · 지금 · 최근 · 올해" 는 이 시각 기준입니다. 올해는 ${info.year}년입니다.`,
-    "- 최신 정보를 찾을 때 학습 시점의 연도를 쓰지 말고 위 날짜를 기준으로 삼으세요.",
-    "- 이 값은 턴마다 새로 실립니다. 앞선 대화에 적힌 시각은 그때의 값입니다.",
+    t("datetime.rule.today", { year: info.year }),
+    t("datetime.rule.latest"),
+    t("datetime.rule.perTurn"),
   ].join("\n");
 }

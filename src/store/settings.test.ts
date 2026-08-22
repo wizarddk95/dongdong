@@ -13,7 +13,10 @@ vi.mock("@tauri-apps/plugin-http", () => ({ fetch: vi.fn() }));
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import * as ipc from "@/lib/ipc";
-import { useSettings } from "@/store/settings";
+import { DEFAULT_TOOLS, buildTools } from "@/lib/ai/tools";
+import { en } from "@/lib/i18n/en";
+import { getLocale, setLocale } from "@/lib/i18n";
+import { defaultSystemPrompt, useSettings } from "@/store/settings";
 
 describe("모델을 바꾸면 권장 사고 강도를 따라간다", () => {
   beforeEach(() => {
@@ -154,5 +157,40 @@ describe("로컬 모델 목록 새로고침", () => {
     http.mockRejectedValue(new Error("connection refused"));
     await expect(useSettings.getState().refreshLocalModels()).rejects.toThrow();
     expect(useSettings.getState().localModels).toEqual(["gpt-oss:20b"]);
+  });
+});
+
+describe("화면 언어", () => {
+  beforeEach(() => {
+    setLocale("ko");
+    useSettings.setState({ language: "ko", systemPrompt: defaultSystemPrompt() });
+  });
+
+  it("언어를 바꾸면 t() 도 함께 옮겨간다", async () => {
+    await useSettings.getState().update({ language: "en" });
+    expect(getLocale()).toBe("en");
+  });
+
+  it("손대지 않은 기본 프롬프트는 새 언어의 기본값으로 갈아 끼운다", async () => {
+    await useSettings.getState().update({ language: "en" });
+    expect(useSettings.getState().systemPrompt).toBe(en["prompt.default"]);
+  });
+
+  it("사용자가 고쳐 쓴 프롬프트는 언어를 바꿔도 그대로 둔다", async () => {
+    // 언어 하나 바꿨다고 사용자가 쓴 글이 사라지면 안 된다.
+    useSettings.setState({ systemPrompt: "내가 직접 쓴 프롬프트" });
+    await useSettings.getState().update({ language: "en" });
+    expect(useSettings.getState().systemPrompt).toBe("내가 직접 쓴 프롬프트");
+  });
+
+  it("같은 patch 에 프롬프트가 있으면 그것이 이긴다", async () => {
+    await useSettings.getState().update({ language: "en", systemPrompt: "직접 지정" });
+    expect(useSettings.getState().systemPrompt).toBe("직접 지정");
+  });
+
+  it("영어를 고르면 도구 설명도 영어로 나간다 — 프롬프트만 바뀌면 반쪽이다", async () => {
+    await useSettings.getState().update({ language: "en" });
+    const tools = buildTools({ enabled: { ...DEFAULT_TOOLS, shell: false } });
+    expect(String(tools.read_file?.description)).toBe(en["tool.readFile.description"]);
   });
 });

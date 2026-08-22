@@ -15,6 +15,7 @@ import { TurnNode, TURN_HEIGHT, TURN_WIDTH } from "@/components/flow/TurnNode";
 import { Button } from "@/components/Panel";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import { isRunActive } from "@/lib/agentRuns";
+import { t } from "@/lib/i18n";
 import { tidyLayout } from "@/lib/layout";
 import { pathTo } from "@/lib/tree";
 import {
@@ -143,7 +144,7 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
           source: turn.parentTurnId,
           target: turn.id,
           animated: turn.status === "streaming",
-          label: midway ? "중간 스텝에서 분기" : undefined,
+          label: midway ? t("flow.midwayBranch") : undefined,
           // 색값을 박아 두면 테마를 바꿔도 선만 옛 색으로 남는다 → 토큰 변수를 그대로 넘긴다.
           labelStyle: { fill: "var(--color-ink-muted)", fontSize: 11 },
           labelBgStyle: { fill: "var(--color-canvas)" },
@@ -217,7 +218,7 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
   }, [deletions, activeSessionId]);
 
   // 뿌리가 둘로 갈라지는 삭제는 막는다. 이유는 버튼 툴팁으로 그대로 보여준다.
-  const busy = running ? "턴이 진행 중입니다. 끝나거나 중지한 뒤에 하세요." : null;
+  const busy = running ? t("flow.busy") : null;
   const soloBlocker = busy ?? (selectedTurn ? soloDeleteBlocker(index, selectedTurn) : null);
 
   /** 노드 목록을 지우고 딸린 실행·그래프를 정리한다. */
@@ -233,7 +234,7 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
     remove(
       selectedTurn.nodes.map((node) => node.id),
       false,
-      `턴 ${turnLabel(selectedTurn)}`,
+      t("flow.turnLabel", { label: turnLabel(selectedTurn) }),
     );
   }
 
@@ -245,13 +246,20 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
 
     // 한 턴짜리면 위 버튼과 결과가 같으니 묻지 않는다. 갈래를 통째로 걷어낼 때만 확인한다.
     if (descendants > 0) {
-      const detail = `이 턴과 하위 ${descendants}개 턴 · 노드 ${messageIds.length}개`;
-      if (!window.confirm(`${detail} 을(를) 삭제합니다. [되돌리기] 로 되살릴 수 있지만 앱을 끄면 사라집니다.`)) {
+      const detail = t("flow.subtreeDetail", {
+        turns: descendants,
+        nodes: messageIds.length,
+      });
+      if (!window.confirm(t("flow.confirmDelete", { detail }))) {
         return;
       }
     }
 
-    remove(messageIds, true, `턴 ${turnLabel(selectedTurn)} 아래 ${turnIds.length}개`);
+    remove(
+      messageIds,
+      true,
+      t("flow.subtreeLabel", { label: turnLabel(selectedTurn), count: turnIds.length }),
+    );
   }
 
   const copySelectedTurn = useCallback(() => {
@@ -259,7 +267,7 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
     const preview = selectedTurn.userText.replace(/\s+/g, " ").trim().slice(0, 20);
     copyNodes(
       selectedTurn.nodes.map((node) => node.id),
-      `턴 ${turnLabel(selectedTurn)}${preview ? ` · ${preview}` : ""}`,
+      `${t("flow.turnLabel", { label: turnLabel(selectedTurn) })}${preview ? ` · ${preview}` : ""}`,
     );
   }, [selectedTurn, copyNodes]);
 
@@ -314,21 +322,21 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
     <div className="relative flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline px-3 py-2">
         <span className="text-caption text-ink-muted">
-          {index.turns.length}개 턴 · {messages.length}노드
-          {orphanCount > 0 && ` · 연결 끊긴 위임 ${orphanCount}건`}
+          {t("flow.counts", { turns: index.turns.length, nodes: messages.length })}
+          {orphanCount > 0 && ` · ${t("flow.orphans", { count: orphanCount })}`}
         </span>
 
         {clipboard && (
           <span className="flex min-w-0 items-center gap-1 text-caption text-ink-subtle">
             <span
               className="max-w-56 truncate"
-              title={`복사해 둔 턴입니다. 붙여넣을 턴을 고르고 [붙여넣기] 를 누르세요 (${clipboard.messageIds.length}노드).`}
+              title={t("flow.clipboardHint", { nodes: clipboard.messageIds.length })}
             >
               📋 {clipboard.label}
             </span>
             <button
               className="rounded-sm px-1 transition-colors hover:bg-hover hover:text-ink"
-              title="복사해 둔 턴을 버립니다"
+              title={t("flow.clearClipboard")}
               onClick={clearClipboard}
             >
               ✕
@@ -340,19 +348,19 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
           <Button
             disabled={running}
             onClick={() => void undoDelete().then(() => refreshRuns())}
-            title="방금 지운 노드를 원래 자리로 되살립니다. 앱을 끄면 되돌릴 수 없습니다."
+            title={t("flow.undoHint")}
           >
-            ↩ 삭제 되돌리기 · {undoable.label}
+            {t("flow.undo")} · {undoable.label}
           </Button>
         )}
 
         {selectedRun ? (
           <div className="ml-auto flex items-center gap-1">
             <span className="truncate text-caption text-ink-muted">
-              서브에이전트 <span className="text-ink">{selectedRun.name}</span>
+              {t("app.tab.agents")} <span className="text-ink">{selectedRun.name}</span>
             </span>
             <Button onClick={() => onFocusAgents?.()} disabled={!onFocusAgents}>
-              서브에이전트 탭에서 보기
+              {t("flow.openAgentsTab")}
             </Button>
           </div>
         ) : (
@@ -360,27 +368,26 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
             <Button
               onClick={copySelectedTurn}
               disabled={!selectedTurn}
-              title="선택한 턴을 클립보드에 담습니다 (Ctrl+C). 다른 세션에도 붙여넣을 수 있습니다."
+              title={t("flow.copyHint")}
             >
-              복사
+              {t("common.copy")}
             </Button>
             {/* 비활성 버튼에는 툴팁이 뜨지 않는 웹뷰가 있어 이유는 껍데기에 건다. */}
             <span
               title={
                 busy ??
                 (clipboard
-                  ? "복사한 턴을 선택한 턴 뒤에 복제해 붙입니다 (Ctrl+V). 토큰·컨텍스트 기록은 복제하지 않습니다."
-                  : "먼저 턴을 복사하세요 (Ctrl+C).")
+                  ? t("flow.pasteHint")
+                  : t("flow.pasteEmpty"))
               }
             >
               <Button onClick={pasteIntoSelection} disabled={!canPaste}>
-                붙여넣기
+                {t("flow.paste")}
               </Button>
             </span>
             <span
               title={
-                soloBlocker ??
-                "선택한 턴만 지웁니다. 뒤에 이어지던 대화는 부모 턴에 그대로 이어 붙습니다."
+                soloBlocker ?? t("flow.deleteTurnHint")
               }
             >
               <Button
@@ -388,16 +395,16 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
                 onClick={deleteSelectedTurn}
                 disabled={!selectedTurn || Boolean(soloBlocker)}
               >
-                이 턴만 삭제
+                {t("flow.deleteTurn")}
               </Button>
             </span>
-            <span title={busy ?? "선택한 턴과 그 아래로 갈라진 모든 턴을 함께 지웁니다."}>
+            <span title={busy ?? t("flow.deleteSubtreeHint")}>
               <Button
                 variant="danger"
                 onClick={deleteSelectedSubtree}
                 disabled={!selectedTurn || Boolean(busy)}
               >
-                아래까지 삭제
+                {t("flow.deleteSubtree")}
               </Button>
             </span>
           </div>
@@ -407,7 +414,7 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
       <div className="min-h-0 flex-1">
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center text-body-sm text-ink-muted">
-            메시지를 보내면 대화 턴이 여기에 그려집니다.
+            {t("flow.empty")}
           </div>
         ) : (
           <ReactFlow

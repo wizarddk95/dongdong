@@ -15,8 +15,9 @@
 import { tool, type ToolSet } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
-import { BUILTIN_SKILL_DOCS } from "@/lib/ai/builtinSkills";
+import { builtinSkillDocs } from "@/lib/ai/builtinSkills";
 import { clip } from "@/lib/ai/tools";
+import { t, type MessageKey } from "@/lib/i18n";
 import type { SkillFile } from "@/types/ipc";
 
 export type SkillSource = "builtin" | "user" | "project";
@@ -93,7 +94,7 @@ export function parseSkillDoc(
 
 /** 내장 스킬. 매번 같은 결과라 호출부에서 캐시할 필요는 없다(문서 3개 파싱). */
 export function builtinSkills(): SkillDoc[] {
-  return BUILTIN_SKILL_DOCS.map((doc) =>
+  return builtinSkillDocs().map((doc) =>
     parseSkillDoc(doc.content, { folder: doc.folder, source: "builtin" }),
   );
 }
@@ -140,15 +141,15 @@ export function skillCatalogBlock(skills: SkillDoc[]): string {
   if (skills.length === 0) return "";
 
   const lines = skills.map((skill) => {
-    const description = skill.description || "(설명 없음)";
+    const description = skill.description || t("skill.noDescription");
     return `- ${skill.name}: ${description}`;
   });
 
   return [
-    "# 사용할 수 있는 스킬 (절차서)",
-    "아래는 이름과 설명만 실려 있는 목록입니다. 본문은 아직 컨텍스트에 없습니다.",
-    "지금 할 일이 어느 설명에 해당하면 **먼저 `load_skill` 로 그 본문을 읽고 절차를 그대로 따르세요**.",
-    "라이브러리 이름이나 순서를 기억에 의존해 추측하지 마세요.",
+    t("skill.block.heading"),
+    t("skill.block.lead"),
+    t("skill.block.rule"),
+    t("skill.block.noGuess"),
     "",
     ...lines,
   ].join("\n");
@@ -172,12 +173,9 @@ export function buildSkillTools(skills: SkillDoc[]): ToolSet {
 
   return {
     load_skill: tool({
-      description:
-        "스킬(절차서)의 본문을 읽어 온다. 시스템 프롬프트의 스킬 목록에서 지금 작업에 맞는 것을 골라 부르고, " +
-        "돌아온 절차를 그대로 따른다. 같은 스킬을 한 턴에 여러 번 부를 필요는 없다. " +
-        `사용 가능한 이름: ${names.join(", ")}`,
+      description: t("skill.load.description", { names: names.join(", ") }),
       inputSchema: z.object({
-        name: z.string().describe(`읽을 스킬 이름 (${names.join(" | ")})`),
+        name: z.string().describe(t("skill.load.nameParam", { names: names.join(" | ") })),
       }),
       execute: async ({ name }) => {
         const skill = byName.get(name) ?? byName.get(name.trim().toLowerCase());
@@ -199,9 +197,9 @@ export function buildSkillTools(skills: SkillDoc[]): ToolSet {
   };
 }
 
-/** 설정 화면에서 출처를 한 글자로 보여줄 때 쓰는 라벨. */
-export const SKILL_SOURCE_LABEL: Record<SkillSource, string> = {
-  builtin: "내장",
-  user: "전역",
-  project: "프로젝트",
+/** 설정 화면에서 출처를 짧게 보여줄 때 쓰는 라벨 키. */
+export const SKILL_SOURCE_LABEL_KEY: Record<SkillSource, MessageKey> = {
+  builtin: "skill.source.builtin",
+  user: "skill.source.global",
+  project: "skill.source.project",
 };

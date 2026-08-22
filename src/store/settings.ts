@@ -20,15 +20,37 @@ import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "@/lib/ai/approval";
 import { setRedactionSecrets } from "@/lib/ai/redact";
 import { DEFAULT_TOOLS, type ToolToggles } from "@/lib/ai/tools";
 import type { HookConfig } from "@/lib/hooks";
+import {
+  getLocale,
+  matchesAnyLocale,
+  normalizeLocale,
+  setLocale,
+  t,
+  type Locale,
+} from "@/lib/i18n";
 import { DEFAULT_THEME, applyTheme, normalizeTheme, type ThemePreference } from "@/lib/theme";
 
-export const DEFAULT_SYSTEM_PROMPT = `당신은 사용자의 로컬 머신에서 동작하는 코딩 에이전트입니다.
-- 답변은 한국어로, 간결하고 구체적으로 합니다.
-- 코드를 제시할 때는 파일 경로를 함께 밝힙니다.
-- 확실하지 않은 것은 추측하지 말고 모른다고 말합니다.`;
+/**
+ * 기본 시스템 프롬프트. **화면 언어를 따라간다** — 영어를 고른 사용자에게 한국어로
+ * 답하는 에이전트를 주면 언어 설정이 껍데기만 바꾼 셈이 된다.
+ *
+ * 이 값은 사용자가 고쳐 쓰라고 텍스트 상자에 그대로 보여 주는 문장이라 **디스크에도
+ * 문장째로 저장된다.** 그래서 언어를 바꿀 때 `isDefaultSystemPrompt()` 로 "아직 손대지
+ * 않은 기본값" 일 때만 갈아 끼운다(사용자가 쓴 프롬프트를 언어 전환이 지우면 안 된다).
+ */
+export function defaultSystemPrompt(): string {
+  return t("prompt.default");
+}
+
+/** 저장된 프롬프트가 어느 언어의 기본값 그대로인가. */
+export function isDefaultSystemPrompt(prompt: string): boolean {
+  return matchesAnyLocale("prompt.default", prompt.trim());
+}
 
 interface SettingsState extends ProviderCredentials {
   modelId: string;
+  /** 화면 언어. 시스템 프롬프트·도구 설명도 여기를 따라간다. */
+  language: Locale;
   /** 화면 테마. 실제 적용은 `applyTheme` 가 `<html data-theme>` 에 새긴다. */
   theme: ThemePreference;
   systemPrompt: string;
@@ -98,6 +120,7 @@ type PersistedSettings = Pick<
   | "localModels"
   | "modelId"
   | "theme"
+  | "language"
   | "systemPrompt"
   | "effort"
   | "maxSteps"
@@ -125,6 +148,7 @@ const PERSISTED_KEYS: (keyof PersistedSettings)[] = [
   "localModels",
   "modelId",
   "theme",
+  "language",
   "systemPrompt",
   "effort",
   "maxSteps",
@@ -167,7 +191,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
   localModels: [],
   modelId: DEFAULT_MODEL_ID,
   theme: DEFAULT_THEME,
-  systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  // 첫 실행이면 OS 언어로 짐작한 값이 이미 들어 있다(`lib/i18n/locale.ts`).
+  language: getLocale(),
+  systemPrompt: defaultSystemPrompt(),
   effort: "high",
   maxSteps: 8,
   useProjectInstructions: true,
@@ -212,14 +238,21 @@ export const useSettings = create<SettingsState>((set, get) => ({
           ? canonicalModelId(persisted.subagentModelId)
           : "",
         theme: normalizeTheme(persisted.theme),
+        // 저장된 언어가 없으면(첫 실행·옛 설정) 지금 짐작한 값을 그대로 둔다.
+        language: persisted.language ? normalizeLocale(persisted.language) : getLocale(),
         mcpServers: persisted.mcpServers ?? [],
         localBaseUrl: persisted.localBaseUrl || DEFAULT_LOCAL_BASE_URL,
         localModels: persisted.localModels ?? [],
         settingsPath: path,
         loaded: true,
       });
-      // 디스크에 적힌 테마가 인라인 스크립트가 미리 깐 캐시와 다를 수 있다 — 여기서 맞춘다.
+      // 디스크에 적힌 테마·언어가 첫 프레임에 쓴 캐시와 다를 수 있다 — 여기서 맞춘다.
       applyTheme(get().theme);
+      setLocale(get().language);
+      // 프롬프트를 저장한 적이 없거나 다른 언어의 기본값 그대로면 지금 언어 것으로 바꾼다.
+      if (!persisted.systemPrompt || isDefaultSystemPrompt(persisted.systemPrompt)) {
+        set({ systemPrompt: defaultSystemPrompt() });
+      }
       // 저장된 목록은 지난번 스냅샷일 뿐이다. 그 사이 모델을 지웠을 수도 있으니
       // 한 번 다시 물어 실제로 있는 것만 남긴다. 서버가 꺼져 있으면 조용히 넘어간다.
       void get()
@@ -242,9 +275,18 @@ export const useSettings = create<SettingsState>((set, get) => ({
       // (요청 자체는 `resolveEffort` 가 다시 당기므로 400 은 나지 않는다).
       next.effort = recommended ?? resolveEffort(next.modelId, get().effort) ?? get().effort;
     }
+    // 언어를 바꾸면 **손대지 않은** 기본 프롬프트도 함께 옮긴다. 사용자가 고쳐 쓴
+    // 프롬프트는 그대로 둔다 — 언어 하나 바꿨다고 쓴 글이 사라지면 안 된다.
+    if (next.language && next.language !== get().language && next.systemPrompt === undefined) {
+      if (isDefaultSystemPrompt(get().systemPrompt)) {
+        setLocale(next.language);
+        next.systemPrompt = defaultSystemPrompt();
+      }
+    }
     set({ ...next, saving: true });
     // 저장을 기다리지 않고 바로 칠한다. 디스크가 느려도 클릭이 즉시 반응해야 한다.
     if (next.theme !== undefined) applyTheme(next.theme);
+    if (next.language !== undefined) setLocale(next.language);
     try {
       await ipc.writeAppSettings(pickPersisted(get()) as unknown as Record<string, unknown>);
     } finally {

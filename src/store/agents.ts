@@ -17,6 +17,7 @@ import { buildSkillTools, skillCatalogBlock } from "@/lib/ai/skills";
 import { buildTools } from "@/lib/ai/tools";
 import { runSubagent } from "@/lib/ai/subagent";
 import { toStoredUsage } from "@/lib/ai/usage";
+import { t } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 import { useApprovals } from "@/store/approvals";
 import { useMcp } from "@/store/mcp";
@@ -65,7 +66,8 @@ const BLOCK_SEPARATOR = `
 
 `;
 
-const CANCELLED_MESSAGE = "사용자가 중단했습니다";
+/** 취소 사유. 화면 언어를 따라가야 하므로 부를 때 만든다. */
+const cancelledMessage = () => t("agents.error.abortedByUser");
 
 /** 실행 중인 서브에이전트의 중단 스위치. 스토어 상태가 아니라 모듈 스코프에 둔다. */
 const controllers = new Map<string, AbortController>();
@@ -124,7 +126,7 @@ export const useAgents = create<AgentsState>((set, get) => {
 
     spawn: async ({ name, task, parentMessageId, signal }) => {
       const sessionId = useWorkspace.getState().activeSessionId;
-      if (!sessionId) throw new Error("세션이 없어 서브에이전트를 띄울 수 없습니다.");
+      if (!sessionId) throw new Error(t("agents.error.noSession"));
 
       const settings = useSettings.getState();
       const run = await ipc.createAgentRun({ sessionId, parentMessageId, name, task });
@@ -198,14 +200,14 @@ export const useAgents = create<AgentsState>((set, get) => {
         const tokenUsage = toStoredUsage(modelId, result.usage) ?? undefined;
 
         if (result.aborted || controller.signal.aborted) {
-          await persist(run.id, { status: "cancelled", error: CANCELLED_MESSAGE, tokenUsage });
-          return { runId: run.id, name, status: "cancelled", error: CANCELLED_MESSAGE };
+          await persist(run.id, { status: "cancelled", error: cancelledMessage(), tokenUsage });
+          return { runId: run.id, name, status: "cancelled", error: cancelledMessage() };
         }
 
         const text = result.text.trim();
         if (!text) {
           // 스텝 예산을 다 쓰고 요약을 못 남긴 경우 — 성공으로 포장하지 않는다.
-          const error = `요약 없이 스텝 예산(${settings.subagentMaxSteps})을 모두 사용했습니다.`;
+          const error = t("agents.error.budgetExhausted", { maxSteps: settings.subagentMaxSteps });
           await persist(run.id, { status: "failed", progress: 1, error, tokenUsage });
           return { runId: run.id, name, status: "failed", error };
         }
@@ -221,7 +223,7 @@ export const useAgents = create<AgentsState>((set, get) => {
       } catch (error) {
         // 중단 중에 터진 예외(도구가 중단으로 거절되는 등)는 실패가 아니라 취소다.
         const cancelled = controller.signal.aborted || cancelledRuns.has(run.id);
-        const message = cancelled ? CANCELLED_MESSAGE : errorMessage(error);
+        const message = cancelled ? cancelledMessage() : errorMessage(error);
         const status: AgentStatus = cancelled ? "cancelled" : "failed";
         try {
           await persist(run.id, { status, error: message });
@@ -241,7 +243,7 @@ export const useAgents = create<AgentsState>((set, get) => {
       cancelledRuns.add(runId);
       controllers.get(runId)?.abort();
       // 실행 루프가 풀리는 데는 한 박자가 걸린다. 카드는 곧바로 중단으로 바꿔 준다.
-      patchLocal(runId, { status: "cancelled", error: CANCELLED_MESSAGE });
+      patchLocal(runId, { status: "cancelled", error: cancelledMessage() });
     },
 
     remove: async (runId) => {

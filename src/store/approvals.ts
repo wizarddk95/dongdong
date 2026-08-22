@@ -27,6 +27,7 @@ import {
   type ApprovalOutcome,
   type ApprovalRequest,
 } from "@/lib/ai/approval";
+import { t } from "@/lib/i18n";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
 
@@ -95,7 +96,7 @@ export const useApprovals = create<ApprovalsState>((set, get) => ({
     if (decision === "allow") return { approved: true };
 
     // 이미 끊긴 턴이면 카드를 띄우지 않는다.
-    if (ask.signal?.aborted) return { approved: false, reason: "중단되었습니다." };
+    if (ask.signal?.aborted) return { approved: false, reason: t("approvals.aborted") };
 
     // 삭제는 규칙으로 미리 열 수 없다(지운 파일은 되돌아오지 않는다).
     // 되돌리기 어려운 셸 명령도 마찬가지로 [항상 허용] 을 내주지 않는다.
@@ -119,7 +120,7 @@ export const useApprovals = create<ApprovalsState>((set, get) => ({
       });
 
       if (ask.signal) {
-        const onAbort = () => settle(request.id, { approved: false, reason: "중단되었습니다." });
+        const onAbort = () => settle(request.id, { approved: false, reason: t("approvals.aborted") });
         ask.signal.addEventListener("abort", onAbort, { once: true });
         detachers.set(request.id, () => ask.signal?.removeEventListener("abort", onAbort));
       }
@@ -152,13 +153,13 @@ export const useApprovals = create<ApprovalsState>((set, get) => ({
   deny: (id, reason) => {
     settle(id, {
       approved: false,
-      reason: reason?.trim() || "사용자가 이 명령의 실행을 거부했습니다.",
+      reason: reason?.trim() || t("approvals.denied"),
     });
   },
 
   clear: (reason) => {
     for (const request of get().queue) {
-      settle(request.id, { approved: false, reason: reason ?? "턴이 끝나 요청이 취소되었습니다." });
+      settle(request.id, { approved: false, reason: reason ?? t("approvals.turnEnded") });
     }
     set({ queue: [] });
   },

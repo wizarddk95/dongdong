@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { Button, FIELD_SM, Modal, SELECT_SM, Tag } from "@/components/Panel";
 import * as ipc from "@/lib/ipc";
+import { t, type MessageKey } from "@/lib/i18n";
 import { useWorkspace } from "@/store/workspace";
 import type { Memory, MemoryScope } from "@/types/ipc";
 
@@ -10,9 +11,9 @@ interface MemoryModalProps {
   onClose: () => void;
 }
 
-const SCOPE_LABEL: Record<string, string> = {
-  project: "프로젝트",
-  session: "이 세션",
+const SCOPE_LABEL_KEY: Record<string, MessageKey> = {
+  project: "memory.scope.project",
+  session: "memory.scope.session",
 };
 
 /**
@@ -79,25 +80,25 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
   return (
     <Modal
       open={open}
-      title="현재 메모리"
-      subtitle="에이전트의 remember / recall 이 읽고 쓰는 것과 같은 저장소"
+      title={t("memory.title")}
+      subtitle={t("memory.subtitle")}
       onClose={onClose}
       widthClass="max-w-2xl"
       footer={
         <>
           <span className="mr-auto text-caption text-ink-muted">
-            {loading ? "불러오는 중…" : `${memories.length}개`}
+            {loading ? t("common.loading") : t("memory.count", { count: memories.length })}
           </span>
-          <Button onClick={() => void refresh()}>새로고침</Button>
+          <Button onClick={() => void refresh()}>{t("common.refresh")}</Button>
           <Button variant="primary" onClick={onClose}>
-            닫기
+            {t("common.close")}
           </Button>
         </>
       }
     >
       <div className="space-y-4 p-4">
         {!project && (
-          <p className="text-body-sm text-ink-muted">프로젝트 폴더를 먼저 여세요.</p>
+          <p className="text-body-sm text-ink-muted">{t("chat.error.noProject")}</p>
         )}
 
         {error && (
@@ -115,38 +116,35 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
                   onChange={(event) => setScope(event.target.value as MemoryScope)}
                   className={`${SELECT_SM} w-auto`}
                 >
-                  <option value="project">프로젝트 전역</option>
+                  <option value="project">{t("memory.scope.projectOption")}</option>
                   <option value="session" disabled={!activeSessionId}>
-                    이 세션만
+                    {t("memory.scope.sessionOption")}
                   </option>
                 </select>
                 <input
                   value={key}
                   onChange={(event) => setKey(event.target.value)}
-                  placeholder="키 (예: 빌드 명령)"
+                  placeholder={t("memory.keyPlaceholder")}
                   className={`${FIELD_SM} flex-1`}
                 />
               </div>
               <textarea
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
-                placeholder="기억할 내용"
+                placeholder={t("memory.valuePlaceholder")}
                 rows={2}
                 className={`${FIELD_SM} resize-none`}
               />
               <div className="flex justify-end">
                 <Button variant="primary" onClick={() => void save()} disabled={!key.trim() || !value.trim()}>
-                  저장 (같은 키면 덮어쓰기)
+                  {t("memory.save")}
                 </Button>
               </div>
             </div>
 
             <div className="space-y-2">
               {memories.length === 0 && !loading && (
-                <p className="text-caption text-ink-subtle">
-                  아직 저장된 메모리가 없습니다. 에이전트가 `remember` 를 쓰거나 위에서 직접 추가할
-                  수 있습니다.
-                </p>
+                <p className="text-caption text-ink-subtle">{t("memory.empty")}</p>
               )}
 
               {memories.map((memory) => (
@@ -156,14 +154,18 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
                 >
                   <div className="mb-1.5 flex items-center gap-2 text-caption">
                     {/* 범위는 색이 아니라 라벨이 말한다 — 둘 다 중립 태그다. */}
-                    <Tag>{SCOPE_LABEL[memory.scope] ?? memory.scope}</Tag>
+                    <Tag>
+                      {SCOPE_LABEL_KEY[memory.scope]
+                        ? t(SCOPE_LABEL_KEY[memory.scope])
+                        : memory.scope}
+                    </Tag>
                     <span className="font-mono text-ink">{memory.key}</span>
                     <span className="text-ink-subtle">{memory.updatedAt.slice(0, 19)}</span>
                     <button
                       className="ml-auto rounded-sm px-2 py-0.5 text-ink-muted opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-hover hover:text-error"
                       onClick={() => void remove(memory)}
                     >
-                      삭제
+                      {t("common.delete")}
                     </button>
                   </div>
                   <p className="whitespace-pre-wrap break-words text-caption text-ink-muted">

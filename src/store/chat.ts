@@ -21,6 +21,7 @@ import { appendSkillCatalog, buildSkillTools } from "@/lib/ai/skills";
 import { buildTools, summarizeToolCall } from "@/lib/ai/tools";
 import { toStoredUsage } from "@/lib/ai/usage";
 import { dispatchHooks, type HookEvent } from "@/lib/hooks";
+import { matchesAnyLocale, t } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 import { extractMentions } from "@/lib/mention";
 import { useAgents } from "@/store/agents";
@@ -54,7 +55,9 @@ async function autoTitleSession(sessionId: string, firstMessage: string) {
   const workspace = useWorkspace.getState();
   const session = workspace.sessions.find((s) => s.id === sessionId);
   if (!session) return;
-  if (session.title !== "새 대화" && session.title !== "New Session") return;
+  // 어느 언어의 기본 제목이든(그리고 옛 영문 기본값도) 아직 이름이 없는 것으로 본다.
+  if (!matchesAnyLocale("session.untitled", session.title) && session.title !== "New Session")
+    return;
 
   const title = firstMessage.replace(/\s+/g, " ").trim().slice(0, 40);
   if (title) await workspace.renameSession(sessionId, title);
@@ -84,7 +87,11 @@ function summarizeStep(step: StepRecord): string {
   return step.toolCalls
     .map((call) => {
       const result = step.toolResults.find((item) => item.toolCallId === call.toolCallId);
-      const status = !result ? "…" : result.errorText != null ? "실패" : "완료";
+      const status = !result
+        ? "…"
+        : result.errorText != null
+          ? t("chat.status.failed")
+          : t("chat.status.done");
       return `${summarizeToolCall(call.toolName, call.input)} → ${status}`;
     })
     .join("\n");
@@ -107,12 +114,12 @@ export const useChat = create<ChatState>((set, get) => ({
     const settings = useSettings.getState();
 
     if (!workspace.project) {
-      set({ error: "프로젝트 폴더를 먼저 여세요." });
+      set({ error: t("chat.error.noProject") });
       return;
     }
     const sessionId = workspace.activeSessionId;
     if (!sessionId) {
-      set({ error: "세션을 먼저 선택하세요." });
+      set({ error: t("chat.error.noSession") });
       return;
     }
 
@@ -151,7 +158,7 @@ export const useChat = create<ChatState>((set, get) => ({
         role: "user",
         content: withAttachments(text, attachments),
       });
-      if (!userMessage) throw new Error("사용자 메시지를 저장하지 못했습니다.");
+      if (!userMessage) throw new Error(t("chat.error.userNodeFailed"));
 
       // 2. 루트 → 이 노드까지의 체인이 곧 LLM 컨텍스트
       const chain = await ipc.getMessagePath(userMessage.id);
@@ -202,7 +209,7 @@ export const useChat = create<ChatState>((set, get) => ({
         parentId: userMessage.id,
         contextSnapshot: context,
       });
-      if (!assistant) throw new Error("응답 노드를 만들지 못했습니다.");
+      if (!assistant) throw new Error(t("chat.error.assistantNodeFailed"));
       assistantId = assistant.id;
       set({ streamingMessageId: assistant.id });
 
@@ -241,7 +248,7 @@ export const useChat = create<ChatState>((set, get) => ({
             toolCalls: step.toolCalls,
             toolResults: step.toolResults,
           });
-          if (!toolNode) throw new Error("도구 결과 노드를 만들지 못했습니다.");
+          if (!toolNode) throw new Error(t("chat.error.toolNodeFailed"));
 
           // (c) 다음 스텝을 받을 assistant 노드. 메시지 본문은 조상 체인으로
           //     그대로 복원되므로 여기서는 설정값만 스냅샷으로 남긴다.
@@ -261,7 +268,7 @@ export const useChat = create<ChatState>((set, get) => ({
               createdAt: new Date().toISOString(),
             },
           });
-          if (!next) throw new Error("다음 응답 노드를 만들지 못했습니다.");
+          if (!next) throw new Error(t("chat.error.nextNodeFailed"));
 
           assistantId = next.id;
           set({
@@ -296,7 +303,7 @@ export const useChat = create<ChatState>((set, get) => ({
       // 도구를 더 부르려는데 스텝 예산이 떨어진 상태 — 조용히 끝내면 사용자가 오해한다.
       if (result.finishReason === "tool-calls" && !result.aborted) {
         set({
-          error: `최대 스텝(${context.maxSteps})에 도달해 도구 루프를 멈췄습니다. 설정에서 늘릴 수 있습니다.`,
+          error: t("chat.error.maxSteps", { maxSteps: context.maxSteps }),
         });
       }
     } catch (error) {

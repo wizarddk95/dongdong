@@ -7,6 +7,7 @@
 import { create } from "zustand";
 
 import { loadProjectInstructions, type ProjectInstructions } from "@/lib/ai/instructions";
+import { t } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 import type {
   DeleteOutcome,
@@ -231,7 +232,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       void get().loadInstructions();
 
       if (result.sessions.length === 0) {
-        const session = await ipc.createSession({ title: "새 대화" });
+        const session = await ipc.createSession({ title: t("session.untitled") });
         set({ sessions: [emptyOverview(session)] });
         await get().selectSession(session.id);
       } else {
@@ -282,7 +283,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   newSession: async (title) => {
     if (!get().project) return null;
     return guard(set, async () => {
-      const session = await ipc.createSession({ title: title ?? "새 대화" });
+      const session = await ipc.createSession({ title: title ?? t("session.untitled") });
       set({ sessions: [emptyOverview(session), ...get().sessions] });
       await get().selectSession(session.id);
       return session;

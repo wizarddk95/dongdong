@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Button, FIELD_SM, Panel, SELECT_SM } from "@/components/Panel";
 import * as ipc from "@/lib/ipc";
+import { t } from "@/lib/i18n";
 import { useWorkspace } from "@/store/workspace";
 import type { ShellKind, ShellResult } from "@/types/ipc";
 
@@ -50,11 +51,11 @@ export function ShellConsole() {
 
   return (
     <Panel
-      title="쉘 콘솔"
+      title={t("shell.title")}
       subtitle={
         project
           ? `cwd: ${project.rootPath}`
-          : `프로젝트 미선택 — 앱 실행 위치(${system?.cwd ?? "?"})에서 실행됩니다`
+          : t("shell.noProject", { cwd: system?.cwd ?? "?" })
       }
       className="flex-1"
       actions={
@@ -79,11 +80,11 @@ export function ShellConsole() {
             onKeyDown={(event) => {
               if (event.key === "Enter") void run();
             }}
-            placeholder={system?.os === "windows" ? "예: dir" : "예: ls -la"}
+            placeholder={system?.os === "windows" ? t("shell.egWindows") : t("shell.egUnix")}
             className={`${FIELD_SM} flex-1 font-mono`}
           />
           <Button variant="primary" onClick={() => void run()} disabled={running}>
-            {running ? "실행 중…" : "실행"}
+            {running ? t("shell.running") : t("shell.run")}
           </Button>
         </div>
 
@@ -113,7 +114,7 @@ export function ShellConsole() {
             </div>
           ))}
           {history.length === 0 && (
-            <p className="p-2 text-ink-subtle">명령을 실행하면 결과가 여기에 쌓입니다.</p>
+            <p className="p-2 text-ink-subtle">{t("shell.empty")}</p>
           )}
         </div>
       </div>

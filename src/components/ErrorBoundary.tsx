@@ -7,6 +7,8 @@
  */
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { t } from "@/lib/i18n";
+
 interface Props {
   children: ReactNode;
 }
@@ -25,7 +27,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     // 개발 중에는 콘솔에 컴포넌트 스택까지 남겨 둔다.
-    console.error("[dongdong] 렌더 오류", error, info.componentStack);
+    console.error("[dongdong] render error", error, info.componentStack);
     this.setState({ stack: info.componentStack ?? null });
   }
 
@@ -39,10 +41,8 @@ export class ErrorBoundary extends Component<Props, State> {
      */
     return (
       <div className="flex h-full flex-col gap-4 overflow-auto bg-canvas p-8 text-ink">
-        <h1 className="text-headline text-ink">화면을 그리다가 오류가 났습니다</h1>
-        <p className="text-body-sm text-ink-muted">
-          작업 내용은 DB 에 그대로 있습니다. 아래 내용을 남겨 두고 다시 시도하세요.
-        </p>
+        <h1 className="text-headline text-ink">{t("errorBoundary.title")}</h1>
+        <p className="text-body-sm text-ink-muted">{t("errorBoundary.body")}</p>
         <pre className="max-h-40 overflow-auto rounded-md border-l-2 border-error bg-error-subtle p-3 font-mono text-caption whitespace-pre-wrap text-ink">
           {error.message}
         </pre>
@@ -56,7 +56,7 @@ export class ErrorBoundary extends Component<Props, State> {
             className="rounded-sm bg-primary px-4 py-2.5 text-button font-medium text-on-primary transition-colors hover:bg-primary-hover"
             onClick={() => this.setState({ error: null, stack: null })}
           >
-            다시 그리기
+            {t("errorBoundary.retry")}
           </button>
         </div>
       </div>

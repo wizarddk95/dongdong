@@ -8,8 +8,9 @@ import { MemoryModal } from "@/components/inspect/MemoryModal";
 import { Button } from "@/components/Panel";
 import { ContextRing, UsageBreakdown } from "@/components/UsageMeter";
 import { APPROVAL_MODES } from "@/lib/ai/approval";
+import { useT } from "@/lib/i18n/useT";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
-import { findModelOption } from "@/lib/ai/providers";
+import { findModelOption, modelLabel } from "@/lib/ai/providers";
 import { contextPayloadOf } from "@/lib/ai/runner";
 import { summarizeToolCall } from "@/lib/ai/tools";
 import {
@@ -28,6 +29,7 @@ import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
 
 export function ChatPanel() {
+  const t = useT();
   const messages = useWorkspace((state) => state.messages);
   const activeParentId = useWorkspace((state) => state.activeParentId);
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
@@ -166,7 +168,8 @@ export function ChatPanel() {
     injectDateTime,
   ]);
 
-  const modelLabel = findModelOption(modelId)?.label ?? modelId;
+  const selectedModel = findModelOption(modelId);
+  const shownModelLabel = selectedModel ? modelLabel(selectedModel) : modelId;
   const canSend = Boolean(project && activeSessionId) && !running;
 
   async function submit() {
@@ -183,12 +186,10 @@ export function ChatPanel() {
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             {/* 빈 화면은 이 앱이 유일하게 큰 활자를 쓸 자리다 — 웨이트 300 의 디스플레이. */}
             <p className="text-display-md text-ink">
-              {project ? "대화를 시작하세요" : "프로젝트를 여세요"}
+              {project ? t("chat.emptyTitle") : t("chat.emptyNoProject")}
             </p>
             <p className="text-body-sm text-ink-muted">
-              {project
-                ? "우측 그래프에서 턴 카드를 클릭하면 그 지점부터 이어집니다."
-                : "상단의 [폴더 열기] 로 시작합니다."}
+              {project ? t("chat.emptyBody") : t("chat.emptyNoProjectBody")}
             </p>
           </div>
         )}
@@ -215,7 +216,7 @@ export function ChatPanel() {
 
       {error && (
         <div className="flex shrink-0 items-start gap-2 border-t border-hairline border-l-2 border-l-error bg-error-subtle px-3 py-2 text-caption text-ink">
-          <span className="shrink-0 text-body-emphasis text-error">오류</span>
+          <span className="shrink-0 text-body-emphasis text-error">{t("app.error")}</span>
           <span className="flex-1 font-mono break-all">{error}</span>
           <button className="shrink-0 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-hover hover:text-ink" onClick={clearError}>
             ✕
@@ -233,7 +234,7 @@ export function ChatPanel() {
             ●
           </span>
           <span className="text-body-emphasis">
-            {approvalQueue.length > 0 ? "승인 대기 중" : "도구 실행 중"}
+            {approvalQueue.length > 0 ? t("chat.waitingApproval") : t("chat.runningTool")}
           </span>
           {pendingToolCalls.map((call) => (
             <span key={call.toolCallId} className="rounded-full bg-surface-2 px-2 py-0.5 font-mono">
@@ -244,8 +245,8 @@ export function ChatPanel() {
             className="ml-auto shrink-0 tabular-nums text-ink-muted"
             title={
               approvalQueue.length > 0
-                ? "위 카드에서 [실행] 또는 [거부] 를 누를 때까지 기다립니다."
-                : "셸 명령은 기본 2분, 최대 10분에서 자동으로 끊깁니다. 그 전에 멈추려면 [중지] 를 누르세요."
+                ? t("chat.waitingApprovalHint")
+                : t("chat.runningToolHint")
             }
           >
             {toolElapsed}초
@@ -258,23 +259,25 @@ export function ChatPanel() {
           <ContextRing status={context} size={44} variant="full" />
 
           <div className="flex flex-wrap items-center gap-3 text-caption text-ink-muted">
-            <span title="지금 보고 있는 분기(루트에서 활성 노드까지의 줄기)에 든 비용입니다.">
-              현재 분기{" "}
+            <span title={t("chat.branchCostHint")}>
+              {t("chat.branchCost")}{" "}
               <span className="text-ink">{formatCost(pathUsage.cost, pathUsage.modelId)}</span>
             </span>
-            <span title="버려진 분기와 서브에이전트까지 포함한 이 세션 전체의 비용입니다.">
-              전체 세션{" "}
+            <span title={t("chat.sessionCostHint")}>
+              {t("chat.sessionCost")}{" "}
               <span className="text-ink">
                 {formatCost(sessionUsage.cost, sessionUsage.primaryModelId)}
               </span>
             </span>
-            {sessionUsage.calls > 0 && <span>LLM 호출 {sessionUsage.calls}회</span>}
+            {sessionUsage.calls > 0 && (
+              <span>{t("sessions.calls", { count: sessionUsage.calls })}</span>
+            )}
             <button
               className="ml-auto rounded-sm px-2 py-0.5 text-accent transition-colors hover:bg-hover"
-              title="세션 전체의 토큰을 항목별로 봅니다"
+              title={t("chat.usageHint")}
               onClick={() => setUsageOpen(!usageOpen)}
             >
-              {usageOpen ? "토큰 내역 닫기" : "토큰 내역"}
+              {usageOpen ? t("chat.usageClose") : t("chat.usageOpen")}
             </button>
           </div>
 
@@ -289,43 +292,46 @@ export function ChatPanel() {
         </div>
 
         <div className="mb-2 flex flex-wrap items-center gap-3 text-caption text-ink-muted">
-          <span className="text-ink">{modelLabel}</span>
+          <span className="text-ink">{shownModelLabel}</span>
           <button
             className="rounded-full border border-hairline px-2 py-0.5 transition-colors hover:bg-hover"
             title={
-              APPROVAL_MODES.find((mode) => mode.id === shellApproval)?.description ??
-              "셸 실행 권한 모드를 바꿉니다"
+              (() => {
+                const mode = APPROVAL_MODES.find((item) => item.id === shellApproval);
+                return mode ? t(mode.descriptionKey) : t("chat.approvalToggleHint");
+              })()
             }
             onClick={() =>
               void updateSettings({ shellApproval: shellApproval === "auto" ? "ask" : "auto" })
             }
           >
-            셸{" "}
+            {t("chat.shell")}{" "}
             <span className={shellApproval === "auto" ? "text-warning" : "text-ink"}>
-              {shellApproval === "auto" ? "자동 실행" : "승인 필요"}
+              {shellApproval === "auto"
+                ? t("approval.mode.auto.label")
+                : t("approval.mode.ask.label")}
             </span>
           </button>
           {target ? (
             <span
-              title={`다음 메시지는 노드 ${activeParentId} 뒤에 붙습니다.${
-                target.midway
-                  ? " 이 턴의 마지막 노드가 아니라 중간 스텝이라 형제 턴이 생깁니다."
-                  : ""
+              title={`${t("chat.targetHint", { id: activeParentId ?? "" })}${
+                target.midway ? ` ${t("chat.targetMidwayHint")}` : ""
               }`}
             >
-              턴 <code className="font-mono">{target.label}</code>{" "}
-              {target.midway ? "중간 스텝 뒤" : "뒤에 이어짐"}
+              {t("chat.turn")} <code className="font-mono">{target.label}</code>{" "}
+              {target.midway ? t("chat.targetMidway") : t("chat.targetAfter")}
             </span>
           ) : (
-            <span title="이 세션에는 아직 노드가 없습니다. 보내는 메시지가 대화의 뿌리 턴이 됩니다.">
-              대화의 뿌리로 시작
-            </span>
+            <span title={t("chat.rootHint")}>{t("chat.root")}</span>
           )}
 
           {instructions && useProjectInstructions && (
             <button
               className="rounded-full border border-hairline px-2 py-0.5 font-mono text-accent transition-colors hover:bg-hover"
-              title={`${instructions.path} 를 컨텍스트 맨 앞에 싣고 있습니다 (${instructions.content.length.toLocaleString()}자). 클릭하면 원문을 봅니다.`}
+              title={t("chat.instructionsHint", {
+                path: instructions.path,
+                chars: instructions.content.length.toLocaleString(),
+              })}
               onClick={() => {
                 setContextMessageId(null);
                 setContextOpen(true);
@@ -338,20 +344,20 @@ export function ChatPanel() {
           <span className="ml-auto flex gap-1">
             <button
               className="rounded-sm px-2 py-0.5 text-accent transition-colors hover:bg-hover"
-              title="다음 턴에 LLM 으로 나갈 컨텍스트를 미리 봅니다"
+              title={t("chat.contextHint")}
               onClick={() => {
                 setContextMessageId(null);
                 setContextOpen(true);
               }}
             >
-              현재 컨텍스트 보기
+              {t("chat.viewContext")}
             </button>
             <button
               className="rounded-sm px-2 py-0.5 text-accent transition-colors hover:bg-hover"
-              title="에이전트가 remember 로 저장한 내용을 봅니다"
+              title={t("chat.memoryHint")}
               onClick={() => setMemoryOpen(true)}
             >
-              현재 메모리 보기
+              {t("chat.viewMemory")}
             </button>
           </span>
         </div>
@@ -378,8 +384,8 @@ export function ChatPanel() {
               }}
               placeholder={
                 canSend
-                  ? "메시지 입력 (Enter 전송, Shift+Enter 줄바꿈, @ 파일 참조)"
-                  : "대기 중…"
+                  ? t("chat.inputPlaceholder")
+                  : t("chat.waiting")
               }
               rows={3}
               disabled={!project}
@@ -394,11 +400,11 @@ export function ChatPanel() {
               className="w-24"
               title={
                 stopping
-                  ? "실행 중인 도구가 정리되는 중입니다"
-                  : "이 턴과 딸린 서브에이전트를 모두 중단합니다"
+                  ? t("chat.stoppingHint")
+                  : t("chat.stopHint")
               }
             >
-              {stopping ? "중지 중…" : "중지"}
+              {stopping ? t("chat.stopping") : t("chat.stop")}
             </Button>
           ) : (
             <Button
@@ -408,7 +414,7 @@ export function ChatPanel() {
               disabled={!canSend || !draft.trim()}
               className="w-24"
             >
-              전송
+              {t("chat.send")}
             </Button>
           )}
         </div>

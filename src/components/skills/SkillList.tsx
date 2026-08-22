@@ -8,8 +8,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Button, Disclosure, FIELD_SM, SELECT_SM, Tag } from "@/components/Panel";
-import { SKILL_SOURCE_LABEL, mergeSkills, type SkillDoc } from "@/lib/ai/skills";
+import { SKILL_SOURCE_LABEL_KEY, mergeSkills, type SkillDoc } from "@/lib/ai/skills";
 import { useSettings } from "@/store/settings";
+import { t } from "@/lib/i18n";
 import { useSkills } from "@/store/skills";
 import { useWorkspace } from "@/store/workspace";
 
@@ -56,8 +57,8 @@ export function SkillList() {
 
   async function drop(skill: SkillDoc) {
     const question = skill.path
-      ? `스킬 "${skill.name}" 파일을 삭제합니다.\n${skill.path}`
-      : `내장 스킬 "${skill.name}" 은 파일이 없어 지울 수 없습니다. 대신 끕니다.`;
+      ? t("skills.confirmDelete", { name: skill.name, path: skill.path })
+      : t("skills.confirmDisable", { name: skill.name });
     if (!window.confirm(question)) return;
     setError(null);
     try {
@@ -76,25 +77,25 @@ export function SkillList() {
           onKeyDown={(event) => {
             if (event.key === "Enter") void add();
           }}
-          placeholder="새 스킬 이름 (예: 사내-보고서-양식)"
+          placeholder={t("skills.namePlaceholder")}
           className={`${FIELD_SM} min-w-0 flex-1`}
         />
         <select
           value={scope}
           onChange={(event) => setScope(event.target.value as "user" | "project")}
           className={`${SELECT_SM} w-32 shrink-0`}
-          title="전역은 모든 프로젝트에서, 프로젝트는 이 리포에서만 보입니다"
+          title={t("skills.scopeHint")}
         >
-          <option value="user">전역</option>
+          <option value="user">{t("skill.source.global")}</option>
           <option value="project" disabled={!hasProject}>
-            프로젝트
+            {t("skill.source.project")}
           </option>
         </select>
         <Button onClick={() => void add()} disabled={!draftName.trim()}>
-          + 추가
+          {t("skills.add")}
         </Button>
         <Button variant="ghost" onClick={() => void refresh()} disabled={loading}>
-          {loading ? "읽는 중…" : "새로고침"}
+          {loading ? t("skills.reading") : t("common.refresh")}
         </Button>
       </div>
 
@@ -117,19 +118,19 @@ export function SkillList() {
                   type="checkbox"
                   checked={enabled}
                   onChange={(event) => void toggle(skill, event.target.checked)}
-                  title="끄면 목록에서 빠져 모델이 이 스킬을 보지 못합니다"
+                  title={t("skills.toggleHint")}
                   className="mt-1 accent-accent"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="truncate font-mono text-body-sm text-ink">{skill.name}</span>
                     <Tag tone={skill.source === "builtin" ? "neutral" : "accent"}>
-                      {SKILL_SOURCE_LABEL[skill.source]}
+                      {t(SKILL_SOURCE_LABEL_KEY[skill.source])}
                     </Tag>
-                    {skill.truncated && <Tag tone="warning">잘림</Tag>}
+                    {skill.truncated && <Tag tone="warning">{t("skills.truncated")}</Tag>}
                   </div>
                   <p className="mt-0.5 text-caption text-ink-muted">
-                    {skill.description || "(설명이 없습니다 — frontmatter 에 description 을 적으세요)"}
+                    {skill.description || t("skills.noDescription")}
                   </p>
                   {skill.path && (
                     <p className="mt-0.5 truncate font-mono text-caption text-ink-subtle">
@@ -141,11 +142,11 @@ export function SkillList() {
                   className="shrink-0 rounded-sm px-1.5 py-0.5 text-caption text-ink-subtle transition-colors hover:bg-hover hover:text-ink"
                   onClick={() => setOpenName((current) => (current === skill.name ? null : skill.name))}
                 >
-                  {openName === skill.name ? "본문 닫기" : "본문"}
+                  {openName === skill.name ? t("skills.hideBody") : t("skills.showBody")}
                 </button>
                 <button
                   className="shrink-0 rounded-sm px-1.5 py-0.5 text-caption text-ink-subtle transition-colors hover:bg-hover hover:text-error"
-                  title={skill.path ? "파일 삭제" : "내장 스킬 — 끄기만 됩니다"}
+                  title={skill.path ? t("skills.deleteFile") : t("skills.builtinOnlyToggle")}
                   onClick={() => void drop(skill)}
                 >
                   ✕
@@ -165,30 +166,27 @@ export function SkillList() {
       <Disclosure
         open={openName === "__dirs__"}
         onToggle={() => setOpenName((current) => (current === "__dirs__" ? null : "__dirs__"))}
-        title="스킬 파일을 두는 곳"
-        summary={`${skills.filter((skill) => skill.source !== "builtin").length}개 파일`}
+        title={t("skills.dirsTitle")}
+        summary={t("skills.fileCount", {
+          count: skills.filter((skill) => skill.source !== "builtin").length,
+        })}
       >
         <div className="space-y-2 text-caption text-ink-muted">
           <p>
-            <span className="text-ink">전역</span> — 모든 프로젝트에서 보입니다.
+            <span className="text-ink">{t("skill.source.global")}</span> —{" "}
+            {t("skills.globalHint")}
             <span className="mt-0.5 block font-mono break-all text-ink-subtle">
-              {dirs?.user ?? "(아직 읽지 못했습니다)"}
+              {dirs?.user ?? t("skills.dirUnknown")}
             </span>
           </p>
           <p>
-            <span className="text-ink">프로젝트</span> — 이 리포에서만 보이고 커밋됩니다.
+            <span className="text-ink">{t("skill.source.project")}</span> —{" "}
+            {t("skills.projectHint")}
             <span className="mt-0.5 block font-mono break-all text-ink-subtle">
-              {dirs?.project ?? "(프로젝트를 열면 표시됩니다)"}
+              {dirs?.project ?? t("skills.dirNoProject")}
             </span>
           </p>
-          <p>
-            한 폴더에 <span className="font-mono">&lt;이름&gt;/SKILL.md</span> 를 두거나{" "}
-            <span className="font-mono">&lt;이름&gt;.md</span> 파일 하나만 둬도 됩니다. 맨 앞의{" "}
-            <span className="font-mono">---</span> 블록에 적은{" "}
-            <span className="font-mono">description</span> 한 줄만 매 턴 컨텍스트에 실리고, 본문은
-            모델이 <span className="font-mono">load_skill</span> 을 부를 때 들어갑니다. 같은 이름이면
-            프로젝트 &gt; 전역 &gt; 내장 순으로 이깁니다.
-          </p>
+          <p>{t("skills.layoutHint")}</p>
         </div>
       </Disclosure>
     </div>

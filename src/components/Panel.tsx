@@ -7,6 +7,8 @@
  */
 import { useRef, type ReactNode } from "react";
 
+import { t } from "@/lib/i18n";
+
 /* ─────────────────────────── 입력 크롬 ───────────────────────────
  * 사방을 두른 1px 테두리 + 둥근 모서리. 포커스는 전역 `:focus-visible` 링이 받고,
  * 여기서는 테두리만 액센트로 옮겨 두 겹이 겹쳐 보이지 않게 한다.
@@ -164,7 +166,7 @@ export function Hint({
       <span
         tabIndex={0}
         role="button"
-        aria-label="설명 보기"
+        aria-label={t("common.showHint")}
         // `<label>` 안에 있으면 클릭이 라벨의 컨트롤로 넘어간다(셀렉트가 열린다) → 막는다.
         onClick={(event) => event.preventDefault()}
         className="flex size-4 cursor-help items-center justify-center rounded-full border border-hairline bg-surface-1 text-caption leading-none text-ink-muted transition-colors group-hover/hint:border-accent group-hover/hint:text-accent"
@@ -290,7 +292,7 @@ export function Modal({
           </div>
           <button
             className="-mt-1 -mr-1 shrink-0 rounded-sm px-2 py-1 text-ink-muted transition-colors hover:bg-hover hover:text-ink"
-            title="닫기"
+            title={t("common.close")}
             onClick={onClose}
           >
             ✕

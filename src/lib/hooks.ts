@@ -11,19 +11,32 @@
  *
  * 실행 자체는 `dispatchHooks()` 가 하고, 무엇이 도는지 고르는 판정은 전부 순수 함수다.
  */
+import { t, type MessageKey } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 import { notify } from "@/lib/notify";
 
 export type HookEvent = "turnStart" | "turnComplete" | "turnError";
 
-export const HOOK_EVENTS: { id: HookEvent; label: string; description: string }[] = [
-  { id: "turnStart", label: "턴 시작", description: "사용자 메시지를 보내 턴이 시작될 때" },
+export const HOOK_EVENTS: {
+  id: HookEvent;
+  labelKey: MessageKey;
+  descriptionKey: MessageKey;
+}[] = [
+  {
+    id: "turnStart",
+    labelKey: "hook.event.turnStart.label",
+    descriptionKey: "hook.event.turnStart.description",
+  },
   {
     id: "turnComplete",
-    label: "답변 완료",
-    description: "턴이 끝났을 때 (중단으로 끝난 경우도 포함)",
+    labelKey: "hook.event.turnEnd.label",
+    descriptionKey: "hook.event.turnEnd.description",
   },
-  { id: "turnError", label: "턴 오류", description: "턴이 오류로 끊겼을 때" },
+  {
+    id: "turnError",
+    labelKey: "hook.event.turnError.label",
+    descriptionKey: "hook.event.turnError.description",
+  },
 ];
 
 /** 사용자가 등록한 훅 하나. settings.json 에 저장된다. */
@@ -39,8 +52,8 @@ export interface HookConfig {
 /** 앱이 들고 있는 훅. 동작은 코드에 있고 사용자는 켜고 끄기만 한다. */
 export interface BuiltinHook {
   id: string;
-  label: string;
-  description: string;
+  labelKey: MessageKey;
+  descriptionKey: MessageKey;
   event: HookEvent;
   defaultEnabled: boolean;
 }
@@ -48,16 +61,15 @@ export interface BuiltinHook {
 export const BUILTIN_HOOKS: BuiltinHook[] = [
   {
     id: "notify-on-complete",
-    label: "답변 완료 시 알림",
-    description:
-      "턴이 끝나면 OS 알림을 띄웁니다. 창을 보고 있을 때는 뜨지 않습니다 (이미 보고 있으니까).",
+    labelKey: "hook.builtin.notifyDone.label",
+    descriptionKey: "hook.builtin.notifyDone.description",
     event: "turnComplete",
     defaultEnabled: true,
   },
   {
     id: "notify-on-error",
-    label: "오류 시 알림",
-    description: "턴이 오류로 끊겼을 때 OS 알림을 띄웁니다. 창을 보고 있을 때는 뜨지 않습니다.",
+    labelKey: "hook.builtin.notifyError.label",
+    descriptionKey: "hook.builtin.notifyError.description",
     event: "turnError",
     defaultEnabled: false,
   },
@@ -117,12 +129,16 @@ export const HOOK_TIMEOUT_MS = 15_000;
 /** 알림 문구. 상태에 따라 말이 달라진다 — "완료" 알림이 실패를 덮으면 안 된다. */
 export function notificationText(payload: HookPayload): { title: string; body: string } {
   if (payload.event === "turnError") {
-    return { title: "dongdong — 오류", body: payload.error?.slice(0, 200) || "턴이 끊겼습니다." };
+    return {
+      title: t("hook.notify.errorTitle"),
+      body: payload.error?.slice(0, 200) || t("hook.notify.errorBody"),
+    };
   }
   const seconds = Math.max(1, Math.round(payload.durationMs / 1000));
   return {
-    title: payload.status === "aborted" ? "dongdong — 중단됨" : "dongdong — 답변 완료",
-    body: `${seconds}초 만에 끝났습니다.`,
+    title:
+      payload.status === "aborted" ? t("hook.notify.abortedTitle") : t("hook.notify.doneTitle"),
+    body: t("hook.notify.doneBody", { seconds }),
   };
 }
 
@@ -159,7 +175,7 @@ export async function dispatchHooks(
           projectPath: payload.projectPath || undefined,
         })
         // 훅이 실패해도 배너를 띄우지 않는다. 콘솔에만 남긴다.
-        .catch((error: unknown) => console.warn(`훅 "${hook.name}" 실행 실패:`, error)),
+        .catch((error: unknown) => console.warn(t("error.hookFailed", { name: hook.name }), error)),
     );
   }
 

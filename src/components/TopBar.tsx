@@ -1,7 +1,8 @@
 import { open } from "@tauri-apps/plugin-dialog";
 
 import { Button, SELECT_SM } from "@/components/Panel";
-import { buildModelOptions, hasCredentialFor, parseModelId } from "@/lib/ai/providers";
+import { buildModelOptions, hasCredentialFor, modelLabel, parseModelId } from "@/lib/ai/providers";
+import { useT } from "@/lib/i18n/useT";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
 
@@ -15,6 +16,7 @@ interface TopBarProps {
  * 아래: 내비(48px, canvas) 에 제품명과 실제로 누르는 것들.
  */
 export function TopBar({ onOpenSettings }: TopBarProps) {
+  const t = useT();
   const { project, dbPath, schemaVersion, system, loading, openProject, closeProject } =
     useWorkspace();
   const modelId = useSettings((state) => state.modelId);
@@ -29,16 +31,16 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
   // 로컬 서버는 키를 안 쓰므로 "준비됨" 의 의미가 다르다.
   const readyHint =
     provider === "local"
-      ? "로컬 서버로 호출합니다 (키 불필요)"
+      ? t("topbar.localNoKey")
       : hasKey
-        ? `${provider} 키가 설정되어 있습니다`
-        : `${provider} 키가 없습니다`;
+        ? t("topbar.keyPresent", { provider })
+        : t("topbar.keyMissing", { provider });
 
   async function pickFolder() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "프로젝트 폴더 선택",
+      title: t("topbar.pickFolder"),
     });
     if (typeof selected === "string") await openProject(selected);
   }
@@ -56,7 +58,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
             </span>
           </>
         ) : (
-          <span>열린 프로젝트가 없습니다.</span>
+          <span>{t("topbar.noProject")}</span>
         )}
         {system && (
           <span className="ml-auto hidden shrink-0 font-mono xl:inline">
@@ -71,11 +73,11 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
 
         <div className="flex shrink-0 items-center gap-1">
           <Button variant="primary" onClick={pickFolder} disabled={loading}>
-            폴더 열기
+            {t("topbar.openFolder")}
           </Button>
           {project && (
             <Button variant="ghost" onClick={() => void closeProject()} disabled={loading}>
-              닫기
+              {t("common.close")}
             </Button>
           )}
         </div>
@@ -93,10 +95,10 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
           >
             {modelOptions.map((option) => (
               <option key={option.id} value={option.id}>
-                {option.label}
+                {modelLabel(option)}
               </option>
             ))}
-            {!known && <option value="custom">{modelId} (직접 입력)</option>}
+            {!known && <option value="custom">{t("topbar.customModel", { modelId })}</option>}
           </select>
           {/*
            * 키 유무는 색만으로 말하지 않는다 — 채운 원/빈 원의 모양 차이가 먼저 읽히고
@@ -112,7 +114,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
         </div>
 
         <Button variant="ghost" onClick={onOpenSettings}>
-          설정
+          {t("topbar.settings")}
         </Button>
       </div>
     </header>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { Button, Hint, Tag } from "@/components/Panel";
 import { describeRule } from "@/lib/ai/approval";
+import { useT } from "@/lib/i18n/useT";
 import { useApprovals } from "@/store/approvals";
 
 /**
@@ -16,6 +17,7 @@ import { useApprovals } from "@/store/approvals";
  * 거부는 파괴적 동작의 붉은색(danger). 뜻은 색이 아니라 글자가 지고 색은 무게만 맞춘다.
  */
 export function ApprovalPrompt() {
+  const t = useT();
   const queue = useApprovals((state) => state.queue);
   const approve = useApprovals((state) => state.approve);
   const deny = useApprovals((state) => state.deny);
@@ -34,20 +36,20 @@ export function ApprovalPrompt() {
     <div className="shrink-0 border-t border-hairline border-l-2 border-l-warning bg-warning-subtle px-3 py-2.5">
       <div className="mb-1.5 flex flex-wrap items-center gap-2 text-caption text-ink-muted">
         <span className="text-body-emphasis text-ink">
-          {request.kind === "delete" ? "삭제 승인이 필요합니다" : "실행 승인이 필요합니다"}
+          {request.kind === "delete" ? t("approve.titleDelete") : t("approve.titleRun")}
         </span>
         <Tag tone="warning">{request.toolName}</Tag>
-        {request.origin && <Tag tone="neutral">서브에이전트 · {request.origin}</Tag>}
+        {request.origin && (
+          <Tag tone="neutral">{t("approve.fromSubagent", { name: request.origin })}</Tag>
+        )}
         {request.destructive && (
-          <Tag tone="error" title="되돌리기 어려운 명령으로 보입니다. [항상 허용] 은 내주지 않습니다.">
-            되돌리기 어려움
+          <Tag tone="error" title={t("approve.destructiveHint")}>
+            {t("approve.destructive")}
           </Tag>
         )}
-        {queue.length > 1 && <span>대기 {queue.length - 1}건</span>}
+        {queue.length > 1 && <span>{t("approve.queued", { count: queue.length - 1 })}</span>}
         <Hint align="right" className="ml-auto">
-          {request.kind === "delete"
-            ? "삭제는 되돌릴 수 없습니다. 휴지통을 거치지 않고 디스크에서 사라집니다. 버전 관리 밖의 파일이라면 특히 한 번 더 확인하세요."
-            : "이 앱은 샌드박스가 없습니다. 아래 명령은 당신의 OS 권한으로 그대로 실행됩니다. 무엇을 하는 명령인지 읽고 판단하세요. 자동 실행은 설정 › 도구 에서 켤 수 있습니다."}
+          {request.kind === "delete" ? t("approve.hintDelete") : t("approve.hintRun")}
         </Hint>
       </div>
 
@@ -59,7 +61,7 @@ export function ApprovalPrompt() {
 
       {request.cwd && (
         <p className="mb-2 truncate text-caption text-ink-muted">
-          작업 디렉터리 <code className="font-mono">{request.cwd}</code>
+          {t("approve.cwd")} <code className="font-mono">{request.cwd}</code>
         </p>
       )}
 
@@ -70,47 +72,36 @@ export function ApprovalPrompt() {
       <p className="mb-2 text-caption text-ink-muted">
         {!request.rule ? (
           request.kind === "delete" ? (
-            <>
-              삭제는 규칙으로 미리 열어 둘 수 없습니다 — 지운 파일은 되돌아오지 않으므로
-              &quot;비슷한 것도 함께&quot; 라는 개념이 성립하지 않습니다. 매번 묻습니다.
-            </>
+            <>{t("approve.noRuleDelete")}</>
           ) : (
-            <>되돌리기 어려운 명령이라 [항상 허용] 은 제공하지 않습니다. 이번 한 번만 고르세요.</>
+            <>{t("approve.noRuleDestructive")}</>
           )
         ) : (
           <>
-            [항상 허용] 은 <b className="text-ink">이 세션에서</b>{" "}
+            {t("approve.ruleLead")}{" "}
             <code className="font-mono text-ink">{rule ? describeRule(rule) : ""}</code>{" "}
-            {rule?.exact ? (
-              <>와 완전히 같은 명령만 통과시킵니다.</>
-            ) : (
-              <>
-                로 시작하는 <b className="text-ink">단일 명령</b>만 통과시킵니다 —{" "}
-                <span className="font-mono">&amp;&amp;</span> · 파이프 · 리다이렉션이 붙으면 다시
-                묻습니다.
-              </>
-            )}{" "}
-            세션을 바꾸거나 앱을 다시 켜면 사라집니다.
+            {rule?.exact ? <>{t("approve.ruleExact")}</> : <>{t("approve.rulePrefix")}</>}{" "}
+            {t("approve.ruleLifetime")}
           </>
         )}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" size="sm" onClick={() => approve(request.id)}>
-          {request.kind === "delete" ? "삭제" : "실행"}
+          {request.kind === "delete" ? t("common.delete") : t("shell.run")}
         </Button>
         {request.rule && (
           <Button
             variant="secondary"
             size="sm"
-            title={`이 세션에서 "${rule ? describeRule(rule) : ""}" 에 해당하는 명령은 묻지 않고 실행합니다. 설정 › 도구 에서 지울 수 있고, 세션을 바꾸거나 앱을 다시 켜면 사라집니다.`}
+            title={t("approve.alwaysHint", { rule: rule ? describeRule(rule) : "" })}
             onClick={() => approve(request.id, { always: true })}
           >
-            이 세션에서 항상 허용
+            {t("approve.always")}
           </Button>
         )}
         <Button variant="danger" size="sm" onClick={() => deny(request.id, reason)}>
-          거부
+          {t("approve.deny")}
         </Button>
         <input
           value={reason}
@@ -121,15 +112,15 @@ export function ApprovalPrompt() {
               deny(request.id, reason);
             }
           }}
-          placeholder="거부 사유 (선택) — 에이전트가 다음 수를 고를 때 읽습니다"
+          placeholder={t("approve.reasonPlaceholder")}
           className="min-w-40 flex-1 rounded-sm border border-field-rule bg-field px-3 py-1.5 text-caption text-ink transition-colors placeholder:text-ink-subtle hover:border-ink-subtle focus:border-accent"
         />
         {allowed.length > 0 && (
           <span
             className="shrink-0 text-caption text-ink-subtle"
-            title="이 세션에서 [항상 허용]으로 통과시키고 있는 규칙 수입니다. 설정 › 도구 에서 볼 수 있습니다."
+            title={t("approve.allowedHint")}
           >
-            허용 규칙 {allowed.length}
+            {t("approve.allowedCount", { count: allowed.length })}
           </span>
         )}
       </div>

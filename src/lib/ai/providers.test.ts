@@ -31,6 +31,7 @@ import {
   resolveModel,
   sendsEffort,
   supportedEffortsFor,
+  modelLabel,
 } from "@/lib/ai/providers";
 import { toModelMessages } from "@/lib/ai/runner";
 import type { Message } from "@/types/ipc";
@@ -126,7 +127,9 @@ describe("로컬 모델 목록 구성", () => {
     expect(found).toEqual(preset);
     // 프리셋에 없는 태그는 태그 그대로 보여 준다.
     const unknown = buildModelOptions(["llama3.2:3b"]).find((o) => o.id === "local:llama3.2:3b");
-    expect(unknown?.label).toBe("llama3.2:3b (로컬)");
+    // 라벨은 태그 그대로고, "(로컬)" 꼬리표는 화면 언어를 따라가는 `modelLabel()` 이 붙인다.
+    expect(unknown?.label).toBe("llama3.2:3b");
+    expect(unknown && modelLabel(unknown)).toBe("llama3.2:3b (로컬)");
     expect(unknown?.note).toBeUndefined();
   });
 });

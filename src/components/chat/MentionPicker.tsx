@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 
 import { documentTypeOf } from "@/lib/ai/attachments";
+import { t } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 import { activeMention, applyMention, type MentionToken } from "@/lib/mention";
 import type { ProjectFile } from "@/types/ipc";
@@ -183,10 +184,14 @@ export function useMentionPicker({
 
 /** 항목 하나가 어떤 종류인지 한 단어로. 첨부됐을 때 무슨 일이 일어날지를 미리 말해 준다. */
 function kindLabel(file: ProjectFile): string {
-  if (file.isDir) return "목록만";
+  if (file.isDir) return t("mention.kind.listOnly");
   const document = documentTypeOf(file.relativePath);
-  if (document) return document.skill ? `${document.label} · 스킬 필요` : document.label;
-  return "본문 첨부";
+  if (document) {
+    return document.skill
+      ? t("mention.kind.needsSkill", { kind: t(document.labelKey) })
+      : t(document.labelKey);
+  }
+  return t("mention.kind.body");
 }
 
 /**
@@ -216,15 +221,15 @@ export function MentionPicker({
       className={`absolute bottom-full left-0 z-40 mb-1.5 w-full max-w-xl overflow-hidden rounded-md border border-hairline bg-canvas elevate-lg ${className}`}
     >
       <div className="flex items-center gap-2 border-b border-hairline px-3 py-1.5 text-caption text-ink-muted">
-        <span className="text-ink">파일 참조</span>
+        <span className="text-ink">{t("mention.title")}</span>
         <code className="font-mono text-accent">@{state.token?.query ?? ""}</code>
-        <span className="ml-auto">↑↓ 이동 · Enter 선택 · Esc 닫기</span>
+        <span className="ml-auto">{t("mention.keys")}</span>
       </div>
 
       <ul ref={listRef} className="max-h-64 overflow-auto py-1">
         {state.items.length === 0 && (
           <li className="px-3 py-2 text-caption text-ink-muted">
-            {state.loading ? "찾는 중…" : "일치하는 파일이 없습니다"}
+            {state.loading ? t("mention.searching") : t("mention.noMatch")}
           </li>
         )}
         {state.items.map((file, index) => {

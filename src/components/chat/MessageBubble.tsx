@@ -10,6 +10,7 @@ import {
   type StoredToolResult,
 } from "@/lib/ai/runner";
 import { summarizeToolCall } from "@/lib/ai/tools";
+import { t, type MessageKey } from "@/lib/i18n";
 import { readNodeUsage } from "@/lib/ai/usage";
 import { Tag } from "@/components/Panel";
 import { UsageTag } from "@/components/UsageMeter";
@@ -34,17 +35,23 @@ interface MessageBubbleProps {
  *   에이전트 왼쪽 정렬 + 흰 면 + 옅은 그림자
  *   도구   왼쪽 정렬 + 회색 면
  */
-const ROLE_STYLE: Record<string, { wrap: string; label: string }> = {
-  user: { wrap: "ml-auto max-w-[85%] rounded-br-xs border-hairline bg-surface-1", label: "나" },
+const ROLE_STYLE: Record<string, { wrap: string; labelKey: MessageKey }> = {
+  user: {
+    wrap: "ml-auto max-w-[85%] rounded-br-xs border-hairline bg-surface-1",
+    labelKey: "bubble.role.user",
+  },
   assistant: {
     wrap: "mr-auto max-w-[92%] rounded-bl-xs border-hairline bg-canvas elevate",
-    label: "에이전트",
+    labelKey: "bubble.role.assistant",
   },
   tool: {
     wrap: "mr-auto max-w-[92%] rounded-bl-xs border-hairline bg-surface-1",
-    label: "도구",
+    labelKey: "bubble.role.tool",
   },
-  system: { wrap: "mr-auto max-w-[92%] rounded-bl-xs border-hairline bg-surface-1", label: "시스템" },
+  system: {
+    wrap: "mr-auto max-w-[92%] rounded-bl-xs border-hairline bg-surface-1",
+    labelKey: "bubble.role.system",
+  },
 };
 
 /** 말풍선 위에 뜨는 보조 동작 — 배경 없이 글자만, 호버에서만 나타난다. */
@@ -96,8 +103,12 @@ export function MessageBubble({
   return (
     <div className={`group rounded-lg border px-3.5 py-2.5 ${style.wrap}`}>
       <div className="mb-1 flex flex-wrap items-center gap-2 text-caption">
-        <span className="text-body-emphasis text-ink">{style.label}</span>
-        {siblingCount > 1 && <Tag title="같은 부모에서 갈라진 형제 턴이 있습니다">⑂ 분기 {siblingCount}</Tag>}
+        <span className="text-body-emphasis text-ink">{t(style.labelKey)}</span>
+        {siblingCount > 1 && (
+          <Tag title={t("bubble.siblingHint")}>
+            {t("bubble.sibling", { count: siblingCount })}
+          </Tag>
+        )}
         {usage && (
           <UsageTag
             usage={usage.usage}
@@ -106,16 +117,18 @@ export function MessageBubble({
             showModel
           />
         )}
-        {message.status === "aborted" && <span className="text-warning">중단됨</span>}
+        {message.status === "aborted" && (
+          <span className="text-warning">{t("bubble.aborted")}</span>
+        )}
 
         <span className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           {onInspectContext && (
             <button
               className={ACTION}
-              title="이 응답을 만들 때 LLM 에 실제로 보낸 컨텍스트를 봅니다"
+              title={t("bubble.contextHint")}
               onClick={onInspectContext}
             >
-              컨텍스트
+              {t("bubble.context")}
             </button>
           )}
         </span>
@@ -127,7 +140,8 @@ export function MessageBubble({
             className="text-caption text-ink-muted hover:text-ink"
             onClick={() => setShowReasoning((value) => !value)}
           >
-            {showReasoning ? "▾" : "▸"} 사고 과정 {streaming ? "(진행 중)" : ""}
+            {showReasoning ? "▾" : "▸"} {t("bubble.reasoning")}{" "}
+            {streaming ? t("bubble.inProgress") : ""}
           </button>
           {showReasoning && (
             <div className="mt-1 rounded-md bg-surface-1 p-2.5">
@@ -154,11 +168,11 @@ export function MessageBubble({
         <div className="mt-2 border-t border-hairline pt-2">
           <button
             className="flex w-full items-center gap-1.5 text-caption text-ink-muted transition-colors hover:text-ink"
-            title="이 메시지와 함께 LLM 으로 나간 파일 내용입니다"
+            title={t("bubble.attachedHint")}
             onClick={() => setShowAttachments((value) => !value)}
           >
             <span>{showAttachments ? "▾" : "▸"}</span>
-            <span>첨부 {attachmentTitles(attached.block).length}개</span>
+            <span>{t("bubble.attached", { count: attachmentTitles(attached.block).length })}</span>
             <span className="truncate font-mono text-ink-subtle">
               {attachmentTitles(attached.block).join(" · ")}
             </span>
@@ -187,10 +201,10 @@ export function MessageBubble({
 /** 도구 실행 결과 한 줄 상태. 글자가 먼저 읽히고 색은 거들기만 한다. */
 function StatusText({ pending, failed }: { pending: boolean; failed: boolean }) {
   const [text, tone] = pending
-    ? ["실행 중", "text-ink-muted"]
+    ? [t("agents.column.active"), "text-ink-muted"]
     : failed
-      ? ["실패", "text-error"]
-      : ["완료", "text-success"];
+      ? [t("chat.status.failed"), "text-error"]
+      : [t("chat.status.done"), "text-success"];
   return <span className={`shrink-0 text-caption ${tone}`}>{text}</span>;
 }
 
@@ -241,12 +255,16 @@ function ToolCallList({
         onClick={() => setOpen((value) => !value)}
       >
         <span className="text-ink-subtle">{open ? "▾" : "▸"}</span>
-        <span className="shrink-0 text-body-emphasis text-ink">도구 {calls.length}개</span>
+        <span className="shrink-0 text-body-emphasis text-ink">
+          {t("bubble.toolCount", { count: calls.length })}
+        </span>
         <span className="min-w-0 flex-1 truncate font-mono text-ink-muted">
           {calls.map((call) => summarizeToolCall(call.toolName, call.input)).join(" · ")}
         </span>
         {failedCount > 0 && !pending ? (
-          <span className="shrink-0 text-caption text-error">{failedCount}건 실패</span>
+          <span className="shrink-0 text-caption text-error">
+            {t("bubble.failedCount", { count: failedCount })}
+          </span>
         ) : (
           <StatusText pending={pending} failed={false} />
         )}
@@ -286,11 +304,13 @@ function ToolCallCard({
       {open && (
         <div className="space-y-1.5 border-t border-hairline px-2 py-1.5">
           <div>
-            <p className="mb-0.5 text-caption text-ink-muted">입력</p>
+            <p className="mb-0.5 text-caption text-ink-muted">{t("bubble.input")}</p>
             <JsonTree value={input} defaultOpenDepth={2} />
           </div>
           <div>
-            <p className="mb-0.5 text-caption text-ink-muted">{failed ? "오류" : "출력"}</p>
+            <p className="mb-0.5 text-caption text-ink-muted">
+              {failed ? t("app.error") : t("bubble.output")}
+            </p>
             <JsonTree value={output ?? null} defaultOpenDepth={1} />
           </div>
         </div>

@@ -8,6 +8,7 @@
 import { splitAttachments } from "@/lib/ai/attachments";
 import { readToolCalls, readToolResults } from "@/lib/ai/runner";
 import { readChainUsage, type Cost, type Usage } from "@/lib/ai/usage";
+import { t } from "@/lib/i18n";
 import { buildIndex } from "@/lib/tree";
 import type { Message } from "@/types/ipc";
 
@@ -247,7 +248,7 @@ export function turnLabel(turn: Turn): string {
 export function soloDeleteBlocker(index: TurnIndex, turn: Turn): string | null {
   const children = index.childrenOf.get(turn.id) ?? [];
   if (turn.branchPointId === null && children.length > 1) {
-    return `이 턴은 대화의 뿌리인데 아래로 ${children.length}갈래가 갈라져 있습니다. 이 턴만 지우면 뿌리가 여러 개가 됩니다 — [아래까지 삭제] 를 쓰세요.`;
+    return t("turn.rootSplitBlocker", { children: children.length });
   }
   return null;
 }

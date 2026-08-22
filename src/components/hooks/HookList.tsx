@@ -13,13 +13,15 @@ import {
   type HookConfig,
   type HookEvent,
 } from "@/lib/hooks";
+import { useT } from "@/lib/i18n/useT";
 import { useSettings } from "@/store/settings";
 
-const EVENT_LABEL: Record<HookEvent, string> = Object.fromEntries(
-  HOOK_EVENTS.map((event) => [event.id, event.label]),
-) as Record<HookEvent, string>;
-
 export function HookList() {
+  const t = useT();
+  // 이벤트 이름은 언어를 따라가므로 렌더마다 다시 만든다(항목이 셋뿐이라 부담이 없다).
+  const eventLabel = Object.fromEntries(
+    HOOK_EVENTS.map((event) => [event.id, t(event.labelKey)]),
+  ) as Record<HookEvent, string>;
   const builtinHooks = useSettings((state) => state.builtinHooks);
   const hooks = useSettings((state) => state.hooks);
   const update = useSettings((state) => state.update);
@@ -73,11 +75,13 @@ export function HookList() {
           />
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-1.5">
-              <span className="text-ink">{hook.label}</span>
-              <Tag>{EVENT_LABEL[hook.event]}</Tag>
-              <Tag>내장</Tag>
+              <span className="text-ink">{t(hook.labelKey)}</span>
+              <Tag>{eventLabel[hook.event]}</Tag>
+              <Tag>{t("hooks.builtin")}</Tag>
             </span>
-            <span className="mt-0.5 block text-caption text-ink-muted">{hook.description}</span>
+            <span className="mt-0.5 block text-caption text-ink-muted">
+              {t(hook.descriptionKey)}
+            </span>
           </span>
         </label>
       ))}
@@ -92,10 +96,10 @@ export function HookList() {
               className="accent-accent"
             />
             <span className="min-w-0 flex-1 truncate text-ink">{hook.name}</span>
-            <Tag>{EVENT_LABEL[hook.event] ?? hook.event}</Tag>
+            <Tag>{eventLabel[hook.event] ?? hook.event}</Tag>
             <button
               className="shrink-0 rounded-sm px-1.5 py-0.5 text-caption text-ink-subtle transition-colors hover:bg-hover hover:text-error"
-              title="훅 삭제"
+              title={t("hooks.remove")}
               onClick={() => void remove(hook.id)}
             >
               ✕
@@ -111,7 +115,7 @@ export function HookList() {
             <input
               value={draft.name}
               onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-              placeholder="이름 (예: 완료 소리)"
+              placeholder={t("hooks.namePlaceholder")}
               className={FIELD_SM}
             />
             <select
@@ -121,7 +125,7 @@ export function HookList() {
             >
               {HOOK_EVENTS.map((event) => (
                 <option key={event.id} value={event.id}>
-                  {event.label} — {event.description}
+                  {t(event.labelKey)} — {t(event.descriptionKey)}
                 </option>
               ))}
             </select>
@@ -129,28 +133,27 @@ export function HookList() {
           <input
             value={draft.command}
             onChange={(event) => setDraft({ ...draft, command: event.target.value })}
-            placeholder='실행할 명령 (예: powershell -c "[console]::beep(880,200)")'
+            placeholder={t("hooks.commandPlaceholder")}
             className={`${FIELD_SM} font-mono`}
           />
           <p className="text-caption text-ink-muted">
-            자리표: <span className="font-mono">{"{{event}}"}</span>{" "}
+            {t("hooks.placeholders")} <span className="font-mono">{"{{event}}"}</span>{" "}
             <span className="font-mono">{"{{status}}"}</span>{" "}
             <span className="font-mono">{"{{sessionId}}"}</span>{" "}
             <span className="font-mono">{"{{durationMs}}"}</span>{" "}
-            <span className="font-mono">{"{{project}}"}</span>. 오류 메시지는 자리표로 주지 않습니다
-            — 공급자가 보낸 문자열을 셸 한 줄에 끼워 넣지 않기 위해서입니다.
+            <span className="font-mono">{"{{project}}"}</span>. {t("hooks.noErrorPlaceholder")}
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setAdding(false)}>
-              취소
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" onClick={() => void add()} disabled={!draft.command.trim()}>
-              추가
+              {t("common.add")}
             </Button>
           </div>
         </div>
       ) : (
-        <Button onClick={() => setAdding(true)}>+ 훅 추가</Button>
+        <Button onClick={() => setAdding(true)}>{t("hooks.add")}</Button>
       )}
     </div>
   );

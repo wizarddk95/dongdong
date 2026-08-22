@@ -3,6 +3,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { Tag } from "@/components/Panel";
 import { UsageTag } from "@/components/UsageMeter";
 import { hasTokens } from "@/lib/ai/usage";
+import { t, type MessageKey } from "@/lib/i18n";
 import { turnLabel, type Turn } from "@/lib/turns";
 
 /**
@@ -23,10 +24,10 @@ export interface TurnNodeData extends Record<string, unknown> {
 
 export type TurnFlowNode = Node<TurnNodeData, "turn">;
 
-const STATUS_MARK: Record<string, { text: string; className: string }> = {
-  streaming: { text: "● 생성 중", className: "text-accent" },
-  error: { text: "● 오류", className: "text-error" },
-  aborted: { text: "● 중단", className: "text-warning" },
+const STATUS_MARK: Record<string, { textKey: MessageKey; className: string }> = {
+  streaming: { textKey: "turnNode.streaming", className: "text-accent" },
+  error: { textKey: "turnNode.error", className: "text-error" },
+  aborted: { textKey: "turnNode.aborted", className: "text-warning" },
 };
 
 /** 한 턴(사용자 질문 + 응답 + 도구 스텝)을 카드 한 장으로 보여준다. */
@@ -61,16 +62,24 @@ export function TurnNode({ data }: NodeProps<TurnFlowNode>) {
           */}
         <span
           className="font-mono text-body-emphasis text-ink"
-          title={`이 턴을 여는 노드의 id 입니다 (전체 ${turn.id}). 턴은 노드 ${turn.nodes.length}개로 이루어져 있습니다.`}
+          title={t("turnNode.idHint", { id: turn.id, nodes: turn.nodes.length })}
         >
           {turnLabel(turn)}
         </span>
-        {mark && <span className={mark.className}>{mark.text}</span>}
+        {mark && <span className={mark.className}>{t(mark.textKey)}</span>}
         <span className="ml-auto flex items-center gap-1">
-          {agentCount > 0 && <Tag title="이 턴에서 위임된 서브에이전트">위임 {agentCount}</Tag>}
+          {agentCount > 0 && (
+            <Tag title={t("turnNode.delegatedHint")}>
+              {t("turnNode.delegated", { count: agentCount })}
+            </Tag>
+          )}
           {/* 같은 줄에 서는 배지라 둘 다 낱말+숫자로 읽히게 맞춘다. */}
-          {branchCount > 1 && <Tag title="같은 지점에서 갈라진 형제 턴">분기 {branchCount}</Tag>}
-          <span className="text-ink-subtle">{turn.nodes.length}노드</span>
+          {branchCount > 1 && (
+            <Tag title={t("turnNode.branchHint")}>
+              {t("turnNode.branch", { count: branchCount })}
+            </Tag>
+          )}
+          <span className="text-ink-subtle">{t("turnNode.nodes", { count: turn.nodes.length })}</span>
         </span>
       </div>
 
@@ -79,11 +88,11 @@ export function TurnNode({ data }: NodeProps<TurnFlowNode>) {
        * 채팅 말풍선과 같은 규칙이라 아이콘 없이도 읽힌다.
        */}
       <p className="line-clamp-2 rounded-md bg-surface-1 px-2.5 py-1.5 text-caption leading-snug text-ink">
-        {turn.userText.trim() || "(질문 없음 · 이어진 대화)"}
+        {turn.userText.trim() || t("turnNode.noQuestion")}
       </p>
 
       <p className="line-clamp-3 flex-1 overflow-hidden text-caption leading-snug text-ink-muted">
-        {turn.assistantText.trim() || (turn.status === "streaming" ? "…" : "(응답 없음)")}
+        {turn.assistantText.trim() || (turn.status === "streaming" ? "…" : t("turnNode.noAnswer"))}
       </p>
 
       {turn.toolUses.length > 0 && (

@@ -8,6 +8,7 @@
  * 파일은 대화 도중에도 바뀔 수 있으므로(에이전트가 직접 고치기도 한다) 턴마다 다시 읽는다.
  */
 import { datetimeBlock } from "@/lib/ai/datetime";
+import { t } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 
 /** 위에서부터 먼저 찾히는 파일 하나만 쓴다. */
@@ -59,12 +60,15 @@ export async function loadProjectInstructions(
  */
 export function instructionBlock(instructions: ProjectInstructions): string {
   const notice = instructions.truncated
-    ? `\n\n(지침이 길어 앞부분 ${MAX_INSTRUCTION_CHARS.toLocaleString()}자만 실었습니다. 전체는 ${instructions.path} 를 직접 읽으세요.)`
+    ? `\n\n${t("instructions.truncated", {
+        limit: MAX_INSTRUCTION_CHARS.toLocaleString(),
+        path: instructions.path,
+      })}`
     : "";
 
   const header = [
-    `# 프로젝트 지침 (${instructions.path})`,
-    "이 프로젝트의 규칙입니다. 아래 지침이 기본 동작보다 우선합니다.",
+    t("instructions.heading", { path: instructions.path }),
+    t("instructions.lead"),
     "",
   ].join("\n");
 

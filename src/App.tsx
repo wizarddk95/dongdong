@@ -17,6 +17,8 @@ import {
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import { useAgents } from "@/store/agents";
 import { useChat } from "@/store/chat";
+import type { MessageKey } from "@/lib/i18n";
+import { useT } from "@/lib/i18n/useT";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
 import { useSkills } from "@/store/skills";
@@ -24,14 +26,15 @@ import { useWorkspace } from "@/store/workspace";
 
 type RightTab = "tree" | "agents" | "files" | "shell";
 
-const TABS: { id: RightTab; label: string }[] = [
-  { id: "tree", label: "대화 트리" },
-  { id: "agents", label: "서브에이전트" },
-  { id: "files", label: "파일" },
-  { id: "shell", label: "쉘" },
+const TABS: { id: RightTab; labelKey: MessageKey }[] = [
+  { id: "tree", labelKey: "app.tab.tree" },
+  { id: "agents", labelKey: "app.tab.agents" },
+  { id: "files", labelKey: "app.tab.files" },
+  { id: "shell", labelKey: "app.tab.shell" },
 ];
 
 export default function App() {
+  const t = useT();
   const bootstrap = useWorkspace((state) => state.bootstrap);
   const error = useWorkspace((state) => state.error);
   const setError = useWorkspace((state) => state.setError);
@@ -144,11 +147,11 @@ export default function App() {
       {error && (
         <div className="flex shrink-0 items-start gap-2 border-b border-hairline bg-error-subtle px-4 py-2 text-caption text-ink">
           {/* 색 없이도 읽히도록 앞에 라벨을 세운다. */}
-          <span className="shrink-0 text-body-emphasis text-error">오류</span>
+          <span className="shrink-0 text-body-emphasis text-error">{t("app.error")}</span>
           <span className="flex-1 font-mono break-all">{error}</span>
           <button
             className="shrink-0 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-hover hover:text-ink"
-            title="닫기"
+            title={t("common.close")}
             onClick={() => setError(null)}
           >
             ✕
@@ -163,7 +166,7 @@ export default function App() {
         <div
           role="separator"
           aria-orientation="vertical"
-          title="드래그해서 세션 목록 폭 조절 · 더블클릭하면 기본값"
+          title={t("app.resizeSidebar")}
           onPointerDown={(event) => {
             event.preventDefault();
             setDragging("sidebar");
@@ -189,7 +192,7 @@ export default function App() {
           <div
             role="separator"
             aria-orientation="vertical"
-            title="드래그해서 채팅 폭 조절 · 더블클릭하면 기본값"
+            title={t("app.resizeChat")}
             onPointerDown={(event) => {
               event.preventDefault();
               setDragging("right");
@@ -237,7 +240,7 @@ export default function App() {
                         : "border-transparent text-ink-muted hover:bg-hover hover:text-ink"
                     }`}
                   >
-                    {item.label}
+                    {t(item.labelKey)}
                     {item.id === "agents" && activeAgents > 0 && (
                       // 채움색은 accent 가 아니라 primary — 다크에서 흰 글자와의 대비가 여기서만 충분하다.
                       <span className="rounded-full bg-primary px-1.5 text-caption text-on-primary">

@@ -11,7 +11,7 @@ import { runTurn } from "@/lib/ai/runner";
 import {
   buildSubagentContext,
   runSubagent,
-  SUBAGENT_SYSTEM_PROMPT,
+  subagentSystemPrompt,
   type SubagentProgress,
 } from "@/lib/ai/subagent";
 
@@ -38,7 +38,7 @@ describe("buildSubagentContext", () => {
   it("작업 지시 하나만 담은 격리된 컨텍스트를 만든다", () => {
     const context = buildSubagentContext(base);
 
-    expect(context.system).toBe(SUBAGENT_SYSTEM_PROMPT);
+    expect(context.system).toBe(subagentSystemPrompt());
     expect(context.messages).toEqual([{ role: "user", content: base.task }]);
     expect(context.modelId).toBe("anthropic:claude-haiku-4-5");
     expect(context.maxSteps).toBe(4);
@@ -46,7 +46,7 @@ describe("buildSubagentContext", () => {
 
   it("프로젝트별 안내는 기본 프롬프트 뒤에 붙는다", () => {
     const context = buildSubagentContext({ ...base, extraInstructions: "커밋하지 말 것" });
-    expect(context.system.startsWith(SUBAGENT_SYSTEM_PROMPT)).toBe(true);
+    expect(context.system.startsWith(subagentSystemPrompt())).toBe(true);
     expect(context.system).toContain("커밋하지 말 것");
   });
 });

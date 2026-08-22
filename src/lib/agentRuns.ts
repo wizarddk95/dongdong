@@ -1,9 +1,11 @@
 /** 서브에이전트 실행 표시용 공통 값. 대시보드와 트리 노드가 같은 색·문구를 쓴다. */
 import { estimateCost, readUsage, type Cost, type Usage } from "@/lib/ai/usage";
+import { t, type MessageKey } from "@/lib/i18n";
 import type { AgentRun } from "@/types/ipc";
 
 export interface RunStatusStyle {
-  label: string;
+  /** 문구는 언어에 따라 갈리므로 사전 키만 들고 있는다 — 부르는 쪽이 `t()` 로 편다. */
+  labelKey: MessageKey;
   /** 배지 배경/글자색 */
   className: string;
   /** 진행률 바 색 */
@@ -17,23 +19,27 @@ export interface RunStatusStyle {
  */
 export const RUN_STATUS_STYLE: Record<string, RunStatusStyle> = {
   pending: {
-    label: "대기",
+    labelKey: "agentRun.status.pending",
     className: "bg-surface-2 text-ink-muted",
     barClassName: "bg-surface-3",
   },
   running: {
-    label: "실행 중",
+    labelKey: "agentRun.status.running",
     className: "bg-accent-subtle text-ink",
     barClassName: "bg-accent",
   },
   succeeded: {
-    label: "성공",
+    labelKey: "agentRun.status.succeeded",
     className: "bg-success-subtle text-ink",
     barClassName: "bg-success",
   },
-  failed: { label: "실패", className: "bg-error-subtle text-ink", barClassName: "bg-error" },
+  failed: {
+    labelKey: "agentRun.status.failed",
+    className: "bg-error-subtle text-ink",
+    barClassName: "bg-error",
+  },
   cancelled: {
-    label: "취소",
+    labelKey: "agentRun.status.cancelled",
     className: "bg-warning-subtle text-ink",
     barClassName: "bg-warning",
   },
@@ -52,7 +58,9 @@ export function runDuration(run: AgentRun): string | null {
   if (!run.startedAt) return null;
   const end = run.finishedAt ? Date.parse(run.finishedAt) : Date.now();
   const seconds = Math.max(0, Math.round((end - Date.parse(run.startedAt)) / 1000));
-  return seconds < 60 ? `${seconds}초` : `${Math.floor(seconds / 60)}분 ${seconds % 60}초`;
+  return seconds < 60
+    ? t("time.seconds", { seconds })
+    : t("time.minutesSeconds", { minutes: Math.floor(seconds / 60), seconds: seconds % 60 });
 }
 
 /** 이 실행이 쓴 토큰과 추정 요금. 아직 토큰을 안 남겼으면 null. */

@@ -9,6 +9,7 @@
 import { APICallError, RetryError } from "ai";
 
 import { redact } from "@/lib/ai/redact";
+import { t } from "@/lib/i18n";
 
 /** 배너 한 줄에 담을 수 있는 만큼만. 원문은 대개 스택 트레이스까지 붙어 온다. */
 const MAX_DETAIL_CHARS = 600;
@@ -63,7 +64,7 @@ export function describeApiError(error: unknown): string | null {
   const cause = RetryError.isInstance(error) ? (error.lastError ?? error) : error;
   if (!APICallError.isInstance(cause)) return null;
 
-  const status = cause.statusCode ? `HTTP ${cause.statusCode}` : "요청 실패";
+  const status = cause.statusCode ? `HTTP ${cause.statusCode}` : t("error.requestFailed");
   const detail = providerDetail(cause.responseBody);
   return `${status}: ${detail ?? cause.message}`;
 }

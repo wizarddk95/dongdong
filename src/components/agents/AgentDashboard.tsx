@@ -4,6 +4,7 @@ import { Button } from "@/components/Panel";
 import { UsageTag } from "@/components/UsageMeter";
 import { isRunActive, runDuration, runStatusStyle, runUsage } from "@/lib/agentRuns";
 import { useAgents } from "@/store/agents";
+import { t, type MessageKey } from "@/lib/i18n";
 import { useWorkspace } from "@/store/workspace";
 import type { AgentRun } from "@/types/ipc";
 
@@ -11,12 +12,22 @@ import type { AgentRun } from "@/types/ipc";
  * 칸반 열 정의 — 상태를 세 덩어리로 묶어 본다.
  * 열 머리의 2px 룰만 색을 갖는다. 카드 자체는 회색 계조로 남긴다.
  */
-const COLUMNS: { id: string; label: string; statuses: string[]; accent: string }[] = [
-  { id: "active", label: "실행 중", statuses: ["pending", "running"], accent: "border-accent" },
-  { id: "done", label: "완료", statuses: ["succeeded"], accent: "border-success" },
+const COLUMNS: { id: string; labelKey: MessageKey; statuses: string[]; accent: string }[] = [
+  {
+    id: "active",
+    labelKey: "agents.column.active",
+    statuses: ["pending", "running"],
+    accent: "border-accent",
+  },
+  {
+    id: "done",
+    labelKey: "agents.column.done",
+    statuses: ["succeeded"],
+    accent: "border-success",
+  },
   {
     id: "failed",
-    label: "실패 · 취소",
+    labelKey: "agents.column.failed",
     statuses: ["failed", "cancelled"],
     accent: "border-error",
   },
@@ -40,21 +51,22 @@ export function AgentDashboard() {
   }, [hasActive]);
 
   if (!project) {
-    return <p className="p-4 text-body-sm text-ink-muted">프로젝트 폴더를 먼저 여세요.</p>;
+    return <p className="p-4 text-body-sm text-ink-muted">{t("chat.error.noProject")}</p>;
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2">
         <span className="text-caption text-ink-muted">
-          서브에이전트 {runs.length}개{loading ? " · 불러오는 중…" : ""}
+          {t("agents.count", { count: runs.length })}
+          {loading ? t("agents.loading") : ""}
         </span>
         <span className="ml-auto flex gap-1">
           <Button variant="ghost" onClick={() => void refresh()}>
-            새로고침
+            {t("common.refresh")}
           </Button>
           <Button onClick={() => void clearFinished()} disabled={runs.length === 0}>
-            끝난 것 정리
+            {t("agents.clearFinished")}
           </Button>
         </span>
       </header>
@@ -67,11 +79,8 @@ export function AgentDashboard() {
 
       {runs.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-          <p className="text-subhead text-ink">아직 위임된 작업이 없습니다</p>
-          <p className="text-body-sm text-ink-muted">
-            에이전트가 <code className="font-mono text-ink">delegate_task</code> 를 호출하면 여기에
-            나타납니다.
-          </p>
+          <p className="text-subhead text-ink">{t("agents.emptyTitle")}</p>
+          <p className="text-body-sm text-ink-muted">{t("agents.emptyBody")}</p>
         </div>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 overflow-auto p-3">
@@ -82,7 +91,7 @@ export function AgentDashboard() {
                 <h3
                   className={`shrink-0 border-b-2 pb-1.5 text-caption text-ink ${column.accent}`}
                 >
-                  {column.label} · {items.length}
+                  {t(column.labelKey)} · {items.length}
                 </h3>
                 {items.map((run) => (
                   <RunCard key={run.id} run={run} />
@@ -110,7 +119,7 @@ function RunCard({ run }: { run: AgentRun }) {
   return (
     <div className="group rounded-md border border-hairline bg-canvas p-2.5 elevate">
       <div className="mb-1.5 flex items-center gap-1.5 text-caption">
-        <span className={`shrink-0 rounded-full px-2 py-0.5 ${status.className}`}>{status.label}</span>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 ${status.className}`}>{t(status.labelKey)}</span>
         <span className="min-w-0 flex-1 truncate text-ink">{run.name}</span>
         {elapsed && <span className="shrink-0 text-ink-subtle">{elapsed}</span>}
       </div>
@@ -125,7 +134,7 @@ function RunCard({ run }: { run: AgentRun }) {
 
       {active && (
         <p className="mb-1 truncate font-mono text-caption text-accent">
-          {run.currentTool ? `▶ ${run.currentTool}` : "▶ 생각 중…"}
+          {run.currentTool ? `▶ ${run.currentTool}` : t("agents.thinking")}
         </p>
       )}
 
@@ -150,7 +159,11 @@ function RunCard({ run }: { run: AgentRun }) {
           className="text-accent hover:underline"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "접기" : run.result || run.error ? "결과 보기" : "전체 보기"}
+          {expanded
+            ? t("agents.collapse")
+            : run.result || run.error
+              ? t("agents.showResult")
+              : t("agents.showAll")}
         </button>
         {usage && (
           <UsageTag usage={usage.usage} cost={usage.cost} modelId={usage.modelId} variant="cost" />
@@ -161,14 +174,14 @@ function RunCard({ run }: { run: AgentRun }) {
               className="rounded-sm px-2 py-0.5 text-accent transition-colors hover:bg-hover"
               onClick={() => cancel(run.id)}
             >
-              중단
+              {t("agents.stop")}
             </button>
           )}
           <button
             className="rounded-sm px-2 py-0.5 text-ink-muted transition-colors hover:bg-hover hover:text-error"
             onClick={() => void remove(run.id)}
           >
-            삭제
+            {t("common.delete")}
           </button>
         </span>
       </div>

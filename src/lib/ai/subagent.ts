@@ -10,12 +10,15 @@ import type { ToolSet } from "@ai-sdk/provider-utils";
 import type { Effort, ProviderCredentials } from "@/lib/ai/providers";
 import { runTurn, type TurnContext } from "@/lib/ai/runner";
 import type { Usage } from "@/lib/ai/usage";
+import { t } from "@/lib/i18n";
 
-export const SUBAGENT_SYSTEM_PROMPT = `당신은 코딩 에이전트의 서브에이전트입니다. 하나의 작업만 끝까지 처리합니다.
-- 도구로 직접 확인하세요. 파일을 읽지 않고 내용을 추측하지 않습니다.
-- 사용자와 대화할 수 없습니다. 되물을 수 없으니 주어진 지시 안에서 판단합니다.
-- 끝나면 마지막 답변에 결과를 요약합니다: 무엇을 했고, 무엇을 찾았고, 무엇이 남았는지.
-- 요약은 상위 에이전트가 그대로 읽습니다. 사실만 간결하게 적습니다.`;
+/**
+ * 서브에이전트의 시스템 프롬프트. 화면 언어를 따라간다 —
+ * 요약이 상위 에이전트를 거쳐 사용자에게 그대로 보이기 때문이다.
+ */
+export function subagentSystemPrompt(): string {
+  return t("prompt.subagent");
+}
 
 export interface SubagentProgress {
   /** 0.0 ~ 1.0 — 스텝 예산 대비 진행률이지 작업 완성도가 아니다 */
@@ -55,8 +58,8 @@ function stepProgress(steps: number, maxSteps: number): number {
 
 export function buildSubagentContext(options: RunSubagentOptions): TurnContext {
   const system = options.extraInstructions
-    ? `${SUBAGENT_SYSTEM_PROMPT}\n\n${options.extraInstructions}`
-    : SUBAGENT_SYSTEM_PROMPT;
+    ? `${subagentSystemPrompt()}\n\n${options.extraInstructions}`
+    : subagentSystemPrompt();
 
   return {
     modelId: options.modelId,

@@ -18,6 +18,7 @@
  * 절차를 열고 Python 으로 직접 읽는 길이 그대로 이어진다.
  */
 import { clip } from "@/lib/ai/tools";
+import { t, type MessageKey } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 
 /** 첨부 블록의 경계. 말풍선에서 접을 때와 모델이 읽을 때 같은 표를 쓴다. */
@@ -63,18 +64,18 @@ const MAX_DIR_ENTRIES = 200;
  * 본문을 실을 수 없는 문서 형식과, 그걸 여는 내장 스킬.
  * 스킬이 없는 형식은 `skill` 을 비워 두고 일반적인 안내만 한다.
  */
-const DOCUMENT_TYPES: Record<string, { label: string; skill?: string }> = {
-  xlsx: { label: "엑셀 문서", skill: "xlsx" },
-  xlsm: { label: "엑셀 문서(매크로)", skill: "xlsx" },
-  xls: { label: "엑셀 문서(구형 바이너리)", skill: "xlsx" },
-  csv: { label: "CSV 표", skill: "xlsx" },
-  docx: { label: "워드 문서", skill: "docx" },
-  doc: { label: "워드 문서(구형 바이너리)", skill: "docx" },
-  pdf: { label: "PDF 문서", skill: "pdf" },
-  pptx: { label: "파워포인트 문서" },
-  ppt: { label: "파워포인트 문서(구형 바이너리)" },
-  hwp: { label: "한글 문서" },
-  hwpx: { label: "한글 문서" },
+const DOCUMENT_TYPES: Record<string, { labelKey: MessageKey; skill?: string }> = {
+  xlsx: { labelKey: "attachment.kind.xlsx", skill: "xlsx" },
+  xlsm: { labelKey: "attachment.kind.xlsm", skill: "xlsx" },
+  xls: { labelKey: "attachment.kind.xls", skill: "xlsx" },
+  csv: { labelKey: "attachment.kind.csv", skill: "xlsx" },
+  docx: { labelKey: "attachment.kind.docx", skill: "docx" },
+  doc: { labelKey: "attachment.kind.doc", skill: "docx" },
+  pdf: { labelKey: "attachment.kind.pdf", skill: "pdf" },
+  pptx: { labelKey: "attachment.kind.pptx" },
+  ppt: { labelKey: "attachment.kind.ppt" },
+  hwp: { labelKey: "attachment.kind.hwp" },
+  hwpx: { labelKey: "attachment.kind.hwp" },
 };
 
 /** 코드 펜스에 붙일 언어. 없으면 빈 문자열. */
@@ -118,7 +119,7 @@ export function extensionOf(path: string): string {
 }
 
 /** 본문을 실을 수 없는 문서 형식인가. */
-export function documentTypeOf(path: string): { label: string; skill?: string } | null {
+export function documentTypeOf(path: string): { labelKey: MessageKey; skill?: string } | null {
   return DOCUMENT_TYPES[extensionOf(path)] ?? null;
 }
 
@@ -166,10 +167,10 @@ export async function resolveMention(
   try {
     info = await ipc.pathInfo(path, options.projectPath);
   } catch (error) {
-    return stub(path, path, "missing", 0, `읽을 수 없습니다: ${errorText(error)}`);
+    return stub(path, path, "missing", 0, t("attachment.unreadable", { error: errorText(error) }));
   }
   if (!info.exists) {
-    return stub(path, path, "missing", 0, "이 경로에는 아무것도 없습니다. 경로를 다시 확인하세요.");
+    return stub(path, path, "missing", 0, t("attachment.missing"));
   }
 
   if (info.isDir) {
@@ -186,12 +187,18 @@ export async function resolveMention(
         body: text,
         note:
           entries.length > shown.length
-            ? `디렉터리 · 항목 ${entries.length}개 중 ${shown.length}개만 표시`
-            : `디렉터리 · 항목 ${entries.length}개`,
+            ? t("attachment.dirPartial", { total: entries.length, shown: shown.length })
+            : t("attachment.dir", { total: entries.length }),
         truncated: clipped || entries.length > shown.length,
       };
     } catch (error) {
-      return stub(path, path, "missing", 0, `디렉터리를 읽을 수 없습니다: ${errorText(error)}`);
+      return stub(
+        path,
+        path,
+        "missing",
+        0,
+        t("attachment.dirUnreadable", { error: errorText(error) }),
+      );
     }
   }
 
@@ -199,9 +206,15 @@ export async function resolveMention(
   const document = documentTypeOf(path);
   if (document) {
     const how = document.skill
-      ? `본문은 싣지 않았습니다. 내용이 필요하면 \`load_skill("${document.skill}")\` 로 절차를 연 뒤 Python 으로 이 경로를 직접 읽으세요.`
-      : "본문은 싣지 않았습니다. 내용이 필요하면 이 형식을 읽을 수 있는 도구나 라이브러리를 셸로 확인한 뒤 처리하세요.";
-    return stub(path, path, "document", info.size, `${document.label} · ${formatBytes(info.size)} — ${how}`);
+      ? t("attachment.documentSkill", { skill: document.skill })
+      : t("attachment.documentNoSkill");
+    return stub(
+      path,
+      path,
+      "document",
+      info.size,
+      `${t(document.labelKey)} · ${formatBytes(info.size)} — ${how}`,
+    );
   }
 
   if (budget <= 0) {
@@ -210,7 +223,7 @@ export async function resolveMention(
       path,
       "text",
       info.size,
-      `앞선 첨부가 이미 한도를 채워 본문을 싣지 못했습니다 (${formatBytes(info.size)}). 필요하면 read_file 로 직접 읽으세요.`,
+      t("attachment.budgetExhausted", { size: formatBytes(info.size) }),
     );
   }
 
@@ -222,7 +235,7 @@ export async function resolveMention(
         file.relativePath,
         "binary",
         file.size,
-        `바이너리 파일 · ${formatBytes(file.size)} — 텍스트가 아니라 본문을 실을 수 없습니다.`,
+        t("attachment.binary", { size: formatBytes(file.size) }),
       );
     }
 
@@ -236,7 +249,13 @@ export async function resolveMention(
       truncated: clipped || file.truncated,
     };
   } catch (error) {
-    return stub(path, path, "missing", info.size, `읽을 수 없습니다: ${errorText(error)}`);
+    return stub(
+      path,
+      path,
+      "missing",
+      info.size,
+      t("attachment.unreadable", { error: errorText(error) }),
+    );
   }
 }
 
@@ -264,11 +283,13 @@ export async function resolveMentions(
 export function attachmentTitle(attachment: Attachment): string {
   const suffix =
     attachment.kind === "text"
-      ? `${attachment.body.length.toLocaleString()}자${attachment.truncated ? ", 일부 생략" : ""}`
+      ? t(attachment.truncated ? "attachment.charsTruncated" : "attachment.chars", {
+          chars: attachment.body.length.toLocaleString(),
+        })
       : attachment.kind === "dir"
-        ? "디렉터리"
+        ? t("attachment.dirLabel")
         : attachment.kind === "missing"
-          ? "없음"
+          ? t("attachment.none")
           : formatBytes(attachment.size);
   return `${attachment.displayPath} (${suffix})`;
 }
@@ -295,7 +316,7 @@ export function attachmentBlock(attachments: Attachment[]): string {
 
   return [
     ATTACH_OPEN,
-    "사용자가 @ 로 지목한 파일입니다. 아래 내용은 이미 읽어서 실어 두었으니 같은 파일을 다시 읽지 마세요.",
+    t("attachment.header"),
     "",
     parts.join("\n\n"),
     ATTACH_CLOSE,

@@ -15,10 +15,12 @@
  */
 import type { ToolSet } from "@ai-sdk/provider-utils";
 
+import { t } from "@/lib/i18n";
+
 /** 중단으로 도구가 끊겼을 때. 트리에는 tool-error 로 남는다. */
 export class ToolAbortError extends Error {
   constructor(toolName?: string) {
-    super(toolName ? `중단되었습니다 (${toolName})` : "중단되었습니다");
+    super(toolName ? t("abort.toolAborted", { toolName }) : t("abort.aborted"));
     this.name = "ToolAbortError";
   }
 }

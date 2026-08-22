@@ -18,6 +18,7 @@ import {
   parseModelId,
   type PricingQuery,
 } from "@/lib/ai/providers";
+import { getLocale, t } from "@/lib/i18n";
 import type { Message, SessionModelUsage, SessionOverview } from "@/types/ipc";
 
 /** LLM 호출 한 번(또는 여러 번의 합)이 쓴 토큰. */
@@ -615,7 +616,7 @@ export function formatUsd(value: number): string {
 
 /** 화면에 짧게 적을 모델 이름. 카탈로그에 없는 모델(직접 입력)은 공급자 접두어만 뗀다. */
 export function formatModelLabel(modelId: string | null): string {
-  if (!modelId) return "모델 미상";
+  if (!modelId) return t("usage.unknownModel");
   return findModelOption(modelId)?.label ?? parseModelId(modelId).modelId;
 }
 
@@ -627,9 +628,12 @@ export function formatTokens(value: number): string {
   return `${(value / 1_000_000).toFixed(2)}M`;
 }
 
-/** 툴팁·인스펙터용 정확한 수 (`12,345`). */
+/**
+ * 툴팁·인스펙터용 정확한 수 (`12,345`).
+ * 자릿수 구분자는 화면 언어를 따라간다 — 숫자만 한국식으로 남으면 그 줄만 튀어 보인다.
+ */
 export function formatExact(value: number): string {
-  return Math.round(value).toLocaleString("ko-KR");
+  return Math.round(value).toLocaleString(getLocale() === "ko" ? "ko-KR" : "en-US");
 }
 
 /**
@@ -637,37 +641,55 @@ export function formatExact(value: number): string {
  * ("$0" 으로 적으면 공짜인지 못 세는 건지 구분이 안 된다)
  */
 export function formatCost(cost: Cost, modelId: string | null): string {
-  if (isLocalModel(modelId)) return "로컬";
-  if (cost.unpriced) return "요율 미상";
+  if (isLocalModel(modelId)) return t("usage.local");
+  if (cost.unpriced) return t("usage.unknownRate");
   return `${cost.underestimated ? "≥" : ""}${formatUsd(cost.total)}`;
 }
 
 /** 사용량 한 줄 요약 — 말풍선·카드에 붙인다. */
 export function formatUsageLine(usage: Usage): string {
   const parts = [`↑${formatTokens(usage.inputTokens)}`, `↓${formatTokens(usage.outputTokens)}`];
-  if (usage.cacheReadTokens > 0) parts.push(`캐시 ${formatTokens(usage.cacheReadTokens)}`);
-  if (usage.reasoningTokens > 0) parts.push(`사고 ${formatTokens(usage.reasoningTokens)}`);
+  if (usage.cacheReadTokens > 0)
+    parts.push(t("usage.cache", { tokens: formatTokens(usage.cacheReadTokens) }));
+  if (usage.reasoningTokens > 0)
+    parts.push(t("usage.reasoning", { tokens: formatTokens(usage.reasoningTokens) }));
   return parts.join(" · ");
 }
 
 /** 마우스를 올렸을 때 보여줄 항목별 내역. */
 export function usageTooltip(usage: Usage, cost: Cost, modelId: string | null): string {
   const lines = [
-    modelId ? `모델 ${modelId}` : "모델 미상",
-    `입력 ${formatExact(usage.inputTokens)} (신규 ${formatExact(uncachedInputTokens(usage))} · 캐시읽기 ${formatExact(usage.cacheReadTokens)} · 캐시쓰기 ${formatExact(usage.cacheWriteTokens)})`,
-    `출력 ${formatExact(usage.outputTokens)}${usage.reasoningTokens > 0 ? ` (사고 ${formatExact(usage.reasoningTokens)})` : ""}`,
+    modelId ? t("usage.model", { modelId }) : t("usage.unknownModel"),
+    t("usage.inputBreakdown", {
+      input: formatExact(usage.inputTokens),
+      fresh: formatExact(uncachedInputTokens(usage)),
+      cacheRead: formatExact(usage.cacheReadTokens),
+      cacheWrite: formatExact(usage.cacheWriteTokens),
+    }),
+    usage.reasoningTokens > 0
+      ? t("usage.outputWithReasoning", {
+          output: formatExact(usage.outputTokens),
+          reasoning: formatExact(usage.reasoningTokens),
+        })
+      : t("usage.outputBreakdown", { output: formatExact(usage.outputTokens) }),
   ];
 
   if (isLocalModel(modelId)) {
-    lines.push("로컬 서버 모델 — 토큰 요금 없음");
+    lines.push(t("usage.freeLocal"));
   } else if (cost.unpriced) {
-    lines.push("요율표에 없는 모델이라 금액을 계산하지 못했습니다");
+    lines.push(t("usage.noRate"));
   } else {
     lines.push(
-      `요금 추정 ${formatUsd(cost.total)} = 입력 ${formatUsd(cost.input)} + 캐시읽기 ${formatUsd(cost.cacheRead)} + 캐시쓰기 ${formatUsd(cost.cacheWrite)} + 출력 ${formatUsd(cost.output)}`,
+      t("usage.costBreakdown", {
+        total: formatUsd(cost.total),
+        input: formatUsd(cost.input),
+        cacheRead: formatUsd(cost.cacheRead),
+        cacheWrite: formatUsd(cost.cacheWrite),
+        output: formatUsd(cost.output),
+      }),
     );
-    if (cost.longContext) lines.push("롱컨텍스트 구간 요율이 적용됐습니다");
-    if (cost.underestimated) lines.push("일부 항목의 요율을 몰라 실제보다 적게 잡혔습니다");
+    if (cost.longContext) lines.push(t("usage.longContext"));
+    if (cost.underestimated) lines.push(t("usage.partialRate"));
   }
   return lines.join("\n");
 }

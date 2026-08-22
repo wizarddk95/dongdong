@@ -18,6 +18,8 @@ import {
   buildModelOptions,
   defaultEffortFor,
   effortOptionsFor,
+  modelLabel,
+  modelNote,
   parseModelId,
   resolveEffort,
   sendsEffort,
@@ -25,8 +27,10 @@ import {
 } from "@/lib/ai/providers";
 import { APPROVAL_MODES, describeRule, type ApprovalMode } from "@/lib/ai/approval";
 import { DEFAULT_TOOLS, TOOL_GROUPS, type ToolToggles } from "@/lib/ai/tools";
-import { THEME_LABEL, THEME_PREFERENCES, type ThemePreference } from "@/lib/theme";
+import { THEME_LABEL_KEY, THEME_PREFERENCES, type ThemePreference } from "@/lib/theme";
 import { useApprovals } from "@/store/approvals";
+import { LOCALES, LOCALE_LABEL, t, type Locale, type MessageKey } from "@/lib/i18n";
+import { useT } from "@/lib/i18n/useT";
 import { useSettings } from "@/store/settings";
 
 /**
@@ -35,10 +39,9 @@ import { useSettings } from "@/store/settings";
  */
 function effortLockReason(modelId: string): string {
   const { provider } = parseModelId(modelId);
-  if (provider === "local") return "로컬 서버에는 사고 강도 개념이 없습니다.";
-  if (provider === "anthropic")
-    return "이 모델은 adaptive thinking 을 몰라 사고 강도를 받지 않습니다 (보내면 400).";
-  return "카탈로그에 없는 모델이라 어떤 강도 값을 받는지 알 수 없어 보내지 않습니다 (틀린 값은 400 입니다).";
+  if (provider === "local") return t("settings.effortLock.local");
+  if (provider === "anthropic") return t("settings.effortLock.anthropic");
+  return t("settings.effortLock.unknown");
 }
 
 interface SettingsModalProps {
@@ -55,14 +58,18 @@ interface SettingsModalProps {
  */
 type SectionId = "general" | "model" | "providers" | "tools" | "skills" | "hooks" | "mcp";
 
-const SECTIONS: { id: SectionId; label: string; note: string }[] = [
-  { id: "general", label: "일반", note: "테마 · 지침 · 시스템 프롬프트" },
-  { id: "model", label: "모델", note: "모델 · 사고 강도 · 서브에이전트" },
-  { id: "providers", label: "공급자", note: "API 키 · 로컬 서버" },
-  { id: "tools", label: "도구", note: "에이전트가 바로 실행하는 것" },
-  { id: "skills", label: "스킬", note: "판단해서 열어 보는 절차서" },
-  { id: "hooks", label: "훅", note: "정해진 시점의 자동 동작" },
-  { id: "mcp", label: "MCP", note: "외부 서버의 도구" },
+const SECTIONS: { id: SectionId; labelKey: MessageKey; noteKey: MessageKey }[] = [
+  { id: "general", labelKey: "settings.section.general", noteKey: "settings.section.generalNote" },
+  { id: "model", labelKey: "settings.section.model", noteKey: "settings.section.modelNote" },
+  {
+    id: "providers",
+    labelKey: "settings.section.providers",
+    noteKey: "settings.section.providersNote",
+  },
+  { id: "tools", labelKey: "settings.section.tools", noteKey: "settings.section.toolsNote" },
+  { id: "skills", labelKey: "settings.section.skills", noteKey: "settings.section.skillsNote" },
+  { id: "hooks", labelKey: "settings.section.hooks", noteKey: "settings.section.hooksNote" },
+  { id: "mcp", labelKey: "settings.section.mcp", noteKey: "settings.section.mcpNote" },
 ];
 
 /** 클라우드 공급자 키 한 벌. 늘어나도 이 배열에 한 줄만 더한다. */
@@ -71,19 +78,19 @@ const PROVIDER_KEYS = [
     id: "anthropic" as const,
     label: "Anthropic",
     placeholder: "sk-ant-...",
-    note: "Claude 계열. console.anthropic.com 에서 발급합니다.",
+    noteKey: "settings.key.anthropic" as MessageKey,
   },
   {
     id: "openai" as const,
     label: "OpenAI",
     placeholder: "sk-...",
-    note: "GPT 계열. platform.openai.com 에서 발급합니다.",
+    noteKey: "settings.key.openai" as MessageKey,
   },
   {
     id: "google" as const,
     label: "Google Gemini",
     placeholder: "AIza...",
-    note: "Gemini 계열. aistudio.google.com 에서 발급합니다.",
+    noteKey: "settings.key.google" as MessageKey,
   },
 ];
 
@@ -136,6 +143,7 @@ function Help({ children }: { children: React.ReactNode }) {
 }
 
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
+  const t = useT();
   const settings = useSettings();
   // [항상 허용] 규칙은 설정 파일이 아니라 **지금 세션**에 산다 (`store/approvals.ts`).
   const allowedCommands = useApprovals((state) => state.allowed);
@@ -252,13 +260,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       setProbe({
         state: models.length ? "ok" : "error",
         message: models.length
-          ? `${models.length}개 발견: ${models.join(", ")}`
-          : "서버는 응답했지만 받은 모델이 없습니다. `ollama pull gpt-oss:20b` 로 먼저 내려받으세요.",
+          ? t("settings.local.found", { count: models.length, models: models.join(", ") })
+          : t("settings.local.none"),
       });
     } catch (error) {
       setProbe({
         state: "error",
-        message: `연결 실패 — 서버가 떠 있는지 확인하세요 (${String(error)})`,
+        message: t("settings.local.failed", { error: String(error) }),
       });
     }
   }
@@ -273,10 +281,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     >
       <div className="flex h-full max-h-[46rem] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-hairline bg-canvas elevate-lg">
         <header className="flex shrink-0 items-center justify-between border-b border-hairline px-6 py-4">
-          <h2 className="text-card-title text-ink">설정</h2>
+          <h2 className="text-card-title text-ink">{t("topbar.settings")}</h2>
           <button
             className="-mr-1 rounded-sm px-2 py-1 text-ink-muted transition-colors hover:bg-hover hover:text-ink"
-            title="닫기"
+            title={t("common.close")}
             onClick={onClose}
           >
             ✕
@@ -298,14 +306,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   role="tab"
                   aria-selected={selected}
                   onClick={() => setSection(item.id)}
-                  title={item.note}
+                  title={t(item.noteKey)}
                   className={`flex w-full items-center gap-1.5 rounded-md px-3 py-2 text-left text-body-sm transition-colors ${
                     selected
                       ? "bg-selected font-semibold text-ink"
                       : "text-ink-muted hover:bg-hover hover:text-ink"
                   }`}
                 >
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  <span className="min-w-0 flex-1 truncate">{t(item.labelKey)}</span>
                   {item.id === "providers" && filledKeys > 0 && (
                     <span className="shrink-0 text-caption text-ink-subtle">{filledKeys}</span>
                   )}
@@ -317,11 +325,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           <div className="min-h-0 flex-1 space-y-3 overflow-auto p-6">
             {section === "general" && (
               <>
-                <SectionTitle>화면</SectionTitle>
-                <Field
-                  label="테마"
-                  hint="고르는 즉시 적용되고 저장됩니다 ([저장] 을 누르지 않아도 됩니다)."
-                >
+                <SectionTitle>{t("settings.display")}</SectionTitle>
+                <Field label={t("settings.theme")} hint={t("settings.instantSave")}>
                   <select
                     value={settings.theme}
                     onChange={(event) =>
@@ -331,7 +336,27 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   >
                     {THEME_PREFERENCES.map((value) => (
                       <option key={value} value={value}>
-                        {THEME_LABEL[value]}
+                        {t(THEME_LABEL_KEY[value])}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                {/*
+                 * 언어는 화면만 바꾸는 것이 아니다 — 시스템 프롬프트와 도구 설명도 함께 간다.
+                 * 그 사실을 힌트에 적어 두지 않으면 "영어로 골랐는데 왜 한국어로 답하지" 가 된다.
+                 */}
+                <Field label={t("settings.language")} hint={t("settings.languageHint")}>
+                  <select
+                    value={settings.language}
+                    onChange={(event) =>
+                      void settings.update({ language: event.target.value as Locale })
+                    }
+                    className={SELECT}
+                  >
+                    {LOCALES.map((value) => (
+                      <option key={value} value={value}>
+                        {LOCALE_LABEL[value]}
                       </option>
                     ))}
                   </select>
@@ -341,12 +366,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <SectionTitle
                     hint={
                       <>
-                        연 프로젝트 루트의 <span className="font-mono">AGENTS.md</span> 를 매 턴 다시
-                        읽어 원문 그대로 싣습니다. 파일을 고치면 다음 턴부터 바로 반영됩니다.
+                        {t("settings.instructionsHint")}
                       </>
                     }
                   >
-                    프로젝트 지침
+                    {t("settings.instructions")}
                   </SectionTitle>
                 </div>
                 <label className="flex items-start gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2.5 transition-colors hover:bg-hover">
@@ -357,10 +381,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     className="mt-0.5 accent-accent"
                   />
                   <span className="min-w-0">
-                    <span className="text-ink">프로젝트 루트의 AGENTS.md 자동 로드</span>
+                    <span className="text-ink">{t("settings.autoLoadAgents")}</span>
                     <span className="mt-0.5 block text-caption text-ink-muted">
-                      파일이 있으면 매 턴 컨텍스트 맨 앞에 원문을 싣습니다. 서브에이전트에게도 같은
-                      지침이 전달됩니다.
+                      {t("settings.autoLoadAgentsNote")}
                     </span>
                   </span>
                 </label>
@@ -368,13 +391,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 <div className="pt-3">
                   <SectionTitle
                     hint={
-                      <>
-                        모델은 학습이 끝난 시점을 &quot;지금&quot; 으로 착각합니다. 실제 시각을
-                        실어 주지 않으면 최신 자료를 지난 연도 기준으로 찾습니다.
-                      </>
+                      <>{t("settings.datetimeHint")}</>
                     }
                   >
-                    현재 시각
+                    {t("settings.datetime")}
                   </SectionTitle>
                 </div>
                 <label className="flex items-start gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2.5 transition-colors hover:bg-hover">
@@ -385,11 +405,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     className="mt-0.5 accent-accent"
                   />
                   <span className="min-w-0">
-                    <span className="text-ink">지금 시각을 매 턴 컨텍스트에 싣기</span>
+                    <span className="text-ink">{t("settings.injectDatetime")}</span>
                     <span className="mt-0.5 block text-caption text-ink-muted">
-                      날짜 · 시각 · 시간대를 시스템 프롬프트 끝에 붙입니다. 대화 노드에는 남지
-                      않으므로 옛 턴의 시각이 화석으로 남지 않습니다. 서브에이전트도 같은 값을
-                      받습니다.
+                      {t("settings.injectDatetimeNote")}
                     </span>
                   </span>
                 </label>
@@ -397,14 +415,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 <div className="pt-3">
                   <SectionTitle
                     hint={
-                      <>
-                        매 턴 컨텍스트에 실리는 지시문입니다. 프로젝트의{" "}
-                        <span className="font-mono">AGENTS.md</span> 를 켜 두면 그 원문이 이 앞에
-                        붙고, 스킬 목록은 이 뒤에 붙습니다.
-                      </>
+                      <>{t("settings.systemPromptHint")}</>
                     }
                   >
-                    시스템 프롬프트
+                    {t("context.systemPrompt")}
                   </SectionTitle>
                 </div>
                 <textarea
@@ -418,7 +432,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
             {section === "model" && (
               <>
-                <SectionTitle>모델</SectionTitle>
+                <SectionTitle>{t("settings.section.model")}</SectionTitle>
                 <select
                   value={modelId}
                   onChange={(event) => {
@@ -436,31 +450,25 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 >
                   {modelOptions.map((option) => (
                     <option key={option.id} value={option.id}>
-                      {option.label}
-                      {option.note ? ` — ${option.note}` : ""}
+                      {modelLabel(option)}
+                      {modelNote(option) ? ` — ${modelNote(option)}` : ""}
                     </option>
                   ))}
-                  <option value="custom">직접 입력…</option>
+                  <option value="custom">{t("settings.customModel")}</option>
                 </select>
                 {modelId === "custom" && (
                   <input
                     value={customModel}
                     onChange={(event) => setCustomModel(event.target.value)}
-                    placeholder="google:gemini-3.7-flash / local:gpt-oss:20b 형식으로 입력"
+                    placeholder={t("settings.customModelPlaceholder")}
                     className={`${FIELD} font-mono`}
                   />
                 )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <Field
-                    label="사고 강도"
-                    hint={
-                      <>
-                        답하기 전에 모델이 얼마나 오래 생각할지입니다. 높일수록 어려운 문제에
-                        강해지지만 사고 토큰도 함께 나가 느려지고 비쌉니다. 받는 값은 모델마다 달라서
-                        지금 고른 모델이 받는 것만 뿌립니다.
-                      </>
-                    }
+                    label={t("settings.effort")}
+                    hint={<>{t("settings.effortHint")}</>}
                   >
                     <select
                       value={effort}
@@ -476,14 +484,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     </select>
                   </Field>
                   <Field
-                    label="최대 스텝 (도구 루프)"
+                    label={t("settings.maxSteps")}
                     hintAlign="right"
-                    hint={
-                      <>
-                        한 턴에서 도구를 부르고 그 결과를 다시 읽는 왕복의 최대 횟수입니다. 여기에
-                        걸리면 답이 끊긴 채로 턴이 끝나므로, 도구를 많이 쓰는 작업은 넉넉히 잡습니다.
-                      </>
-                    }
+                    hint={<>{t("settings.maxStepsHint")}</>}
                   >
                     <input
                       type="number"
@@ -499,52 +502,50 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <Help>
                     {effortLockReason(selectedModelId)}
                     {subagentEffectiveId !== selectedModelId &&
-                      ` 서브에이전트 모델도 마찬가지입니다 — ${effortLockReason(subagentEffectiveId)}`}
+                      ` ${t("settings.effortLock.subagentToo", {
+                        reason: effortLockReason(subagentEffectiveId),
+                      })}`}
                   </Help>
                 )}
                 {effortApplies && !mainSendsEffort && (
-                  <Help>메인 모델에는 나가지 않고 서브에이전트 모델에만 적용됩니다.</Help>
+                  <Help>{t("settings.effortSubagentOnly")}</Help>
                 )}
                 {/* 강도는 하나인데 두 모델이 나눠 쓴다 — 서브에이전트 쪽에 다른 값이 나가면 밝힌다. */}
                 {effortApplies && mainSendsEffort && subagentEffort !== effort && (
                   <Help>
-                    서브에이전트 모델(<span className="font-mono">{subagentEffectiveId}</span>)은 이
-                    값을 받지 않아{" "}
+                    {t("settings.effortSubagentDiffers")}(
+                    <span className="font-mono">{subagentEffectiveId}</span>){" "}
                     {subagentEffort
-                      ? `가장 가까운 ${subagentEffort} 로 보냅니다.`
-                      : "사고 강도 없이 부릅니다."}
+                      ? t("settings.effortSubagentNearest", { effort: subagentEffort })
+                      : t("settings.effortSubagentNone")}
                   </Help>
                 )}
 
                 <div className="pt-3">
                   <SectionTitle
                     hint={
-                      <>
-                        <span className="font-mono">delegate_task</span> 로 띄우는 하위
-                        에이전트입니다. 자기 컨텍스트를 따로 갖고 요약만 위로 올리므로, 긴 탐색으로
-                        메인 대화가 불어나는 것을 막습니다. 다시 위임하지는 못합니다.
-                      </>
+                      <>{t("settings.subagentHint")}</>
                     }
                   >
-                    서브에이전트
+                    {t("app.tab.agents")}
                   </SectionTitle>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="모델">
+                  <Field label={t("settings.section.model")}>
                     <select
                       value={subagentModelId}
                       onChange={(event) => setSubagentModelId(event.target.value)}
                       className={SELECT}
                     >
-                      <option value="">메인 모델과 동일</option>
+                      <option value="">{t("settings.sameAsMain")}</option>
                       {modelOptions.map((option) => (
                         <option key={option.id} value={option.id}>
-                          {option.label}
+                          {modelLabel(option)}
                         </option>
                       ))}
                     </select>
                   </Field>
-                  <Field label="스텝 예산 (1명당)">
+                  <Field label={t("settings.subagentBudget")}>
                     <input
                       type="number"
                       min={1}
@@ -564,9 +565,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <SectionTitle
                     hint={
                       <>
-                        키는 프로젝트가 아니라 OS 앱 설정 디렉터리의{" "}
-                        <span className="font-mono">settings.json</span> 에 평문으로 저장됩니다 — 이
-                        PC 안에만 있고 대화 기록과 함께 옮겨지지 않습니다.
+                        {t("settings.keysHint")}
                         {settings.settingsPath && (
                           <span className="mt-1 block font-mono break-all">
                             {settings.settingsPath}
@@ -575,16 +574,16 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       </>
                     }
                   >
-                    API 키
+                    {t("settings.apiKeys")}
                   </SectionTitle>
                   <button
                     className="text-caption text-accent hover:underline"
                     onClick={() => setRevealKeys((value) => !value)}
                   >
-                    {revealKeys ? "가리기" : "보기"}
+                    {revealKeys ? t("settings.hide") : t("settings.reveal")}
                   </button>
                 </div>
-                <Help>쓰는 공급자만 펼쳐 채우면 됩니다. 접힌 줄에도 채움 여부는 보입니다.</Help>
+                <Help>{t("settings.keysLead")}</Help>
 
                 <div className="space-y-1.5">
                   {PROVIDER_KEYS.map((provider) => {
@@ -598,7 +597,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                         }
                         title={provider.label}
                         summary={
-                          value.trim() ? <Tag tone="accent">설정됨</Tag> : <Tag>비어 있음</Tag>
+                          value.trim() ? (
+                            <Tag tone="accent">{t("settings.keySet")}</Tag>
+                          ) : (
+                            <Tag>{t("settings.keyEmpty")}</Tag>
+                          )
                         }
                       >
                         <input
@@ -611,7 +614,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                           placeholder={provider.placeholder}
                           className={`${FIELD} font-mono`}
                         />
-                        <p className="mt-1.5 text-caption text-ink-muted">{provider.note}</p>
+                        <p className="mt-1.5 text-caption text-ink-muted">{t(provider.noteKey)}</p>
                       </Disclosure>
                     );
                   })}
@@ -620,27 +623,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 <div className="pt-3">
                   <SectionTitle
                     hint={
-                      <>
-                        이 PC 에서 도는 OpenAI 호환 서버입니다. 키가 필요 없고 대화 내용이 밖으로
-                        나가지 않습니다. Ollama 는{" "}
-                        <span className="font-mono">localhost:11434/v1</span>, LM Studio 는{" "}
-                        <span className="font-mono">localhost:1234/v1</span> 입니다.
-                      </>
+                      <>{t("settings.localHint")}</>
                     }
                   >
-                    로컬 모델 서버 (Ollama · LM Studio)
+                    {t("settings.localServer")}
                   </SectionTitle>
                 </div>
                 <Field
-                  label="서버 주소"
-                  hint={
-                    <>
-                      에이전트는 도구 스키마만으로도 컨텍스트를 크게 먹습니다. Ollama 는 기본이 4K 라
-                      응답이 잘리거나 빈 문자열이 옵니다 —{" "}
-                      <span className="font-mono">OLLAMA_CONTEXT_LENGTH=65536</span> 을 환경 변수로
-                      주고 서버를 다시 띄우세요.
-                    </>
-                  }
+                  label={t("settings.serverUrl")}
+                  hint={<>{t("settings.serverUrlHint")}</>}
                 >
                   <input
                     value={localBaseUrl}
@@ -649,12 +640,12 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     className={`${FIELD} font-mono`}
                   />
                 </Field>
-                <Field label="키 (서버가 요구할 때만)">
+                <Field label={t("settings.localKey")}>
                   <input
                     type={revealKeys ? "text" : "password"}
                     value={localApiKey}
                     onChange={(event) => setLocalApiKey(event.target.value)}
-                    placeholder="보통 비워 둡니다"
+                    placeholder={t("settings.localKeyPlaceholder")}
                     className={`${FIELD} font-mono`}
                   />
                 </Field>
@@ -664,14 +655,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     onClick={() => void refreshLocalModels()}
                     disabled={probe.state === "loading"}
                   >
-                    {probe.state === "loading" ? "확인 중…" : "설치된 모델 불러오기"}
+                    {probe.state === "loading" ? t("settings.probing") : t("settings.loadLocalModels")}
                   </Button>
-                  <Help>모델 목록의 로컬 항목은 여기서 불러온 것이 전부입니다.</Help>
+                  <Help>{t("settings.localListNote")}</Help>
                 </div>
                 <Help>
                   {settings.localModels.length
-                    ? `현재 목록: ${settings.localModels.join(", ")}`
-                    : "발견된 로컬 모델이 없습니다 — 서버를 띄운 뒤 다시 불러오세요."}
+                    ? t("settings.localCurrent", { models: settings.localModels.join(", ") })
+                    : t("settings.localEmpty")}
                 </Help>
                 {probe.message && (
                   <p
@@ -691,18 +682,12 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <>
                 <SectionTitle
                   hint={
-                    <>
-                      도구는 <b>실행 경로</b>입니다 — 스키마가 매 턴 컨텍스트에 실리고 모델이 곧바로
-                      부릅니다. 절차를 적어 두고 필요할 때만 열어 보는 <b>스킬</b>과는 다른 층입니다.
-                    </>
+                    <>{t("settings.toolsHint")}</>
                   }
                 >
-                  도구 (에이전트가 바로 실행하는 것)
+                  {t("settings.toolsTitle")}
                 </SectionTitle>
-                <Help>
-                  켜 둔 도구는 확인 없이 바로 실행됩니다(셸만 예외 — 아래에서 정합니다).
-                  샌드박스가 아니라 이 PC 의 사용자 권한으로 동작하니 필요한 것만 켜세요.
-                </Help>
+                <Help>{t("settings.toolsLead")}</Help>
                 {TOOL_GROUPS.map((group) => (
                   <label
                     key={group.id}
@@ -717,7 +702,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       className="mt-0.5 accent-accent"
                     />
                     <span className="min-w-0">
-                      <span className="text-ink">{group.label}</span>
+                      <span className="text-ink">{t(group.labelKey)}</span>
                       <span className="mt-0.5 block font-mono text-caption break-all text-ink-muted">
                         {group.tools.join(", ")}
                       </span>
@@ -728,14 +713,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 <div className="pt-3">
                   <SectionTitle
                     hint={
-                      <>
-                        셸 명령은 이 PC 에서 그대로 돕니다. 무엇을 돌릴지 고르는 마지막 판단은
-                        사람이 하는 게 맞습니다 — 자동 실행은 무엇이 실행되는지 지켜볼 수 있을 때만
-                        켜세요.
-                      </>
+                      <>{t("settings.shellApprovalHint")}</>
                     }
                   >
-                    셸 실행 권한
+                    {t("settings.shellApproval")}
                   </SectionTitle>
                 </div>
                 {APPROVAL_MODES.map((mode) => (
@@ -751,9 +732,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       className="mt-0.5 accent-accent"
                     />
                     <span className="min-w-0">
-                      <span className="text-ink">{mode.label}</span>
+                      <span className="text-ink">{t(mode.labelKey)}</span>
                       <span className="mt-0.5 block text-caption text-ink-muted">
-                        {mode.description}
+                        {t(mode.descriptionKey)}
                       </span>
                     </span>
                   </label>
@@ -762,26 +743,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 <div className="pt-3">
                   <SectionTitle
                     hint={
-                      <>
-                        승인 카드에서 [항상 허용] 을 누르면 여기 쌓입니다. 끝에 …가 붙은 규칙은
-                        <b> 그 앞부분으로 시작하는 단일 명령</b>만 덮습니다 —
-                        <span className="font-mono"> &amp;&amp;</span> 나 파이프로 이어 붙인 명령은
-                        규칙에 걸려도 다시 묻습니다.
-                      </>
+                      <>{t("settings.allowRulesHint")}</>
                     }
                   >
-                    이 세션에서 항상 허용한 명령 ({allowedCommands.length})
+                    {t("settings.allowRules", { count: allowedCommands.length })}
                   </SectionTitle>
                 </div>
-                <Help>
-                  이 목록은 <b>지금 세션에만</b> 삽니다. 세션을 바꾸거나 앱을 다시 켜면 비워지고,
-                  설정 파일에도 저장되지 않습니다 — 어제 한 번 누른 것이 오늘 다른 프로젝트의
-                  명령을 조용히 통과시키면 승인 화면을 둔 뜻이 사라지기 때문입니다.
-                </Help>
+                <Help>{t("settings.allowRulesLifetime")}</Help>
                 {allowedCommands.length === 0 ? (
-                  <Help>
-                    아직 없습니다. 승인 카드에서 [이 세션에서 항상 허용] 을 누른 명령이 여기 모입니다.
-                  </Help>
+                  <Help>{t("settings.allowRulesEmpty")}</Help>
                 ) : (
                   <div className="space-y-1.5">
                     {allowedCommands.map((rule) => (
@@ -795,15 +765,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          title="이 규칙을 지웁니다. 다음부터 그 명령은 다시 묻습니다."
+                          title={t("settings.forgetRule")}
                           onClick={() => forgetRule(rule.id)}
                         >
-                          삭제
+                          {t("common.delete")}
                         </Button>
                       </div>
                     ))}
                     <Button variant="tertiary" size="sm" onClick={forgetAllRules}>
-                      전부 지우기
+                      {t("settings.forgetAll")}
                     </Button>
                   </div>
                 )}
@@ -814,14 +784,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <>
                 <SectionTitle
                   hint={
-                    <>
-                      스킬은 <b>절차서</b>입니다. 매 턴 실리는 것은 이름과 설명 한 줄뿐이고, 모델이
-                      필요하다고 판단하면 <span className="font-mono">load_skill</span> 로 본문을
-                      끌어옵니다. 그래서 절차를 아무리 길게 적어도 평소 컨텍스트는 늘지 않습니다.
-                    </>
+                    <>{t("settings.skillsHint")}</>
                   }
                 >
-                  스킬 (판단해서 열어 보는 절차서)
+                  {t("settings.skillsTitle")}
                 </SectionTitle>
                 <SkillList />
               </>
@@ -831,17 +797,12 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <>
                 <SectionTitle
                   hint={
-                    <>
-                      정해진 시점에 자동으로 도는 동작입니다. 턴을 막거나 되돌리지 못하고(비차단),
-                      실패해도 대화에는 영향이 없습니다.
-                    </>
+                    <>{t("settings.hooksHint")}</>
                   }
                 >
-                  훅 (정해진 시점의 자동 동작)
+                  {t("settings.hooksTitle")}
                 </SectionTitle>
-                <Help>
-                  내장 훅은 켜고 끄기만 하고, 사용자 훅은 셸 명령 한 줄을 그 시점에 실행합니다.
-                </Help>
+                <Help>{t("settings.hooksLead")}</Help>
                 <HookList />
               </>
             )}
@@ -852,12 +813,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
         <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-hairline px-6 py-4">
           {/* 무엇이 [저장]을 기다리는지 밝힌다 — 목록형 UI 는 이미 저장돼 있다. */}
-          <span className="text-caption text-ink-subtle">
-            스킬 · 훅 · MCP 목록은 바꾸는 즉시 저장됩니다.
-          </span>
+          <span className="text-caption text-ink-subtle">{t("settings.footerNote")}</span>
           <span className="flex gap-2">
             <Button size="md" onClick={onClose}>
-              취소
+              {t("common.cancel")}
             </Button>
             <Button
               variant="primary"
@@ -865,7 +824,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               onClick={() => void save()}
               disabled={settings.saving}
             >
-              {settings.saving ? "저장 중…" : "저장"}
+              {settings.saving ? t("settings.saving") : t("common.save")}
             </Button>
           </span>
         </footer>

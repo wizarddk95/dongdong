@@ -17,6 +17,7 @@ import { tool, type ToolSet } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
 import { redact } from "@/lib/ai/redact";
+import { t, type MessageKey } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 
 /** 설정에서 켜고 끄는 도구 묶음. */
@@ -126,17 +127,28 @@ export const MAX_SHELL_TIMEOUT_MS = 600_000;
 export function clip(text: string, limit = MAX_TOOL_OUTPUT_CHARS) {
   const safe = redact(text);
   if (safe.length <= limit) return { text: safe, clipped: false };
-  return { text: `${safe.slice(0, limit)}\n…(이하 ${safe.length - limit}자 생략)`, clipped: true };
+  return {
+    text: `${safe.slice(0, limit)}\n${t("tool.clipped", { chars: safe.length - limit })}`,
+    clipped: true,
+  };
 }
 
 /** 묶음별 도구 이름. 컨텍스트 인스펙터와 설정 UI 가 함께 쓴다. */
-export const TOOL_GROUPS: { id: keyof ToolToggles; label: string; tools: string[] }[] = [
-  { id: "fsRead", label: "파일 읽기", tools: ["read_file", "list_directory", "path_info"] },
-  { id: "fsWrite", label: "파일 쓰기", tools: ["write_file", "create_directory", "delete_path"] },
-  { id: "shell", label: "쉘 실행", tools: ["execute_shell_command"] },
-  { id: "memory", label: "메모리", tools: ["remember", "recall"] },
-  { id: "subagents", label: "서브에이전트", tools: ["delegate_task"] },
-  { id: "mcp", label: "MCP 서버 도구", tools: ["mcp__<서버>__<도구>"] },
+export const TOOL_GROUPS: { id: keyof ToolToggles; labelKey: MessageKey; tools: string[] }[] = [
+  {
+    id: "fsRead",
+    labelKey: "tool.group.fsRead",
+    tools: ["read_file", "list_directory", "path_info"],
+  },
+  {
+    id: "fsWrite",
+    labelKey: "tool.group.fsWrite",
+    tools: ["write_file", "create_directory", "delete_path"],
+  },
+  { id: "shell", labelKey: "tool.group.shell", tools: ["execute_shell_command"] },
+  { id: "memory", labelKey: "tool.group.memory", tools: ["remember", "recall"] },
+  { id: "subagents", labelKey: "tool.group.subagents", tools: ["delegate_task"] },
+  { id: "mcp", labelKey: "tool.group.mcp", tools: ["mcp__<server>__<tool>"] },
 ];
 
 /**
@@ -151,10 +163,9 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
 
   if (enabled.fsRead) {
     tools.read_file = tool({
-      description:
-        "파일 하나를 읽는다. 경로는 프로젝트 루트 기준 상대 경로를 권장한다. 바이너리는 내용 없이 메타데이터만 돌아온다.",
+      description: t("tool.readFile.description"),
       inputSchema: z.object({
-        path: z.string().describe("읽을 파일 경로 (프로젝트 루트 기준 상대 경로 권장)"),
+        path: z.string().describe(t("tool.readFile.path")),
       }),
       execute: async ({ path }) => {
         const file = await ipc.readFile(path, projectPath);
@@ -170,10 +181,10 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
     });
 
     tools.list_directory = tool({
-      description: "디렉터리 목록을 본다. path 를 생략하면 프로젝트 루트를 본다.",
+      description: t("tool.listDirectory.description"),
       inputSchema: z.object({
-        path: z.string().optional().describe("조회할 디렉터리 (생략 시 프로젝트 루트)"),
-        includeHidden: z.boolean().optional().describe("숨김 파일 포함 여부 (기본 false)"),
+        path: z.string().optional().describe(t("tool.listDirectory.path")),
+        includeHidden: z.boolean().optional().describe(t("tool.listDirectory.includeHidden")),
       }),
       execute: async ({ path, includeHidden }) => {
         const entries = await ipc.listDirectory(path, { projectPath, includeHidden });
@@ -192,8 +203,8 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
     });
 
     tools.path_info = tool({
-      description: "경로의 존재 여부와 종류(파일/디렉터리), 크기를 확인한다.",
-      inputSchema: z.object({ path: z.string().describe("확인할 경로") }),
+      description: t("tool.pathInfo.description"),
+      inputSchema: z.object({ path: z.string().describe(t("tool.pathInfo.path")) }),
       execute: async ({ path }) => {
         const info = await ipc.pathInfo(path, projectPath);
         return {
@@ -209,12 +220,11 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
 
   if (enabled.fsWrite) {
     tools.write_file = tool({
-      description:
-        "파일을 쓴다. 기본은 전체 덮어쓰기이며 상위 디렉터리는 자동 생성된다. 수정 전에는 read_file 로 현재 내용을 먼저 확인할 것.",
+      description: t("tool.writeFile.description"),
       inputSchema: z.object({
-        path: z.string().describe("쓸 파일 경로"),
-        content: z.string().describe("파일에 쓸 전체 내용"),
-        append: z.boolean().optional().describe("true 면 덮어쓰지 않고 끝에 이어 붙인다"),
+        path: z.string().describe(t("tool.writeFile.path")),
+        content: z.string().describe(t("tool.writeFile.content")),
+        append: z.boolean().optional().describe(t("tool.writeFile.append")),
       }),
       execute: async ({ path, content, append }) => {
         const result = await ipc.writeFile(path, content, { projectPath, append });
@@ -228,18 +238,16 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
     });
 
     tools.create_directory = tool({
-      description: "디렉터리를 만든다 (중간 경로 포함).",
-      inputSchema: z.object({ path: z.string().describe("만들 디렉터리 경로") }),
+      description: t("tool.createDirectory.description"),
+      inputSchema: z.object({ path: z.string().describe(t("tool.createDirectory.path")) }),
       execute: async ({ path }) => ({ path: await ipc.createDirectory(path, projectPath) }),
     });
 
     tools.delete_path = tool({
-      description:
-        "파일이나 디렉터리를 삭제한다. 디렉터리를 지우려면 recursive 를 true 로 줘야 한다. " +
-        "되돌릴 수 없어서 **사용자 승인을 받은 뒤에** 실행된다 — 거부되면 같은 경로를 다시 시도하지 말 것.",
+      description: t("tool.deletePath.description"),
       inputSchema: z.object({
-        path: z.string().describe("삭제할 경로"),
-        recursive: z.boolean().optional().describe("디렉터리를 하위까지 통째로 지울 때 true"),
+        path: z.string().describe(t("tool.deletePath.path")),
+        recursive: z.boolean().optional().describe(t("tool.deletePath.recursive")),
       }),
       execute: async ({ path, recursive }, { abortSignal }) => {
         // 삭제는 되돌릴 수 없다 → 셸과 같은 게이트를 지난다. 규칙으로 미리 열어 둘 수는 없다
@@ -250,8 +258,8 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
             toolName: "delete_path",
             command: path,
             detail: recursive
-              ? "디렉터리를 하위 내용까지 통째로 지웁니다. 되돌릴 수 없습니다."
-              : "이 경로를 지웁니다. 되돌릴 수 없습니다.",
+              ? t("tool.deletePath.detailRecursive")
+              : t("tool.deletePath.detail"),
             origin: options.origin,
             signal: abortSignal,
           });
@@ -261,8 +269,8 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
               approved: false,
               denied: true,
               deleted: false,
-              reason: clip(outcome.reason ?? "사용자가 삭제를 거부했습니다.", 1_000).text,
-              hint: "같은 경로를 다시 지우려 하지 말고, 사유를 반영해 다른 방법을 찾거나 사용자에게 물어보세요.",
+              reason: clip(outcome.reason ?? t("tool.deletePath.denied"), 1_000).text,
+              hint: t("tool.deletePath.deniedHint"),
             };
           }
         }
@@ -278,17 +286,16 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
 
   if (enabled.shell) {
     tools.execute_shell_command = tool({
-      description:
-        "로컬 쉘에서 명령을 실행한다 (Windows 는 cmd, macOS 는 zsh, Linux 는 sh). 샌드박스가 아니라 사용자 권한으로 그대로 실행되며, cwd 기본값은 프로젝트 루트다.",
+      description: t("tool.shell.description"),
       inputSchema: z.object({
-        command: z.string().describe("실행할 명령 한 줄"),
-        cwd: z.string().optional().describe("작업 디렉터리 (생략 시 프로젝트 루트)"),
+        command: z.string().describe(t("tool.shell.command")),
+        cwd: z.string().optional().describe(t("tool.shell.cwd")),
         timeoutMs: z
           .number()
           .int()
           .positive()
           .optional()
-          .describe(`타임아웃 (기본 120000ms, 최대 ${600_000}ms)`),
+          .describe(t("tool.shell.timeout", { max: MAX_SHELL_TIMEOUT_MS })),
       }),
       execute: async ({ command, cwd, timeoutMs }, { abortSignal }) => {
         // 실행 전 승인. 거부는 예외가 아니라 **정상적인 결말**이다 — 던지면 턴이
@@ -307,8 +314,8 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
               approved: false,
               denied: true,
               // 사용자가 적은 사유도 컨텍스트로 들어간다 → 가리기·상한을 함께 지난다.
-              reason: clip(outcome.reason ?? "사용자가 실행을 거부했습니다.", 1_000).text,
-              hint: "같은 명령을 다시 시도하지 말고, 사유를 반영해 다른 방법을 찾거나 사용자에게 물어보세요.",
+              reason: clip(outcome.reason ?? t("tool.shell.denied"), 1_000).text,
+              hint: t("tool.shell.deniedHint"),
             };
           }
         }
@@ -350,13 +357,11 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
 
   if (enabled.memory) {
     tools.remember = tool({
-      description:
-        "다음 대화에서도 기억해야 할 사실을 저장한다. 같은 key 로 다시 저장하면 값이 갱신된다. " +
-        "프로젝트 전반에 통하는 사실은 scope=project, 지금 세션에서만 유효한 메모는 scope=session.",
+      description: t("tool.remember.description"),
       inputSchema: z.object({
-        key: z.string().describe("짧은 식별 키 (예: '빌드 명령')"),
-        value: z.string().describe("기억할 내용"),
-        scope: z.enum(["project", "session"]).optional().describe("기본값 project"),
+        key: z.string().describe(t("tool.remember.key")),
+        value: z.string().describe(t("tool.remember.value")),
+        scope: z.enum(["project", "session"]).optional().describe(t("tool.remember.scope")),
       }),
       execute: async ({ key, value, scope }) => {
         const saved = await ipc.upsertMemory(
@@ -368,10 +373,9 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
     });
 
     tools.recall = tool({
-      description:
-        "저장해 둔 메모리를 읽는다. key 를 주면 그 항목만, 생략하면 이 프로젝트/세션의 메모리를 모두 돌려준다.",
+      description: t("tool.recall.description"),
       inputSchema: z.object({
-        key: z.string().optional().describe("특정 항목만 찾을 때의 키"),
+        key: z.string().optional().describe(t("tool.recall.key")),
       }),
       execute: async ({ key }) => {
         const memories = await ipc.listMemories(sessionId, projectPath);
@@ -393,18 +397,10 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
   if (enabled.subagents && options.onDelegate) {
     const delegate = options.onDelegate;
     tools.delegate_task = tool({
-      description:
-        "독립적으로 끝낼 수 있는 하위 작업을 서브에이전트에게 맡기고 결과 요약을 받는다. " +
-        "서브에이전트는 같은 프로젝트에서 파일과 쉘을 쓸 수 있지만 이 대화의 맥락은 모른다. " +
-        "한 스텝에서 여러 번 호출하면 병렬로 실행된다. " +
-        "탐색·조사처럼 분량이 큰 일에 쓰고, 최종 판단과 사용자 응답은 직접 한다.",
+      description: t("tool.delegate.description"),
       inputSchema: z.object({
-        name: z.string().describe("대시보드에 표시할 짧은 이름 (예: '테스트 러너')"),
-        task: z
-          .string()
-          .describe(
-            "서브에이전트가 혼자 읽고 수행할 수 있는 작업 지시. 필요한 파일 경로와 완료 기준을 포함할 것.",
-          ),
+        name: z.string().describe(t("tool.delegate.name")),
+        task: z.string().describe(t("tool.delegate.task")),
       }),
       // 턴을 중지하면 띄워 둔 서브에이전트도 함께 멈춰야 한다.
       execute: async ({ name, task }, { abortSignal }) => delegate({ name, task, signal: abortSignal }),

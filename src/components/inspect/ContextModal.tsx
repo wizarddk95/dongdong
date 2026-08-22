@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { JsonTree } from "@/components/inspect/JsonTree";
+import { t, type MessageKey } from "@/lib/i18n";
 import { Button, Modal, Tag, type TagTone } from "@/components/Panel";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { buildMcpTools } from "@/lib/ai/mcp";
@@ -33,10 +34,10 @@ type Source = "snapshot" | "derived" | "preview";
  * 이 컨텍스트가 어디서 왔는지 — 이 툴의 투명성이 걸린 표시라 글자로 못 박고,
  * 색은 "그대로 저장된 것(중립)" 과 "재구성한 것(주의)" 만 구분한다.
  */
-const SOURCE_LABEL: Record<Source, { text: string; tone: TagTone }> = {
-  snapshot: { text: "저장된 스냅샷", tone: "success" },
-  derived: { text: "트리에서 재구성", tone: "warning" },
-  preview: { text: "다음 턴 미리보기", tone: "accent" },
+const SOURCE_LABEL: Record<Source, { textKey: MessageKey; tone: TagTone }> = {
+  snapshot: { textKey: "context.source.snapshot", tone: "success" },
+  derived: { textKey: "context.source.derived", tone: "warning" },
+  preview: { textKey: "context.source.preview", tone: "accent" },
 };
 
 /** 스냅샷에 messages 가 들어 있는지 (도구 스텝 노드는 설정값만 저장한다) */
@@ -149,12 +150,10 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
 
   // 자 ↔ 토큰은 서로 다른 자다. 나란히 놓되 어긋나는 이유를 붙여 둔다.
   const countsTooltip = [
-    "자 = 이 페이로드의 문자 수(들여쓰기 제외). 토큰 수와 다릅니다.",
-    "한글·코드가 섞이면 대체로 3자 안팎이 1토큰입니다.",
-    "도구 스키마는 문자 수에 안 잡히지만 토큰에는 잡힙니다 — 그래서 토큰 쪽이 조금 더 큽니다.",
-    measured?.exact
-      ? "토큰 수는 이 호출에 공급자가 세어 준 실측값입니다."
-      : "이 페이로드는 아직 보낸 적이 없습니다 — 마지막 호출의 실측값에 그 뒤 늘어난 만큼만 환산해 더했습니다.",
+    t("context.counts.chars"),
+    t("context.counts.ratio"),
+    t("context.counts.schemas"),
+    measured?.exact ? t("context.counts.measured") : t("context.counts.projected"),
   ].join("\n");
 
   const badge = SOURCE_LABEL[source];
@@ -168,50 +167,54 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
   return (
     <Modal
       open={open}
-      title="현재 컨텍스트"
-      subtitle="LLM 요청 직전에 전달되는 원문 그대로"
+      title={t("context.title")}
+      subtitle={t("context.subtitle")}
       onClose={onClose}
       widthClass="max-w-3xl"
       footer={
         <>
           <span className="mr-auto text-caption tabular-nums text-ink-muted" title={countsTooltip}>
-            {formatExact(chars)}자 · 메시지 {context.messages.length}개
+            {t("context.charCount", { chars: formatExact(chars) })} ·{" "}
+            {t("usageUi.messages", { count: context.messages.length })}
             {measured &&
-              ` · ${measured.exact ? "실측" : "약"} ${formatExact(measured.tokens)}토큰`}
+              ` · ${
+                measured.exact
+                  ? t("context.tokensExact", { tokens: formatExact(measured.tokens) })
+                  : t("context.tokensApprox", { tokens: formatExact(measured.tokens) })
+              }`}
           </span>
-          <Button onClick={() => void copyRaw()}>{copied ? "복사됨" : "JSON 복사"}</Button>
+          <Button onClick={() => void copyRaw()}>{copied ? t("common.copied") : t("context.copyJson")}</Button>
           <Button onClick={() => setRaw((value) => !value)}>
-            {raw ? "트리로 보기" : "원문 보기"}
+            {raw ? t("context.viewTree") : t("context.viewRaw")}
           </Button>
           <Button variant="primary" onClick={onClose}>
-            닫기
+            {t("common.close")}
           </Button>
         </>
       }
     >
       <div className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-2 text-caption text-ink-muted">
-          <Tag tone={badge.tone}>{badge.text}</Tag>
+          <Tag tone={badge.tone}>{t(badge.textKey)}</Tag>
           <span className="font-mono text-ink">{context.modelId}</span>
           {/* 안 보낸 값을 보낸 것처럼 적지 않는다 — 이 화면의 존재 이유가 그거다.
               설정값이 아니라 **그 모델에 실제로 나간 값**을 같은 함수로 다시 구한다. */}
           {sentEffort === undefined ? (
-            <span title="이 모델에는 사고 강도가 나가지 않습니다">effort 미전송</span>
+            <span title={t("context.noEffortHint")}>{t("context.noEffort")}</span>
           ) : sentEffort === context.effort ? (
             <span>effort {sentEffort}</span>
           ) : (
-            <span title={`설정은 ${context.effort} 지만 이 모델이 받는 값이 아니라 가장 가까운 값으로 나갔습니다`}>
-              effort {sentEffort} (설정 {context.effort})
+            <span title={t("context.effortAdjustedHint", { effort: context.effort })}>
+              {t("context.effortAdjusted", { sent: sentEffort, configured: context.effort })}
             </span>
           )}
-          <span>최대 {context.maxSteps} 스텝</span>
+          <span>{t("context.maxSteps", { count: context.maxSteps })}</span>
           <span className="font-mono">{context.createdAt}</span>
         </div>
 
         {source === "derived" && (
           <p className="rounded-md border-l-2 border-warning bg-warning-subtle px-3 py-2 text-caption text-ink">
-            이 노드는 도구 실행 뒤 이어진 스텝이라 메시지 원문을 따로 저장하지 않습니다. 부모까지의
-            대화 체인으로 동일하게 재구성했습니다.
+            {t("context.derivedNote")}
           </p>
         )}
 
@@ -222,19 +225,19 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
         ) : (
           <>
             <section>
-              <h3 className="mb-1.5 text-body-emphasis text-ink">시스템 프롬프트</h3>
+              <h3 className="mb-1.5 text-body-emphasis text-ink">{t("context.systemPrompt")}</h3>
               <pre className="max-h-40 overflow-auto rounded-md border border-hairline bg-surface-1 p-3 font-mono text-caption whitespace-pre-wrap text-ink">
-                {context.system || "(없음)"}
+                {context.system || t("context.none")}
               </pre>
             </section>
 
             <section>
               <h3 className="mb-1.5 text-body-emphasis text-ink">
-                노출된 도구 {context.toolNames.length}개
+                {t("context.exposedTools", { count: context.toolNames.length })}
               </h3>
               <div className="flex flex-wrap gap-1">
                 {context.toolNames.length === 0 && (
-                  <span className="text-caption text-ink-subtle">(도구 없음)</span>
+                  <span className="text-caption text-ink-subtle">{t("context.noTools")}</span>
                 )}
                 {context.toolNames.map((name) => (
                   <span
@@ -249,7 +252,7 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
 
             <section>
               <h3 className="mb-1.5 text-body-emphasis text-ink">
-                메시지 {context.messages.length}개
+                {t("usageUi.messages", { count: context.messages.length })}
               </h3>
               <div className="space-y-1.5">
                 {context.messages.map((message, index) => (
@@ -262,9 +265,7 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
                   </div>
                 ))}
                 {context.messages.length === 0 && (
-                  <p className="text-caption text-ink-subtle">
-                    아직 보낼 대화가 없습니다. 메시지를 입력하면 여기에 나타납니다.
-                  </p>
+                  <p className="text-caption text-ink-subtle">{t("context.noMessages")}</p>
                 )}
               </div>
             </section>

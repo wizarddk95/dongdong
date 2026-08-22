@@ -1,6 +1,7 @@
 import katex from "katex";
 import { Fragment, memo, useMemo, useState } from "react";
 
+import { t } from "@/lib/i18n";
 import { parseMarkdown, type BlockNode, type InlineNode, type ListItem } from "@/lib/markdown";
 
 interface MarkdownProps {
@@ -248,7 +249,7 @@ function CodeBlock({ lang, value }: { lang: string | null; value: string }) {
           className="ml-auto rounded-sm px-2 py-0.5 text-caption text-accent transition-colors hover:bg-hover"
           onClick={() => void copy()}
         >
-          {copied ? "복사됨" : "복사"}
+          {copied ? t("common.copied") : t("common.copy")}
         </button>
       </div>
       <pre className="overflow-x-auto px-3 py-2">

@@ -11,6 +11,8 @@
  * 반드시 어긋나므로(설정 화면의 미리보기도 이 함수를 쓴다) 규칙은 이 파일 하나뿐이다.
  */
 
+import { t, type MessageKey } from "@/lib/i18n";
+
 /** 실행 권한 모드. */
 export type ApprovalMode =
   /** 묻지 않고 바로 실행한다. 사용자가 스스로 켠 경우에만 */
@@ -18,18 +20,20 @@ export type ApprovalMode =
   /** 매번 묻는다. 허용 규칙에 걸리면 그것만 조용히 지나간다 */
   | "ask";
 
-export const APPROVAL_MODES: { id: ApprovalMode; label: string; description: string }[] = [
+export const APPROVAL_MODES: {
+  id: ApprovalMode;
+  labelKey: MessageKey;
+  descriptionKey: MessageKey;
+}[] = [
   {
     id: "ask",
-    label: "승인 필요",
-    description:
-      "셸 명령과 파일 삭제 전에 매번 묻습니다. [항상 허용] 을 누른 명령만 다음부터 그냥 지나갑니다 (삭제는 언제나 묻습니다).",
+    labelKey: "approval.mode.ask.label",
+    descriptionKey: "approval.mode.ask.description",
   },
   {
     id: "auto",
-    label: "자동 실행",
-    description:
-      "묻지 않고 바로 실행합니다(삭제도 포함). 에이전트가 만든 명령이 그대로 이 컴퓨터에서 돕니다 — 무엇이 실행되는지 감시할 수 있을 때만 켜세요.",
+    labelKey: "approval.mode.auto.label",
+    descriptionKey: "approval.mode.auto.description",
   },
 ];
 
@@ -454,5 +458,7 @@ export function makeAllowRule(command: string, existing: AllowRule[] = []): Allo
 
 /** 규칙을 사람이 읽는 한 줄로. 설정 목록과 승인 카드가 같은 문구를 쓴다. */
 export function describeRule(rule: Pick<AllowRule, "pattern" | "exact">): string {
-  return rule.exact ? `${rule.pattern} (완전히 같은 명령만)` : `${rule.pattern} …`;
+  return rule.exact
+    ? t("approval.rule.exact", { pattern: rule.pattern })
+    : `${rule.pattern} …`;
 }

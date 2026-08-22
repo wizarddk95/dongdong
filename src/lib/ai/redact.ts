@@ -14,10 +14,17 @@
  * 진짜 방벽은 위험한 도구를 끄는 것이고, 이건 그 앞에 세운 그물이다.
  */
 
+import { t } from "@/lib/i18n";
+
 /** 이보다 짧은 값은 등록하지 않는다. `local` 같은 자리채움이 본문을 걸레로 만든다. */
 const MIN_SECRET_CHARS = 12;
 
-export const REDACTED = "[비밀값 가림]";
+export const REDACTED_KEY = "redact.masked" as const;
+
+/** 가린 자리에 적히는 문구. 화면 언어를 따라간다. */
+export function redactedLabel(): string {
+  return t(REDACTED_KEY);
+}
 
 /** 지금 가려야 할 값들. 긴 것부터 지워야 접두사가 겹칠 때 조각이 남지 않는다. */
 let secrets: string[] = [];
@@ -40,12 +47,13 @@ export function redactionSecretCount(): number {
   return secrets.length;
 }
 
-/** 등록된 비밀값을 모두 `[비밀값 가림]` 으로 바꾼다. 없으면 원문 그대로. */
+/** 등록된 비밀값을 모두 가림 문구로 바꾼다. 없으면 원문 그대로. */
 export function redact(text: string): string {
   if (!text || secrets.length === 0) return text;
+  const mask = redactedLabel();
   let out = text;
   for (const secret of secrets) {
-    if (out.includes(secret)) out = out.split(secret).join(REDACTED);
+    if (out.includes(secret)) out = out.split(secret).join(mask);
   }
   return out;
 }

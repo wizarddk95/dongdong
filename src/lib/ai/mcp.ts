@@ -7,6 +7,7 @@
 import { dynamicTool, jsonSchema, type ToolSet } from "@ai-sdk/provider-utils";
 
 import { clip, newCancelToken } from "@/lib/ai/tools";
+import { t } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 import type { McpServerInfo } from "@/types/ipc";
 
@@ -76,7 +77,8 @@ export function buildMcpTools(
 
       tools[name] = dynamicTool({
         description:
-          definition.description ?? `${server.name} MCP 서버의 ${definition.name} 도구`,
+          definition.description ??
+          t("mcp.toolDescription", { server: server.name, tool: definition.name }),
         // 서버가 준 JSON Schema 를 그대로 공급자에게 넘긴다.
         inputSchema: jsonSchema((definition.inputSchema ?? { type: "object" }) as never),
         execute: async (input, { abortSignal }) => {

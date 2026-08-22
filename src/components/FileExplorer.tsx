@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button, Panel } from "@/components/Panel";
 import * as ipc from "@/lib/ipc";
+import { t } from "@/lib/i18n";
 import { useWorkspace } from "@/store/workspace";
 import type { DirEntry, FileContent } from "@/types/ipc";
 
@@ -68,16 +69,16 @@ export function FileExplorer() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <Panel
-        title="파일 탐색기"
-        subtitle={project ? `/${cwd === "." ? "" : cwd}` : "프로젝트를 먼저 여세요"}
+        title={t("files.explorer")}
+        subtitle={project ? `/${cwd === "." ? "" : cwd}` : t("files.openProjectFirst")}
         className="max-h-64 shrink-0"
         actions={
           <>
             <Button variant="ghost" onClick={() => setShowHidden((value) => !value)} disabled={!project}>
-              {showHidden ? "숨김 ON" : "숨김 OFF"}
+              {showHidden ? t("files.hiddenOn") : t("files.hiddenOff")}
             </Button>
             <Button variant="ghost" onClick={() => void refresh(cwd)} disabled={!project}>
-              새로고침
+              {t("common.refresh")}
             </Button>
           </>
         }
@@ -110,19 +111,23 @@ export function FileExplorer() {
             </li>
           ))}
           {project && entries.length === 0 && (
-            <li className="px-4 py-6 text-center text-ink-subtle">비어 있습니다.</li>
+            <li className="px-4 py-6 text-center text-ink-subtle">{t("files.empty")}</li>
           )}
         </ul>
       </Panel>
 
       {/* 목록은 위쪽 일부만 쓰고, 남는 높이는 전부 뷰어가 가져간다 */}
       <Panel
-        title="파일 뷰어"
-        subtitle={file ? `${file.relativePath}${file.truncated ? " (일부만 표시)" : ""}` : "파일 선택 안 됨"}
+        title={t("files.viewer")}
+        subtitle={
+          file
+            ? `${file.relativePath}${file.truncated ? ` ${t("files.partial")}` : ""}`
+            : t("files.noSelection")
+        }
         className="min-h-0 flex-1"
         actions={
           <Button variant="primary" onClick={() => void save()} disabled={!file || !dirty}>
-            {dirty ? "저장 *" : "저장"}
+            {dirty ? t("files.saveDirty") : t("common.save")}
           </Button>
         }
       >
@@ -143,7 +148,7 @@ export function FileExplorer() {
             />
           )
         ) : (
-          <p className="p-4 text-body-sm text-ink-muted">왼쪽 목록에서 파일을 선택하세요.</p>
+          <p className="p-4 text-body-sm text-ink-muted">{t("files.pickFile")}</p>
         )}
       </Panel>
     </div>

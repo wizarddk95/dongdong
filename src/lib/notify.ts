@@ -8,6 +8,8 @@
  * 매 턴 다시 묻지 않는다.
  */
 
+import { t } from "@/lib/i18n";
+
 /** 창을 보고 있으면 알림을 띄우지 않는다 — 이미 보고 있는 사람에게 알릴 것이 없다. */
 export function windowIsFocused(): boolean {
   return typeof document !== "undefined" && document.hasFocus();
@@ -33,7 +35,7 @@ export async function notify(title: string, body: string): Promise<boolean> {
     return true;
   } catch (error) {
     // 알림 하나 못 띄운 것으로 턴이 흔들리면 안 된다.
-    console.warn("알림을 띄우지 못했습니다:", error);
+    console.warn(t("error.notifyFailed"), error);
     return false;
   }
 }

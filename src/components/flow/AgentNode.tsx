@@ -1,6 +1,7 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 
 import { isRunActive, runDuration, runStatusStyle } from "@/lib/agentRuns";
+import { t } from "@/lib/i18n";
 import type { AgentRun } from "@/types/ipc";
 
 export const AGENT_WIDTH = 236;
@@ -35,7 +36,7 @@ export function AgentNode({ data }: NodeProps<AgentFlowNode>) {
       <Handle type="target" id="bottom" position={Position.Bottom} />
 
       <div className="flex items-center gap-1.5 text-caption">
-        <span className={`shrink-0 rounded-full px-2 py-0.5 ${style.className}`}>{style.label}</span>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 ${style.className}`}>{t(style.labelKey)}</span>
         <span className="min-w-0 flex-1 truncate text-ink">{run.name}</span>
         {elapsed && <span className="shrink-0 text-ink-subtle">{elapsed}</span>}
       </div>
@@ -49,7 +50,7 @@ export function AgentNode({ data }: NodeProps<AgentFlowNode>) {
 
       <p className="line-clamp-2 flex-1 overflow-hidden text-caption leading-snug text-ink-muted">
         {isRunActive(run)
-          ? (run.currentTool ? `▶ ${run.currentTool}` : "▶ 생각 중…")
+          ? (run.currentTool ? `▶ ${run.currentTool}` : t("agents.thinking"))
           : (run.error ?? run.result ?? run.task)}
       </p>
     </div>

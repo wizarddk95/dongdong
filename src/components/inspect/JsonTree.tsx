@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { t } from "@/lib/i18n";
+
 /**
  * 컨텍스트/도구 페이로드를 접었다 펼 수 있는 트리로 보여준다.
  * 이 툴의 핵심은 '무엇이 LLM 에 갔는지'를 숨기지 않는 것이라 값은 가공하지 않고 그대로 렌더링한다.
@@ -70,7 +72,9 @@ function Node({
     ? (value as unknown[]).map((item, index) => [String(index), item] as const)
     : Object.entries(value as Record<string, unknown>);
 
-  const summary = isArray ? `배열 ${entries.length}개` : `객체 ${entries.length}개`;
+  const summary = isArray
+    ? t("json.array", { count: entries.length })
+    : t("json.object", { count: entries.length });
 
   return (
     <div>
@@ -94,7 +98,7 @@ function Node({
               defaultOpenDepth={defaultOpenDepth}
             />
           ))}
-          {entries.length === 0 && <Row>(비어 있음)</Row>}
+          {entries.length === 0 && <Row>{t("json.empty")}</Row>}
         </div>
       )}
     </div>
@@ -119,7 +123,7 @@ function LongString({ text }: { text: string }) {
           className="ml-1.5 text-caption text-accent hover:underline"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "접기" : `더 보기 (${text.length}자)`}
+          {expanded ? t("common.collapse") : t("json.showMore", { chars: text.length })}
         </button>
       )}
     </span>

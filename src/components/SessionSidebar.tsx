@@ -4,6 +4,7 @@ import { Button, FIELD_SM, Tag } from "@/components/Panel";
 import { ContextRing } from "@/components/UsageMeter";
 import { formatCost, sessionContextStatus, summarizeProjectUsage, summarizeSessionUsage } from "@/lib/ai/usage";
 import { useSettings } from "@/store/settings";
+import { t } from "@/lib/i18n";
 import { useWorkspace } from "@/store/workspace";
 
 /**
@@ -49,9 +50,9 @@ export function SessionSidebar({ width }: { width: number }) {
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-hairline px-3 py-2">
         <span className="text-body-emphasis text-ink">
-          세션 {sessions.length > 0 && `(${sessions.length})`}
+          {t("sessions.title")} {sessions.length > 0 && `(${sessions.length})`}
         </span>
-        <Button onClick={() => void newSession()} disabled={!project} title="새 세션 만들기">
+        <Button onClick={() => void newSession()} disabled={!project} title={t("sessions.new")}>
           +
         </Button>
       </div>
@@ -98,8 +99,8 @@ export function SessionSidebar({ width }: { width: number }) {
                   {session.title}
                 </span>
                 <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-caption text-ink-muted">
-                  {session.branchedFromMessageId && <Tag>⑂ 분기</Tag>}
-                  <span>노드 {session.messageCount}</span>
+                  {session.branchedFromMessageId && <Tag>{t("sessions.branched")}</Tag>}
+                  <span>{t("sessions.nodes", { count: session.messageCount })}</span>
                   {summary.calls > 0 && (
                     <span>{formatCost(summary.cost, summary.primaryModelId)}</span>
                   )}
@@ -119,16 +120,16 @@ export function SessionSidebar({ width }: { width: number }) {
               <span className="flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                 <button
                   className="rounded-sm px-1.5 py-0.5 text-ink-subtle transition-colors hover:bg-hover hover:text-ink"
-                  title="이름 변경"
+                  title={t("sessions.rename")}
                   onClick={() => startRename(session.id, session.title)}
                 >
                   ✎
                 </button>
                 <button
                   className="rounded-sm px-1.5 py-0.5 text-ink-subtle transition-colors hover:bg-hover hover:text-error"
-                  title="세션 삭제"
+                  title={t("sessions.delete")}
                   onClick={() => {
-                    if (window.confirm(`세션 "${session.title}" 을(를) 삭제합니다.`)) {
+                    if (window.confirm(t("sessions.confirmDelete", { title: session.title }))) {
                       void removeSession(session.id);
                     }
                   }}
@@ -142,7 +143,7 @@ export function SessionSidebar({ width }: { width: number }) {
 
         {sessions.length === 0 && (
           <li className="px-3 py-6 text-center text-caption text-ink-muted">
-            {project ? "세션이 없습니다." : "프로젝트를 여세요."}
+            {project ? t("sessions.empty") : t("sessions.noProject")}
           </li>
         )}
       </ul>
@@ -150,11 +151,11 @@ export function SessionSidebar({ width }: { width: number }) {
       {total.calls > 0 && (
         <div
           className="shrink-0 border-t border-hairline px-3 py-2 text-caption text-ink-muted"
-          title="이 프로젝트의 모든 세션(버려진 분기와 서브에이전트 포함)이 쓴 합계입니다."
+          title={t("sessions.totalHint")}
         >
-          프로젝트 합계{" "}
-          <span className="text-ink">{formatCost(total.cost, total.primaryModelId)}</span> · LLM
-          호출 {total.calls}회
+          {t("sessions.total")}{" "}
+          <span className="text-ink">{formatCost(total.cost, total.primaryModelId)}</span> ·{" "}
+          {t("sessions.calls", { count: total.calls })}
         </div>
       )}
     </aside>

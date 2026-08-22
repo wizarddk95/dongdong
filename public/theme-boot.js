@@ -1,4 +1,4 @@
-// 첫 페인트 전에 테마를 새긴다.
+// 첫 페인트 전에 테마와 화면 언어를 새긴다.
 //
 // 진짜 설정은 Rust 의 settings.json 이지만 그건 비동기라, 다크를 쓰는 사람에게 흰 화면이
 // 한 번 번쩍인다. `lib/theme.ts` 가 선택할 때마다 localStorage 에 복사해 두므로
@@ -19,5 +19,18 @@
     root.style.colorScheme = dark ? "dark" : "light";
   } catch (e) {
     document.documentElement.dataset.theme = "light";
+  }
+
+  // `<html lang>` 도 같은 이유로 먼저 맞춘다 — 맞춤법 검사·스크린 리더·`:lang()` 이 이걸 본다.
+  // 캐시가 없으면 OS 언어로 짐작한다(`lib/i18n/locale.ts` 의 detectLocale 과 같은 규칙).
+  try {
+    var locale = localStorage.getItem("dongdong.locale");
+    if (locale !== "ko" && locale !== "en") {
+      var first = (navigator.languages && navigator.languages[0]) || navigator.language || "";
+      locale = first.toLowerCase().indexOf("ko") === 0 ? "ko" : "en";
+    }
+    document.documentElement.lang = locale;
+  } catch (e) {
+    document.documentElement.lang = "ko";
   }
 })();

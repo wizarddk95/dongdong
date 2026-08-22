@@ -11,6 +11,8 @@
  * 런타임은 Python 기준이다 — 문서 처리 라이브러리가 가장 두껍고, 없으면 스킬 본문의
  * "환경 확인" 절차가 설치까지 안내한다.
  */
+import { BUILTIN_SKILL_DOCS_EN, skillTemplateEn } from "@/lib/ai/builtinSkills.en";
+import { getLocale } from "@/lib/i18n";
 
 /** 세 문서 스킬이 공통으로 먼저 밟는 절차. 같은 문장을 세 번 적지 않으려고 떼어 둔다. */
 const PYTHON_PRELUDE = `## 0. 환경 확인 (매번 먼저)
@@ -309,15 +311,25 @@ for page in reader.pages:
 - 만든 PDF 는 다시 열어 페이지 수와 첫 페이지 텍스트를 확인한다.
 - 스캔본·암호·서체처럼 **결과 품질을 좌우한 조건**은 보고에 반드시 적는다.`;
 
-/** 내장 스킬 원문. 파싱은 사용자 스킬과 똑같이 `parseSkillDoc` 이 한다. */
-export const BUILTIN_SKILL_DOCS: { folder: string; content: string }[] = [
+const BUILTIN_SKILL_DOCS_KO: { folder: string; content: string }[] = [
   { folder: "xlsx", content: XLSX_SKILL },
   { folder: "docx", content: DOCX_SKILL },
   { folder: "pdf", content: PDF_SKILL },
 ];
 
+/**
+ * 내장 스킬 원문. 파싱은 사용자 스킬과 똑같이 `parseSkillDoc` 이 한다.
+ *
+ * **화면 언어를 따라간다** — 이름과 `description` 한 줄이 매 턴 시스템 프롬프트에 실리고,
+ * 본문은 모델이 그대로 따라 하는 절차라 대화 언어와 맞아야 한다.
+ */
+export function builtinSkillDocs(): { folder: string; content: string }[] {
+  return getLocale() === "en" ? BUILTIN_SKILL_DOCS_EN : BUILTIN_SKILL_DOCS_KO;
+}
+
 /** 새 스킬을 만들 때 넣어 주는 뼈대. 설정의 [+ 스킬 추가] 가 이 내용으로 파일을 만든다. */
 export function skillTemplate(name: string): string {
+  if (getLocale() === "en") return skillTemplateEn(name);
   return `---
 name: ${name}
 description: (언제 이 스킬을 열어야 하는지 한 줄로. 이 줄만 매 턴 컨텍스트에 실린다)

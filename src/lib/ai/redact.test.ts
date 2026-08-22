@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { REDACTED, redact, redactionSecretCount, setRedactionSecrets } from "./redact";
+import { redact, redactedLabel, redactionSecretCount, setRedactionSecrets } from "./redact";
+
+/** 가림 문구는 화면 언어를 따라가므로 테스트도 같은 함수로 얻는다. */
+const REDACTED = redactedLabel();
 import { clip } from "./tools";
 
 afterEach(() => setRedactionSecrets([]));

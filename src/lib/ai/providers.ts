@@ -19,6 +19,7 @@ import type { LanguageModel } from "ai";
 
 import { withSseRepair } from "@/lib/ai/sseRepair";
 import { withThoughtSignatures } from "@/lib/ai/thoughtSignature";
+import { getLocale, t } from "@/lib/i18n";
 
 export type ProviderId = "anthropic" | "openai" | "google" | "local";
 
@@ -39,7 +40,10 @@ export interface ModelOption {
   provider: ProviderId;
   modelId: string;
   label: string;
+  /** 드롭다운에 붙는 한 줄 설명 (한국어) */
   note?: string;
+  /** 같은 설명의 영어 대역. 없으면 `note` 를 그대로 쓴다 */
+  noteEn?: string;
 
   // --- 아래는 모두 선택 필드. 값을 아는 모델에만 채운다(모르는 값은 비워 둔다) ---
 
@@ -171,6 +175,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "claude-fable-5",
     label: "Claude Fable 5",
     note: "최상위 · 1M 컨텍스트 · 사고 항상 켜짐",
+    noteEn: "Top tier · 1M context · thinking always on",
     inputPrice: 10,
     outputPrice: 50,
     cacheWrite5m: 12.5,
@@ -195,6 +200,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "claude-opus-5",
     label: "Claude Opus 5",
     note: "Anthropic 최상위급 · 1M 컨텍스트",
+    noteEn: "Anthropic flagship class · 1M context",
     inputPrice: 5,
     outputPrice: 25,
     cacheWrite5m: 6.25,
@@ -219,6 +225,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "claude-sonnet-5",
     label: "Claude Sonnet 5",
     note: "빠르고 저렴",
+    noteEn: "Fast and cheap",
     inputPrice: 2,
     outputPrice: 10,
     cacheWrite5m: 2.5,
@@ -243,6 +250,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "claude-haiku-4-5-20251001",
     label: "Claude Haiku 4.5",
     note: "서브에이전트 · 분류 · 라우팅용 저비용 티어 · 200K 컨텍스트",
+    noteEn: "Low-cost tier for subagents, classification and routing · 200K context",
     inputPrice: 1,
     outputPrice: 5,
     cacheWrite5m: 1.25,
@@ -272,6 +280,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gpt-5.6-sol",
     label: "GPT-5.6 Sol",
     note: "프론티어 최상위 · 1.05M 컨텍스트 · 고난도 에스컬레이션용",
+    noteEn: "Frontier top tier · 1.05M context · for hard escalations",
     inputPrice: 5,
     outputPrice: 30,
     cacheRead: 0.5,
@@ -292,6 +301,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gpt-5.6-terra",
     label: "GPT-5.6 Terra",
     note: "OpenAI 쪽 기본값 · 1.05M 컨텍스트 · 성능 대비 저렴",
+    noteEn: "The OpenAI default · 1.05M context · cheap for what it does",
     inputPrice: 2,
     outputPrice: 12,
     cacheRead: 0.2,
@@ -312,6 +322,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gpt-5.6-luna",
     label: "GPT-5.6 Luna",
     note: "대량·저비용 (요약 · 분류 · 서브에이전트)",
+    noteEn: "High volume, low cost (summarizing · classification · subagents)",
     inputPrice: 0.2,
     outputPrice: 1.2,
     cacheRead: 0.02,
@@ -332,6 +343,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gpt-5.6-cyber",
     label: "GPT-5.6 Cyber",
     note: "보안 특화 · Daybreak 프로그램 별도 승인 필요",
+    noteEn: "Security-specialized · needs separate Daybreak program approval",
     inputPrice: 12.5,
     outputPrice: 75,
     cacheRead: 1.25,
@@ -356,6 +368,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gpt-5.5",
     label: "GPT-5.5",
     note: "이전 세대 프론티어 · 1.05M 컨텍스트",
+    noteEn: "Previous-generation frontier · 1.05M context",
     inputPrice: 5,
     outputPrice: 30,
     cacheRead: 0.5,
@@ -375,6 +388,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gpt-5.5-pro",
     label: "GPT-5.5 Pro",
     note: "장고형 · 응답에 수 분 · Responses API 전용",
+    noteEn: "Long-running · takes minutes to answer · Responses API only",
     inputPrice: 30,
     outputPrice: 180,
     // 문서에 캐시 입력 단가 자체가 없다 → 캐싱 미지원으로 본다.
@@ -446,6 +460,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gpt-5.4-pro",
     label: "GPT-5.4 Pro",
     note: "장고형 · 응답에 수 분 · Responses API 전용",
+    noteEn: "Long-running · takes minutes to answer · Responses API only",
     inputPrice: 30,
     outputPrice: 180,
     cacheRead: null,
@@ -466,6 +481,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gpt-5.3-codex",
     label: "GPT-5.3 Codex",
     note: "코딩 특화 · Responses API 전용",
+    noteEn: "Coding-specialized · Responses API only",
     inputPrice: 1.75,
     outputPrice: 14,
     cacheRead: 0.175,
@@ -551,6 +567,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gemini-3.7-flash",
     label: "Gemini 3.7 Flash",
     note: "기본값 · 1M 컨텍스트 · 프로모션가(2026-12-31까지)",
+    noteEn: "The default · 1M context · promotional pricing (through 2026-12-31)",
     inputPrice: 0.75,
     outputPrice: 3.75,
     cacheRead: 0.075,
@@ -573,6 +590,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gemini-3.6-flash",
     label: "Gemini 3.6 Flash",
     note: "이전 세대 Flash · 1M 컨텍스트 · 프로모션가(2026-12-31까지)",
+    noteEn: "Previous-generation Flash · 1M context · promotional pricing (through 2026-12-31)",
     inputPrice: 0.75,
     outputPrice: 3.75,
     cacheRead: 0.075,
@@ -593,6 +611,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gemini-3.1-pro-preview",
     label: "Gemini 3.1 Pro (preview)",
     note: "프리뷰 · 프롬프트 200K 초과 시 전 항목 단가 2배 이상",
+    noteEn: "Preview · past a 200K prompt every rate more than doubles",
     inputPrice: 2,
     outputPrice: 12,
     cacheRead: 0.2,
@@ -614,6 +633,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gemini-3.1-pro-preview-customtools",
     label: "Gemini 3.1 Pro customtools (preview)",
     note: "커스텀 툴(view_file · search_code) + bash 에이전틱 워크플로 특화",
+    noteEn: "Tuned for agentic workflows with custom tools (view_file · search_code) plus bash",
     // 3.1 Pro 와 가격·컨텍스트·출력·기준일이 전부 같지만 **별도 엔드포인트**라 항목을 따로 둔다.
     // 별칭(`MODEL_ID_ALIASES`)으로 두면 `canonicalModelId()` 가 저장된 id 를 3.1 Pro 로 덮어써서
     // 정작 이 엔드포인트로는 영영 호출되지 않는다. 커스텀 툴 이점이 없는 작업에서는 품질이 흔들릴 수 있다.
@@ -637,6 +657,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gemini-3.5-flash-lite",
     label: "Gemini 3.5 Flash-Lite",
     note: "경량 · 1M 컨텍스트",
+    noteEn: "Lightweight · 1M context",
     inputPrice: 0.3,
     outputPrice: 2.5,
     cacheRead: 0.03,
@@ -655,6 +676,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gemini-3.1-flash-lite",
     label: "Gemini 3.1 Flash-Lite",
     note: "경량 · 1M 컨텍스트",
+    noteEn: "Lightweight · 1M context",
     inputPrice: 0.25,
     outputPrice: 1.5,
     cacheRead: 0.025,
@@ -674,6 +696,7 @@ export const MODEL_CATALOG: ModelOption[] = [
     modelId: "gemini-2.5-flash-lite",
     label: "Gemini 2.5 Flash-Lite",
     note: "카탈로그 전체 최저가 · 대량 분류 · 서브에이전트용",
+    noteEn: "Cheapest in the catalog · bulk classification · subagents",
     inputPrice: 0.1,
     outputPrice: 0.4,
     cacheRead: 0.01,
@@ -717,8 +740,9 @@ export const LOCAL_MODEL_PRESETS: ModelOption[] = [
     id: "local:gpt-oss:20b",
     provider: "local",
     modelId: "gpt-oss:20b",
-    label: "gpt-oss 20B (로컬)",
+    label: "gpt-oss 20B",
     note: "MXFP4 14GB · 128K · 함수 호출 기본 탑재",
+    noteEn: "MXFP4 14GB · 128K · function calling built in",
   },
 ];
 
@@ -730,7 +754,7 @@ export function localModelOption(modelId: string): ModelOption {
     id: `local:${modelId}`,
     provider: "local",
     modelId,
-    label: `${modelId} (로컬)`,
+    label: modelId,
   };
 }
 
@@ -769,7 +793,7 @@ export function normalizeBaseUrl(baseUrl?: string): string {
 export async function fetchLocalModels(baseUrl?: string): Promise<string[]> {
   const response = await localFetch(`${normalizeBaseUrl(baseUrl)}/models`);
   if (!response.ok) {
-    throw new Error(`로컬 서버가 ${response.status} 를 돌려줬습니다 (${normalizeBaseUrl(baseUrl)})`);
+    throw new Error(t("error.localServerStatus", { status: response.status, baseUrl: normalizeBaseUrl(baseUrl) }));
   }
   const body = (await response.json()) as { data?: { id?: unknown }[] };
   return (body.data ?? [])
@@ -937,9 +961,22 @@ const PROVIDER_LABELS: Partial<Record<ProviderId, string>> = {
 
 export class MissingApiKeyError extends Error {
   constructor(public readonly provider: ProviderId) {
-    super(`${PROVIDER_LABELS[provider] ?? provider} API 키가 없습니다. 우측 상단 설정에서 입력하세요.`);
+    super(t("error.missingApiKey", { provider: PROVIDER_LABELS[provider] ?? provider }));
     this.name = "MissingApiKeyError";
   }
+}
+
+/**
+ * 드롭다운에 적을 모델 이름. 로컬 서버 모델만 꼬리표를 붙여 클라우드와 가른다
+ * (목록이 한 줄로 이어져 있어 표시가 없으면 어디서 도는 모델인지 안 보인다).
+ */
+export function modelLabel(option: Pick<ModelOption, "label" | "provider">): string {
+  return option.provider === "local" ? `${option.label} ${t("model.localSuffix")}` : option.label;
+}
+
+/** 모델 한 줄 설명. 영어 대역이 있으면 화면 언어를 따라간다. */
+export function modelNote(option: Pick<ModelOption, "note" | "noteEn">): string | undefined {
+  return getLocale() === "en" ? (option.noteEn ?? option.note) : option.note;
 }
 
 /** `provider:modelId` 를 AI SDK 의 LanguageModel 인스턴스로 해석한다. */
@@ -990,7 +1027,7 @@ export function resolveModel(id: string, credentials: ProviderCredentials): Lang
       }).chat(modelId);
     }
     default:
-      throw new Error(`알 수 없는 공급자입니다: ${provider}`);
+      throw new Error(t("error.unknownProvider", { provider }));
   }
 }
 

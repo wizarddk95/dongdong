@@ -23,9 +23,10 @@ how much context you have left.
 
 ## ⚠️ Read this first
 
-**There is no sandbox.** dongdong executes shell commands and file writes directly, as
-your OS user, with no approval prompt. That is deliberate — it is what makes the agent
-useful on a real project — but it means:
+**There is no sandbox.** dongdong runs shell commands and writes files directly, as your
+OS user. Shell execution and deletion pass a human approval gate (that is the default;
+you can switch it off), but file reads, writes, and creates never ask. That is deliberate
+— it is what makes the agent useful on a real project — but it means:
 
 > **Opening an untrusted repository is close to running its instructions.**
 > A repo's `AGENTS.md` goes into the system prompt verbatim on every turn, its
@@ -88,6 +89,11 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
   notification when a long turn finishes, or a shell command of your own.
 - **Transparency UI.** Per-node context inspector, per-model cost breakdown, and a
   context ring shared by the composer and the session cards.
+- **English and Korean, all the way down.** The language switch in Settings → General
+  changes more than the chrome: the default system prompt, every tool description, the
+  built-in skill procedures, and the current-time block switch with it, so picking
+  English makes the agent answer in English. A system prompt you edited yourself is left
+  alone. First launch guesses from your OS language.
 - Light and dark themes, driven entirely by semantic tokens in one stylesheet.
 
 ---
@@ -164,6 +170,7 @@ CI runs exactly this, with the Rust suite on Windows, macOS, and Linux.
 ```
 src/
   lib/           pure logic — tree, turns, layout, markdown, theme, hooks
+  lib/i18n/      ko / en message catalogs + the current-locale store
   lib/ai/        providers · runner · tools · skills · subagent · mcp · redact
   store/         zustand: workspace · chat · agents · mcp · skills · settings
   components/    chat · flow (turn graph) · agents · mcp · inspect · skills · hooks

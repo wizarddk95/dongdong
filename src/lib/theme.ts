@@ -6,6 +6,8 @@
  * 결정 규칙(순수)과 DOM 쓰기(부작용)를 갈라 둬서 규칙만 따로 테스트한다.
  */
 
+import type { MessageKey } from "@/lib/i18n";
+
 /** 사용자가 고르는 값. `system` 은 OS 설정을 따라간다. */
 export type ThemePreference = "light" | "dark" | "system";
 
@@ -14,10 +16,11 @@ export type ResolvedTheme = "light" | "dark";
 
 export const THEME_PREFERENCES: ThemePreference[] = ["light", "dark", "system"];
 
-export const THEME_LABEL: Record<ThemePreference, string> = {
-  light: "라이트",
-  dark: "다크",
-  system: "시스템 설정",
+/** 문구는 사전에 산다 — 여기 있는 건 어느 키를 쓸지뿐이다. */
+export const THEME_LABEL_KEY: Record<ThemePreference, MessageKey> = {
+  light: "theme.light",
+  dark: "theme.dark",
+  system: "theme.system",
 };
 
 export const DEFAULT_THEME: ThemePreference = "light";
