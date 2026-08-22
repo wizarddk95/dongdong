@@ -12,7 +12,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 495 / cargo 63. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 496 / cargo 63. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -182,6 +182,13 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
   도구 스키마는 아예 안 잡힌다 → 게이지의 토큰 수와 나란히 놓으면 "게이지가 노드 하나만
   센다" 는 오해가 생긴다(실제로 그렇게 읽혔다). 문자 수는 **들여쓰기 없는** 원문으로 세고,
   같은 자리에 그 호출의 **실측 토큰 수**를 함께 적어 둔다.
+- **테스트가 개발자 PC 의 OS 언어를 따라가면 CI 에서만 깨진다.** 화면 언어의 첫 값은
+  `navigator.language` 로 짐작하는데(`initialLocale()`), 한국어 윈도우는 `ko`, GitHub
+  러너는 `en` 이다 → 한국어 문구를 단언하는 기존 테스트가 **로컬 495개 초록 / CI 25개 빨강**
+  이 됐다. `src/test/setup.ts` 가 매 테스트마다 `ko` 로 못 박는다(`vite.config.ts` 의
+  `test.setupFiles`). 여기를 건드리면 그 즉시 CI 와 로컬이 갈라진다.
+  **GitHub 어노테이션은 스텝당 10개까지만 보인다** — 25개가 깨졌는데 10개만 보고서 원인을
+  좁히면 엉뚱한 데를 판다. 실패 개수는 어노테이션이 아니라 잡 로그의 요약 줄에서 읽는다.
 - `tsconfig.node.json` 은 composite 라 `noEmit` 대신 `emitDeclarationOnly`.
 
 ## 구조

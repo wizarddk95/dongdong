@@ -26,6 +26,14 @@ beforeEach(() => {
   setLocale("ko");
 });
 
+describe("테스트 환경", () => {
+  // 이 파일이 깨지면 CI 가 로컬과 다른 언어로 돌고 있다는 뜻이다.
+  // 실제로 그렇게 당했다 — 한국어 윈도우에서만 초록이고 GitHub 러너(en-US)에서 25개가 빨갰다.
+  it("화면 언어가 OS 가 아니라 setup 에 고정돼 있다", () => {
+    expect(getLocale()).toBe("ko");
+  });
+});
+
 describe("사전", () => {
   it("두 사전의 키 집합이 정확히 같다", () => {
     expect(Object.keys(en).sort()).toEqual(KO_KEYS.slice().sort());

@@ -1,6 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -25,6 +25,11 @@ export default defineConfig({
       // Rust 소스는 Tauri 가 감시하므로 Vite 는 무시
       ignored: ["**/src-tauri/**"],
     },
+  },
+  test: {
+    // 테스트는 개발자 PC 의 OS 언어를 따라가면 안 된다 — 화면 언어를 여기서 못 박는다.
+    // (안 박으면 한국어 윈도우에서만 초록이고 CI 러너에서 깨진다)
+    setupFiles: ["./src/test/setup.ts"],
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
