@@ -103,6 +103,33 @@ describe("테마", () => {
   });
 });
 
+describe("대화 확대 배율", () => {
+  const readSettings = vi.mocked(ipc.readAppSettings);
+
+  beforeEach(() => {
+    vi.mocked(ipc.writeAppSettings).mockClear();
+    vi.mocked(ipc.appSettingsPath).mockResolvedValue("C:/settings.json" as never);
+  });
+
+  it("고른 배율이 디스크에 함께 저장된다 — 눈이 편한 크기는 앱을 다시 켜도 그대로여야 한다", async () => {
+    await useSettings.getState().update({ chatZoom: 1.3 });
+    expect(useSettings.getState().chatZoom).toBe(1.3);
+    expect(vi.mocked(ipc.writeAppSettings).mock.calls.at(-1)?.[0]).toMatchObject({ chatZoom: 1.3 });
+  });
+
+  it("배율을 안 쓰던 옛 settings.json 은 100% 로 뜬다", async () => {
+    readSettings.mockResolvedValue({ modelId: "anthropic:claude-opus-5" } as never);
+    await useSettings.getState().load();
+    expect(useSettings.getState().chatZoom).toBe(1);
+  });
+
+  it("손으로 고쳐 넣은 값도 범위 안으로 자른다", async () => {
+    readSettings.mockResolvedValue({ chatZoom: 12 } as never);
+    await useSettings.getState().load();
+    expect(useSettings.getState().chatZoom).toBe(2);
+  });
+});
+
 describe("로컬 모델 목록 새로고침", () => {
   const http = vi.mocked(tauriFetch);
 

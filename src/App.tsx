@@ -218,9 +218,14 @@ export default function App() {
              * 탭은 배경으로 고르지 않는다. 선택된 것만 잉크색 글자에 2px 청록 밑줄이
              * 붙고, 나머지는 1px 헤어라인 위에 흐리게 남는다.
              */}
+            {/*
+             * 패널을 좁히면 탭이 먼저 눌린다 — flex 항목은 기본이 `shrink` 라
+             * 라벨 폭이 글자 하나까지 줄고 "서브에이전트" 가 세로로 선다.
+             * 라벨은 가로로 못 박고, 자리가 모자라면 줄 자체가 옆으로 스크롤한다.
+             */}
             <nav
               role="tablist"
-              className="flex shrink-0 border-b border-hairline bg-canvas px-2"
+              className="flex shrink-0 overflow-x-auto border-b border-hairline bg-canvas px-2"
             >
               {TABS.map((item) => {
                 const selected = tab === item.id;
@@ -234,7 +239,7 @@ export default function App() {
                      * 크기는 고정하고 **웨이트와 밑줄만** 바꾼다 — 선택에 따라 글자
                      * 크기가 달라지면 탭 폭이 흔들려서 누를 때마다 줄이 출렁인다.
                      */
-                    className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-body-sm transition-colors ${
+                    className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-body-sm whitespace-nowrap transition-colors ${
                       selected
                         ? "border-accent font-semibold text-ink"
                         : "border-transparent text-ink-muted hover:bg-hover hover:text-ink"

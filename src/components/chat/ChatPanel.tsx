@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApprovalPrompt } from "@/components/chat/ApprovalPrompt";
 import { MentionPicker, useMentionPicker } from "@/components/chat/MentionPicker";
@@ -21,6 +21,7 @@ import {
   summarizeLiveUsage,
 } from "@/lib/ai/usage";
 import { buildIndex, pathTo, siblingsOf } from "@/lib/tree";
+import { isDefaultZoom, zoomIn, zoomOut, zoomPercent } from "@/lib/zoom";
 import { buildTurns, toBubbles, turnLabel } from "@/lib/turns";
 import { useAgents } from "@/store/agents";
 import { useApprovals } from "@/store/approvals";
@@ -56,6 +57,7 @@ export function ChatPanel() {
   const systemPrompt = useSettings((state) => state.systemPrompt);
   const injectDateTime = useSettings((state) => state.injectDateTime);
   const shellApproval = useSettings((state) => state.shellApproval);
+  const chatZoom = useSettings((state) => state.chatZoom);
   const updateSettings = useSettings((state) => state.update);
 
   const [draft, setDraft] = useState("");
@@ -109,6 +111,69 @@ export function ChatPanel() {
     );
     return () => clearInterval(timer);
   }, [pendingToolCalls.length]);
+
+  /**
+   * 대화 글씨 크기. 계단·판정은 전부 `lib/zoom.ts` 가 갖고 여기서는 적용만 한다
+   * (키보드 · 휠 · 버튼이 같은 계단을 밟아야 한다).
+   */
+  const applyZoom = useCallback(
+    (next: number) => {
+      if (next === chatZoom) return;
+      void updateSettings({ chatZoom: next });
+    },
+    [chatZoom, updateSettings],
+  );
+
+  /**
+   * Ctrl + 휠.
+   *
+   * React 의 `onWheel` 로는 못 막는다 — 리액트가 루트에 **passive** 로 걸기 때문에
+   * `preventDefault()` 가 무시되고 웹뷰가 창 전체를 확대해 버린다. 그래서 네이티브
+   * 리스너를 `{ passive: false }` 로 직접 건다.
+   *
+   * 대화 목록만이 아니라 **창 전체**에 건다. 채팅 밖에서만 웹뷰 확대가 살아 있으면
+   * 창이 통째로 커진 채로 남는데, 아래 Ctrl+0 이 이미 대화 배율을 잡고 있어
+   * **되돌릴 길이 없다.** 이 앱에서 Ctrl 확대는 언제나 대화 크기 하나를 뜻한다.
+   */
+  useEffect(() => {
+    function onWheel(event: WheelEvent) {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      if (event.deltaY === 0) return;
+      applyZoom(event.deltaY < 0 ? zoomIn(chatZoom) : zoomOut(chatZoom));
+    }
+
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, [chatZoom, applyZoom]);
+
+  /**
+   * Ctrl + / − / 0.
+   *
+   * 창 전체에 건다 — 입력칸에 커서를 둔 채로도 눌러야 하고, 그게 이 단축키를 쓰는
+   * 가장 흔한 순간이다. 웹뷰 자체 확대(창 전체가 커지고 레이아웃이 무너진다)를
+   * 대신 가로챈다.
+   */
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.ctrlKey && !event.metaKey) return;
+      // `+` 는 자판마다 Shift 조합이 달라 키 이름이 여럿이다.
+      const next =
+        event.key === "=" || event.key === "+" || event.key === "Add"
+          ? zoomIn(chatZoom)
+          : event.key === "-" || event.key === "_" || event.key === "Subtract"
+            ? zoomOut(chatZoom)
+            : event.key === "0"
+              ? 1
+              : null;
+      if (next === null) return;
+      event.preventDefault();
+      applyZoom(next);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [chatZoom, applyZoom]);
 
   /**
    * 다음 메시지가 붙을 자리를 **턴 이름**으로 말한다.
@@ -181,7 +246,7 @@ export function ChatPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas">
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-auto p-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4">
         {path.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             {/* 빈 화면은 이 앱이 유일하게 큰 활자를 쓸 자리다 — 웨이트 300 의 디스플레이. */}
@@ -194,24 +259,31 @@ export function ChatPanel() {
           </div>
         )}
 
-        {bubbles.map(({ message, toolNode }) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            toolNode={toolNode}
-            liveText={message.id === streamingMessageId ? streamingText : undefined}
-            liveReasoning={message.id === streamingMessageId ? streamingReasoning : undefined}
-            siblingCount={siblingsOf(index, message).length}
-            onInspectContext={
-              message.role === "assistant"
-                ? () => {
-                    setContextMessageId(message.id);
-                    setContextOpen(true);
-                  }
-                : undefined
-            }
-          />
-        ))}
+        {/*
+          확대는 **읽는 면에만** 건다. 스크롤 컨테이너가 아니라 그 안쪽을 감싸야
+          컨테이너의 scrollHeight 가 커진 내용을 그대로 재고, 맨 아래로 따라 내려가는
+          자동 스크롤이 어긋나지 않는다.
+        */}
+        <div className="space-y-2" style={{ zoom: chatZoom }}>
+          {bubbles.map(({ message, toolNode }) => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              toolNode={toolNode}
+              liveText={message.id === streamingMessageId ? streamingText : undefined}
+              liveReasoning={message.id === streamingMessageId ? streamingReasoning : undefined}
+              siblingCount={siblingsOf(index, message).length}
+              onInspectContext={
+                message.role === "assistant"
+                  ? () => {
+                      setContextMessageId(message.id);
+                      setContextOpen(true);
+                    }
+                  : undefined
+              }
+            />
+          ))}
+        </div>
       </div>
 
       {error && (
@@ -341,7 +413,41 @@ export function ChatPanel() {
             </button>
           )}
 
-          <span className="ml-auto flex gap-1">
+          {/*
+            글씨 크기. 단축키만 두면 아무도 못 찾는다 — 눈이 불편해서 이 기능이 필요한
+            사람일수록 더 그렇다. 지금 배율을 늘 적어 두고, 그 숫자를 누르면 100% 로 돌아온다.
+          */}
+          <span className="ml-auto flex items-center gap-0.5" title={t("chat.zoomHint")}>
+            <button
+              className="rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:text-ink-disabled"
+              title={t("chat.zoomOut")}
+              aria-label={t("chat.zoomOut")}
+              disabled={chatZoom === zoomOut(chatZoom)}
+              onClick={() => applyZoom(zoomOut(chatZoom))}
+            >
+              −
+            </button>
+            <button
+              className={`rounded-sm px-1 py-0.5 tabular-nums transition-colors hover:bg-hover ${
+                isDefaultZoom(chatZoom) ? "text-ink-muted" : "text-accent"
+              }`}
+              title={t("chat.zoomReset")}
+              onClick={() => applyZoom(1)}
+            >
+              {t("chat.zoomLevel", { percent: zoomPercent(chatZoom) })}
+            </button>
+            <button
+              className="rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:text-ink-disabled"
+              title={t("chat.zoomIn")}
+              aria-label={t("chat.zoomIn")}
+              disabled={chatZoom === zoomIn(chatZoom)}
+              onClick={() => applyZoom(zoomIn(chatZoom))}
+            >
+              +
+            </button>
+          </span>
+
+          <span className="flex gap-1">
             <button
               className="rounded-sm px-2 py-0.5 text-accent transition-colors hover:bg-hover"
               title={t("chat.contextHint")}

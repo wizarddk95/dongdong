@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { parseInline, parseMarkdown, type BlockNode, type InlineNode } from "@/lib/markdown";
+import {
+  isMarkdownPath,
+  parseInline,
+  parseMarkdown,
+  type BlockNode,
+  type InlineNode,
+} from "@/lib/markdown";
 
 /** 인라인 트리를 눈으로 비교하기 쉬운 문자열로 눌러 담는다. */
 function flatten(nodes: InlineNode[]): string {
@@ -267,5 +273,25 @@ describe("수식", () => {
   it("코드블록 안의 `$$` 는 글자다", () => {
     const blocks = parseMarkdown("```\n$$x$$\n```");
     expect(blocks).toEqual([{ type: "codeBlock", lang: null, value: "$$x$$", closed: true }]);
+  });
+});
+
+describe("isMarkdownPath", () => {
+  it("마크다운 확장자를 알아본다 (대소문자 무관)", () => {
+    expect(isMarkdownPath("README.md")).toBe(true);
+    expect(isMarkdownPath("docs/design.MD")).toBe(true);
+    expect(isMarkdownPath("notes.markdown")).toBe(true);
+    expect(isMarkdownPath("page.mdx")).toBe(true);
+  });
+
+  it("윈도우 경로 구분자도 본다", () => {
+    expect(isMarkdownPath("C:\\projects\\dongdong\\README.md")).toBe(true);
+  });
+
+  it("그 밖의 파일은 원문 편집기로 둔다", () => {
+    expect(isMarkdownPath("src/App.tsx")).toBe(false);
+    expect(isMarkdownPath("Makefile")).toBe(false);
+    // 확장자 없이 점으로 시작하는 이름(.md)은 확장자가 아니라 이름이다.
+    expect(isMarkdownPath(".md")).toBe(false);
   });
 });

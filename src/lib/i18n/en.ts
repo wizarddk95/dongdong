@@ -126,6 +126,12 @@ export const en: Messages = {
 - Answer in English, concisely and concretely.
 - When you show code, state the file path alongside it.
 - Do not guess about things you are unsure of — say you do not know.`,
+  "prompt.preamble": `# Response rules (always shipped by the app)
+Say a sentence or two **before** you call a tool. State what you are about to do and why that
+tool is needed, then call it. The user reads that line to confirm the request landed correctly.
+- Always open with a short line of text. Never start a turn with a tool call and no words.
+- This is not a request for a plan document — one or two sentences is enough.
+- While you keep calling tools, say one line whenever the direction changes.`,
   "prompt.subagent": `You are a subagent of a coding agent. You handle exactly one task, start to finish.
 - Verify with tools. Never guess a file's contents without reading it.
 - You cannot talk to the user. You cannot ask follow-up questions, so decide within the instructions you were given.
@@ -292,6 +298,11 @@ export const en: Messages = {
   "files.noSelection": "No file selected",
   "files.saveDirty": "Save *",
   "files.pickFile": "Pick a file from the list on the left.",
+  "files.binary": "Binary file ({size} bytes).",
+  "files.preview": "Preview",
+  "files.source": "Source",
+  "files.previewHint": "Renders the Markdown. Switch back to [Source] to edit it.",
+  "files.sourceHint": "Back to the raw text for editing.",
   "agents.thinking": "▶ Thinking…",
   "turnNode.streaming": "● Streaming",
   "turnNode.error": "● Error",
@@ -322,9 +333,13 @@ export const en: Messages = {
   "agents.clearFinished": "Clear finished",
   "agents.emptyTitle": "Nothing has been delegated yet",
   "agents.emptyBody": "Runs appear here once the agent calls delegate_task.",
-  "agents.collapse": "Collapse",
-  "agents.showResult": "Show result",
-  "agents.showAll": "Show all",
+  "agents.openResult": "Open result",
+  "agents.openResultHint": "Opens the result as rendered Markdown in a popup, so tables and code blocks stay intact.",
+  "agents.resultTitle": "Subagent result",
+  "agents.taskHeading": "Task",
+  "agents.resultHeading": "Result",
+  "agents.errorHeading": "Error",
+  "agents.noResult": "No result yet.",
   "agents.stop": "Stop",
   "sessions.title": "Sessions",
   "sessions.new": "New session",
@@ -501,6 +516,11 @@ C:/projects`,
   "chat.viewContext": "View current context",
   "chat.memoryHint": "See what the agent stored with remember",
   "chat.viewMemory": "View current memory",
+  "chat.zoomOut": "Zoom out",
+  "chat.zoomIn": "Zoom in",
+  "chat.zoomReset": "Back to normal size",
+  "chat.zoomLevel": "{percent}%",
+  "chat.zoomHint": "Scales the conversation text. Ctrl + wheel, Ctrl+= / Ctrl+- also work, and Ctrl+0 puts it back.",
   "chat.inputPlaceholder": "Type a message (Enter sends, Shift+Enter for a newline, @ attaches a file)",
   "chat.waiting": "Waiting…",
   "chat.stoppingHint": "Cleaning up the running tool",
@@ -521,6 +541,7 @@ C:/projects`,
   "flow.undo": "↩ Undo delete",
   "flow.undoHint": "Restores the nodes you just deleted, in place. Closing the app gives up the undo.",
   "flow.openAgentsTab": "Open in the Subagents tab",
+  "flow.openAgentResult": "Open result",
   "flow.copyHint": "Copies the selected turn (Ctrl+C). It can be pasted into another session too.",
   "flow.paste": "Paste",
   "flow.pasteHint": "Pastes a copy of the turn after the selected one (Ctrl+V). Token and context records are not copied.",

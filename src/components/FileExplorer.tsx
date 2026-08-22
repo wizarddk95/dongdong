@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { Markdown } from "@/components/chat/Markdown";
 import { Button, Panel } from "@/components/Panel";
 import * as ipc from "@/lib/ipc";
 import { t } from "@/lib/i18n";
+import { isMarkdownPath } from "@/lib/markdown";
 import { useWorkspace } from "@/store/workspace";
 import type { DirEntry, FileContent } from "@/types/ipc";
 
@@ -17,6 +19,11 @@ export function FileExplorer() {
   const [file, setFile] = useState<FileContent | null>(null);
   const [buffer, setBuffer] = useState("");
   const [dirty, setDirty] = useState(false);
+  /**
+   * 마크다운을 렌더링해서 볼지. 파일을 새로 열 때마다 원문으로 돌아온다 —
+   * 다른 파일을 열었는데 미리보기가 켜져 있으면 편집기가 사라진 것처럼 보인다.
+   */
+  const [preview, setPreview] = useState(false);
 
   const refresh = useCallback(
     async (target: string) => {
@@ -49,6 +56,7 @@ export function FileExplorer() {
       setFile(content);
       setBuffer(content.content);
       setDirty(false);
+      setPreview(false);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     }
@@ -65,6 +73,8 @@ export function FileExplorer() {
   }
 
   const parent = cwd === "." ? null : cwd.split("/").slice(0, -1).join("/") || ".";
+  // 미리보기는 **편집 중인 버퍼**를 그린다 — 저장 전에도 결과를 보면서 고칠 수 있어야 한다.
+  const markdown = Boolean(file && !file.isBinary && isMarkdownPath(file.relativePath));
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -126,16 +136,33 @@ export function FileExplorer() {
         }
         className="min-h-0 flex-1"
         actions={
-          <Button variant="primary" onClick={() => void save()} disabled={!file || !dirty}>
-            {dirty ? t("files.saveDirty") : t("common.save")}
-          </Button>
+          <>
+            {/* 마크다운일 때만 뜬다 — 다른 파일에는 렌더링할 것이 없다. */}
+            {markdown && (
+              <Button
+                onClick={() => setPreview((value) => !value)}
+                title={preview ? t("files.sourceHint") : t("files.previewHint")}
+              >
+                {preview ? t("files.source") : t("files.preview")}
+              </Button>
+            )}
+            <Button variant="primary" onClick={() => void save()} disabled={!file || !dirty}>
+              {dirty ? t("files.saveDirty") : t("common.save")}
+            </Button>
+          </>
         }
       >
         {file ? (
           file.isBinary ? (
             <p className="p-4 text-body-sm text-ink-muted">
-              바이너리 파일입니다 ({file.size} bytes).
+              {t("files.binary", { size: file.size })}
             </p>
+          ) : markdown && preview ? (
+            // 채팅과 같은 파서·같은 부품을 쓴다 — 두 화면이 같은 마크다운을 다르게 그리면
+            // 어느 쪽이 맞는지 사람이 알 수 없다.
+            <div className="p-4">
+              <Markdown text={buffer} />
+            </div>
           ) : (
             <textarea
               value={buffer}

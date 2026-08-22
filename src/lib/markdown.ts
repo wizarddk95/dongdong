@@ -51,6 +51,15 @@ function isWordChar(ch: string | undefined): boolean {
   return ch != null && /[\p{L}\p{N}]/u.test(ch);
 }
 
+/** 마크다운으로 그려도 되는 파일인가 — 파일 뷰어의 [미리보기] 버튼이 이걸 보고 뜬다. */
+export function isMarkdownPath(path: string): boolean {
+  // 확장자만 본다. 경로 구분자는 OS 마다 다르므로 마지막 점 뒤만 떼어 낸다.
+  const name = path.split(/[\\/]/).pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return false;
+  return ["md", "markdown", "mdx", "mdown", "mkd"].includes(name.slice(dot + 1).toLowerCase());
+}
+
 /* ------------------------------------------------------------------ 블록 */
 
 export function parseMarkdown(source: string): BlockNode[] {

@@ -10,6 +10,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { AgentResultModal } from "@/components/agents/AgentResultModal";
 import { AgentNode, AGENT_HEIGHT, AGENT_WIDTH } from "@/components/flow/AgentNode";
 import { TurnNode, TURN_HEIGHT, TURN_WIDTH } from "@/components/flow/TurnNode";
 import { Button } from "@/components/Panel";
@@ -71,6 +72,8 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
   const running = useChat((state) => state.running);
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // 그래프에서 고른 서브에이전트의 요약을 그 자리에서 연다 — 탭을 옮겨 다시 찾지 않게.
+  const [runResultOpen, setRunResultOpen] = useState(false);
   // React Flow 는 자체 클래스로 명암을 잡으므로 해석된 테마를 직접 알려 줘야 한다.
   const theme = useResolvedTheme();
 
@@ -359,6 +362,13 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
             <span className="truncate text-caption text-ink-muted">
               {t("app.tab.agents")} <span className="text-ink">{selectedRun.name}</span>
             </span>
+            <Button
+              onClick={() => setRunResultOpen(true)}
+              disabled={!selectedRun.result && !selectedRun.error}
+              title={t("agents.openResultHint")}
+            >
+              {t("flow.openAgentResult")}
+            </Button>
             <Button onClick={() => onFocusAgents?.()} disabled={!onFocusAgents}>
               {t("flow.openAgentsTab")}
             </Button>
@@ -443,6 +453,11 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
           </ReactFlow>
         )}
       </div>
+
+      <AgentResultModal
+        run={runResultOpen ? selectedRun : null}
+        onClose={() => setRunResultOpen(false)}
+      />
     </div>
   );
 }

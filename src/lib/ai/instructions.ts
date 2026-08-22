@@ -76,10 +76,26 @@ export function instructionBlock(instructions: ProjectInstructions): string {
 }
 
 /**
+ * 도구를 부르기 전에 먼저 말하게 하는 블록.
+ *
+ * 아무 말 없이 도구부터 부르면 사람은 **지시가 제대로 전달됐는지 알 방법이 없다** —
+ * 화면에는 도구 이름만 뜨고, 그게 내가 부탁한 일인지 엉뚱한 일인지 결과가 나올 때까지
+ * 모른다. 그래서 한두 문장을 먼저 뱉게 하고, 그 문장으로 사람이 방향을 확인하게 한다.
+ *
+ * **사용자 프롬프트가 아니라 앱이 싣는다.** 프롬프트를 직접 고쳐 쓴 사람도 이 동작은
+ * 그대로 받아야 하기 때문이다(고쳐 쓴 글에 이 규칙을 대신 적어 줄 방법이 없다).
+ * 무엇이 실렸는지는 인스펙터에 원문 그대로 보인다.
+ */
+export function preambleBlock(): string {
+  return t("prompt.preamble");
+}
+
+/**
  * 시스템 프롬프트를 조립한다.
  *
  * 순서에 뜻이 있다: **프로젝트 지침이 맨 앞**(컨텍스트 최상단), 그다음 기본 프롬프트,
- * **현재 시각은 맨 뒤** — 대화 바로 앞에 두어야 "지금" 이 가장 가까이서 읽힌다.
+ * 앱이 고정으로 싣는 답변 규칙, **현재 시각은 맨 뒤** — 대화 바로 앞에 두어야 "지금" 이
+ * 가장 가까이서 읽힌다.
  *
  * `now` 를 넘기면 시각 블록이 붙는다. 넘길지 말지는 부르는 쪽이 설정(`injectDateTime`)을
  * 보고 정한다. 채팅 게이지·인스펙터·실제 전송이 **같은 함수**를 쓰므로 세 화면이
@@ -93,6 +109,7 @@ export function composeSystemPrompt(
   const blocks = [
     instructions ? instructionBlock(instructions) : "",
     basePrompt,
+    preambleBlock(),
     now ? datetimeBlock(now) : "",
   ].filter(Boolean);
 

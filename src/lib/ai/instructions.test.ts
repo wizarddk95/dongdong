@@ -7,6 +7,7 @@ import {
   instructionBlock,
   loadProjectInstructions,
   MAX_INSTRUCTION_CHARS,
+  preambleBlock,
   type ProjectInstructions,
 } from "@/lib/ai/instructions";
 import * as ipc from "@/lib/ipc";
@@ -91,8 +92,19 @@ describe("composeSystemPrompt", () => {
     expect(system.indexOf("빌드는")).toBeLessThan(system.indexOf("당신은 코딩 에이전트입니다."));
   });
 
-  it("지침이 없으면 기본 프롬프트를 그대로 둔다", () => {
-    expect(composeSystemPrompt("기본", null)).toBe("기본");
+  it("지침이 없으면 기본 프롬프트 뒤에 답변 규칙만 붙는다", () => {
+    expect(composeSystemPrompt("기본", null)).toBe(`기본
+
+---
+
+${preambleBlock()}`);
+  });
+
+  it("도구를 부르기 전에 먼저 말하라는 규칙은 언제나 실린다", () => {
+    // 사용자가 프롬프트를 통째로 고쳐 써도 이 동작은 앱이 보장한다.
+    const system = composeSystemPrompt("내가 직접 쓴 프롬프트", null);
+    expect(system).toContain("# 답변 규칙");
+    expect(system.indexOf("내가 직접 쓴 프롬프트")).toBeLessThan(system.indexOf("# 답변 규칙"));
   });
 
   it("now 를 주면 시각 블록이 맨 뒤에 붙는다", () => {
@@ -100,11 +112,13 @@ describe("composeSystemPrompt", () => {
     const system = composeSystemPrompt("기본", loaded, new Date(2026, 7, 22, 14, 3, 0));
     expect(system.indexOf("# 프로젝트 지침")).toBeLessThan(system.indexOf("기본"));
     expect(system.indexOf("기본")).toBeLessThan(system.indexOf("# 현재 시각"));
+    // 답변 규칙은 그 사이에 선다 — 시각 블록이 대화에 가장 가까워야 한다.
+    expect(system.indexOf("# 답변 규칙")).toBeLessThan(system.indexOf("# 현재 시각"));
     expect(system).toContain("2026-08-22");
   });
 
   it("now 를 안 주면 시각은 실리지 않는다", () => {
-    expect(composeSystemPrompt("기본", null, null)).toBe("기본");
+    expect(composeSystemPrompt("기본", null, null)).not.toContain("# 현재 시각");
   });
 
   it("잘린 지침은 원본을 직접 읽으라고 알려 준다", () => {

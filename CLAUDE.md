@@ -12,7 +12,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 496 / cargo 63. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 512 / cargo 63. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -203,10 +203,12 @@ src/
   lib/layout.ts         왼→오른쪽 tidy tree 좌표 (턴 그래프·서브에이전트 레인)
   lib/agentRuns.ts      서브에이전트 상태 색·경과 시간 (트리 노드와 대시보드 공용)
   lib/markdown.ts       채팅 본문용 경량 마크다운 파서 (의존성 없음). 수식은 구분 기호만 걷어 원문을 넘긴다
+                        `isMarkdownPath()` 로 파일 뷰어의 [미리보기] 버튼도 여기 판정을 쓴다
   styles/katex.css      KaTeX 스타일시트 사본 — 생성 파일(`scripts/gen-katex-css.mjs`), 직접 고치지 않는다
   lib/hooks.ts          훅 판정(순수) + 실행. 내장(알림) · 사용자(셸 명령)
   lib/notify.ts         OS 알림 한 줄 (tauri-plugin-notification 을 부를 때만 동적 로드)
   lib/panelSize.ts      세션 목록 ↔ 채팅 ↔ 우측 패널 분할 폭(순수). App 의 분할선이 쓴다
+  lib/zoom.ts           대화 확대 배율 계단(순수). 키보드 · 휠 · 버튼이 같은 계단을 밟는다
   lib/theme.ts          테마 결정(순수) + <html data-theme> 적용. 색값은 안 갖는다
   lib/i18n/             화면 문구 사전. `ko.ts` 가 원본이고 `en.ts` 가 같은 키를 채운다(타입으로 강제).
                         `locale.ts` 는 순수 판정(짐작·정규화), `index.ts` 가 현재 언어와 `t()`,
@@ -230,7 +232,7 @@ src/
   lib/ai/builtinSkills.ts  내장 스킬 원문 (xlsx · docx · pdf — Python 절차). 코드에 박아 둔다
   lib/ai/subagent.ts    서브에이전트 한 명의 격리된 실행
   lib/ai/mcp.ts         MCP 도구 → dynamicTool (서버의 JSON Schema 그대로)
-  lib/ai/instructions.ts 프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합
+  lib/ai/instructions.ts 프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합 (+ 앱이 고정으로 싣는 답변 규칙)
   store/                workspace(트리) · chat(턴) · agents(서브) · mcp · skills · settings
                         approvals — 승인 대기열 + 세션 수명 허용 규칙 (디스크에 남기지 않는다)
   components/           chat · flow(턴 그래프) · agents · mcp · inspect · skills · hooks
@@ -239,6 +241,7 @@ src/
                         UsageMeter.tsx — 토큰·요금·컨텍스트 게이지 (채팅/턴/세션 공용)
                         chat/ApprovalPrompt.tsx — 셸 실행 승인 카드 (입력칸 바로 위, 한 번에 하나)
                         chat/MentionPicker.tsx — `@` 자동완성 (방향키 이동 · Enter 선택)
+                        agents/AgentResultModal.tsx — 서브에이전트 요약 팝업 (대시보드·턴 그래프 공용)
                         Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·Hint·입력 크롬). 새 UI 는 여기서 가져다 쓴다
 src-tauri/src/
   lib.rs                command 등록 지점
@@ -338,6 +341,28 @@ src-tauri/src/
   `composeSystemPrompt()` 가 시각 블록을 **맨 뒤**(대화 바로 앞)에 붙인다. 대화 노드에는 남기지
   않는다 — 남기면 옛 턴의 시각이 화석으로 남는다. 채팅 게이지·인스펙터·실제 전송이 같은 함수를
   써야 세 화면이 같은 수를 말한다.
+- **먼저 말하고 도구를 부른다**: 아무 말 없이 도구부터 부르면 사람은 지시가 제대로 전달됐는지
+  알 방법이 없다 — 화면에는 도구 이름만 뜨고, 맞게 가고 있는지는 결과가 나와야 안다.
+  `composeSystemPrompt()` 가 답변 규칙 블록(`preambleBlock()`)을 **언제나** 싣는다.
+  사용자 프롬프트가 아니라 **앱이 싣는다** — 프롬프트를 통째로 고쳐 쓴 사람도 이 동작은 그대로
+  받아야 하기 때문이다. 자리는 기본 프롬프트 뒤 · 시각 블록 앞이고, 무엇이 실렸는지는
+  인스펙터에 원문 그대로 보인다.
+- **대화 확대**: 기본 활자는 13px 이라 오래 읽으면 눈이 먼저 지친다. **읽는 면(말풍선 목록)만**
+  배율을 갖는다 — 토큰을 키우면 화면 전체가 헐거워진다. `Ctrl + 휠` · `Ctrl+=` · `Ctrl+-` ·
+  `Ctrl+0`, 그리고 입력칸 위의 `− 100% +`. 계단과 판정은 전부 `lib/zoom.ts` 에 있고 세 조작이
+  같은 함수를 쓴다. 배율은 `settings.json` 에 남는다(눈이 편한 크기는 세션마다 다시 고를 것이
+  아니다). 확대는 CSS `zoom` 이며 **스크롤 컨테이너가 아니라 그 안쪽**에 건다 — 컨테이너에
+  걸면 자동 스크롤이 재는 높이가 어긋난다.
+- **서브에이전트 요약은 팝업으로 본다**: 칸반 카드 안에서 펼치면 표와 코드 블록이 열 폭
+  (화면의 1/3)을 그대로 뚫고 나간다 — 요약이 길수록, 그러니까 정작 읽어야 할 때일수록 더
+  깨진다. 요약은 메인 에이전트의 답과 같은 마크다운이므로 **같은 부품(`Markdown`)으로 넓은
+  자리에서** 그린다(`agents/AgentResultModal.tsx`). 대시보드와 턴 그래프가 같은 팝업을 쓴다.
+  **카드에는 펼치기가 없다** — 지시문 전문도 결과도 같은 팝업이 진다(카드는 두 줄 요약).
+  칸반 열은 화면의 1/3 이라 라벨을 `shrink-0` + `nowrap` 으로 못 박는다. 안 그러면 패널을
+  좁혔을 때 한글이 한 글자씩 세로로 선다(우측 탭 줄도 같은 이유로 가로 스크롤을 둔다).
+- **파일 뷰어의 미리보기**: `.md` 를 열면 [미리보기] 가 뜨고 채팅과 **같은 파서·같은 부품**으로
+  그린다(두 화면이 같은 마크다운을 다르게 그리면 어느 쪽이 맞는지 알 수 없다). 그리는 것은
+  저장된 내용이 아니라 **편집 중인 버퍼**다. 파일을 새로 열면 원문으로 돌아온다.
 - **훅**: 턴 시작·완료·오류 시점에 도는 부수 동작. 내장(OS 알림)은 켜고 끄기만 하고, 사용자 훅은
   셸 명령 한 줄이다. 자리표(`{{status}}` 등)에 들어가는 값은 셸을 가를 수 있는 글자를 걷어내고,
   **공급자 에러 문자열은 자리표로 주지 않는다**(알림 문구로만 쓴다).

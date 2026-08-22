@@ -82,7 +82,12 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
   Excel / Word / PDF procedures ship built in; add your own globally or per-project.
 - **Subagents.** `delegate_task` runs an isolated context and returns only a summary.
   Runs are drawn as lanes branching off the turn that spawned them, with live status,
-  elapsed time, and their own token accounting.
+  elapsed time, and their own token accounting. The summary opens in a popup rendered by
+  the same Markdown renderer the chat uses, so wide tables and code blocks stay readable.
+- **It says what it is about to do.** Before reaching for a tool the agent writes a
+  sentence or two about what it is doing and why — the line you read to confirm your
+  request landed. The app ships that rule itself, so it holds even if you rewrite the
+  system prompt.
 - **MCP bridge.** External MCP servers run as stdio child processes; their tools are
   merged in as `mcp__<server>__<tool>`.
 - **Hooks.** Non-blocking side effects on turn start / finish / error — an OS
@@ -94,6 +99,11 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
   built-in skill procedures, and the current-time block switch with it, so picking
   English makes the agent answer in English. A system prompt you edited yourself is left
   alone. First launch guesses from your OS language.
+- **Readable at your size.** Zoom the conversation with `Ctrl` + wheel, `Ctrl+=` /
+  `Ctrl+-`, or the `− 100% +` control above the composer; `Ctrl+0` puts it back. The
+  setting is remembered.
+- **Markdown preview in the file viewer.** Open a `.md` file from the Files tab and hit
+  [Preview] to see it rendered — same parser, same renderer as the chat.
 - Light and dark themes, driven entirely by semantic tokens in one stylesheet.
 
 ---
@@ -169,7 +179,7 @@ CI runs exactly this, with the Rust suite on Windows, macOS, and Linux.
 
 ```
 src/
-  lib/           pure logic — tree, turns, layout, markdown, theme, hooks
+  lib/           pure logic — tree, turns, layout, markdown, theme, zoom, hooks
   lib/i18n/      ko / en message catalogs + the current-locale store
   lib/ai/        providers · runner · tools · skills · subagent · mcp · redact
   store/         zustand: workspace · chat · agents · mcp · skills · settings

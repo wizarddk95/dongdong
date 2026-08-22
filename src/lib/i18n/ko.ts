@@ -121,6 +121,12 @@ export const ko = {
 - 답변은 한국어로, 간결하고 구체적으로 합니다.
 - 코드를 제시할 때는 파일 경로를 함께 밝힙니다.
 - 확실하지 않은 것은 추측하지 말고 모른다고 말합니다.`,
+  "prompt.preamble": `# 답변 규칙 (앱이 항상 싣는다)
+도구를 부르기 전에 **먼저 한두 문장을 말합니다.** 무엇을 하려는지, 왜 그 도구가 필요한지
+짧게 적은 뒤에 도구를 부릅니다. 사용자는 그 문장으로 지시가 제대로 전달됐는지 확인합니다.
+- 첫 답변은 언제나 짧은 텍스트로 시작합니다. 한마디도 없이 도구부터 부르지 않습니다.
+- 계획서를 쓰라는 뜻이 아닙니다. 한두 문장이면 충분합니다.
+- 도구를 여러 번 부르는 동안에도 방향이 바뀌면 그때마다 한 줄로 알립니다.`,
   "prompt.subagent": `당신은 코딩 에이전트의 서브에이전트입니다. 하나의 작업만 끝까지 처리합니다.
 - 도구로 직접 확인하세요. 파일을 읽지 않고 내용을 추측하지 않습니다.
 - 사용자와 대화할 수 없습니다. 되물을 수 없으니 주어진 지시 안에서 판단합니다.
@@ -284,6 +290,11 @@ export const ko = {
   "files.noSelection": "파일 선택 안 됨",
   "files.saveDirty": "저장 *",
   "files.pickFile": "왼쪽 목록에서 파일을 선택하세요.",
+  "files.binary": "바이너리 파일입니다 ({size} bytes).",
+  "files.preview": "미리보기",
+  "files.source": "원문",
+  "files.previewHint": "마크다운을 렌더링해서 봅니다. 고치려면 [원문] 으로 돌아오세요.",
+  "files.sourceHint": "원문으로 돌아가 편집합니다.",
   "agents.thinking": "▶ 생각 중…",
   "turnNode.streaming": "● 생성 중",
   "turnNode.error": "● 오류",
@@ -314,9 +325,13 @@ export const ko = {
   "agents.clearFinished": "끝난 것 정리",
   "agents.emptyTitle": "아직 위임된 작업이 없습니다",
   "agents.emptyBody": "에이전트가 delegate_task 를 호출하면 여기에 나타납니다.",
-  "agents.collapse": "접기",
-  "agents.showResult": "결과 보기",
-  "agents.showAll": "전체 보기",
+  "agents.openResult": "결과 열기",
+  "agents.openResultHint": "표와 코드 블록이 깨지지 않도록 팝업에서 마크다운으로 봅니다.",
+  "agents.resultTitle": "서브에이전트 결과",
+  "agents.taskHeading": "지시",
+  "agents.resultHeading": "결과",
+  "agents.errorHeading": "오류",
+  "agents.noResult": "아직 결과가 없습니다.",
   "agents.stop": "중단",
   "sessions.title": "세션",
   "sessions.new": "새 세션 만들기",
@@ -493,6 +508,11 @@ C:/projects`,
   "chat.viewContext": "현재 컨텍스트 보기",
   "chat.memoryHint": "에이전트가 remember 로 저장한 내용을 봅니다",
   "chat.viewMemory": "현재 메모리 보기",
+  "chat.zoomOut": "축소",
+  "chat.zoomIn": "확대",
+  "chat.zoomReset": "기본 크기로",
+  "chat.zoomLevel": "{percent}%",
+  "chat.zoomHint": "대화 글씨 크기를 조절합니다. Ctrl + 휠, Ctrl+= / Ctrl+- 로도 되고 Ctrl+0 이면 기본 크기입니다.",
   "chat.inputPlaceholder": "메시지 입력 (Enter 전송, Shift+Enter 줄바꿈, @ 파일 참조)",
   "chat.waiting": "대기 중…",
   "chat.stoppingHint": "실행 중인 도구가 정리되는 중입니다",
@@ -513,6 +533,7 @@ C:/projects`,
   "flow.undo": "↩ 삭제 되돌리기",
   "flow.undoHint": "방금 지운 노드를 원래 자리로 되살립니다. 앱을 끄면 되돌릴 수 없습니다.",
   "flow.openAgentsTab": "서브에이전트 탭에서 보기",
+  "flow.openAgentResult": "결과 열기",
   "flow.copyHint": "선택한 턴을 클립보드에 담습니다 (Ctrl+C). 다른 세션에도 붙여넣을 수 있습니다.",
   "flow.paste": "붙여넣기",
   "flow.pasteHint": "복사한 턴을 선택한 턴 뒤에 복제해 붙입니다 (Ctrl+V). 토큰·컨텍스트 기록은 복제하지 않습니다.",

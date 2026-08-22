@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { AgentResultModal } from "@/components/agents/AgentResultModal";
 import { Button } from "@/components/Panel";
 import { UsageTag } from "@/components/UsageMeter";
 import { isRunActive, runDuration, runStatusStyle, runUsage } from "@/lib/agentRuns";
@@ -57,7 +58,7 @@ export function AgentDashboard() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2">
-        <span className="text-caption text-ink-muted">
+        <span className="min-w-0 truncate text-caption text-ink-muted">
           {t("agents.count", { count: runs.length })}
           {loading ? t("agents.loading") : ""}
         </span>
@@ -88,8 +89,9 @@ export function AgentDashboard() {
             const items = runs.filter((run) => column.statuses.includes(run.status));
             return (
               <section key={column.id} className="flex min-w-0 flex-col gap-2">
+                {/* 열 머리도 가로로 못 박는다 — 패널을 좁히면 "실패 · 취소" 가 세로로 선다. */}
                 <h3
-                  className={`shrink-0 border-b-2 pb-1.5 text-caption text-ink ${column.accent}`}
+                  className={`shrink-0 truncate border-b-2 pb-1.5 text-caption whitespace-nowrap text-ink ${column.accent}`}
                 >
                   {t(column.labelKey)} · {items.length}
                 </h3>
@@ -108,7 +110,9 @@ export function AgentDashboard() {
 function RunCard({ run }: { run: AgentRun }) {
   const cancel = useAgents((state) => state.cancel);
   const remove = useAgents((state) => state.remove);
-  const [expanded, setExpanded] = useState(false);
+  // 카드는 한 줄 요약만 진다. 지시문 전문도 결과도 전부 팝업에서 본다 —
+  // 열 폭이 화면의 1/3 이라 카드 안에서 펼치면 무엇이든 칸을 뚫고 나간다.
+  const [resultOpen, setResultOpen] = useState(false);
 
   const status = runStatusStyle(run.status);
   const active = isRunActive(run);
@@ -119,7 +123,12 @@ function RunCard({ run }: { run: AgentRun }) {
   return (
     <div className="group rounded-md border border-hairline bg-canvas p-2.5 elevate">
       <div className="mb-1.5 flex items-center gap-1.5 text-caption">
-        <span className={`shrink-0 rounded-full px-2 py-0.5 ${status.className}`}>{t(status.labelKey)}</span>
+        {/* 칸이 좁아져도 글자는 가로로 — 배지가 눌리면 한 글자씩 세로로 선다. */}
+        <span
+          className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 ${status.className}`}
+        >
+          {t(status.labelKey)}
+        </span>
         <span className="min-w-0 flex-1 truncate text-ink">{run.name}</span>
         {elapsed && <span className="shrink-0 text-ink-subtle">{elapsed}</span>}
       </div>
@@ -138,53 +147,53 @@ function RunCard({ run }: { run: AgentRun }) {
         </p>
       )}
 
-      <p
-        className={`text-caption text-ink-muted ${expanded ? "whitespace-pre-wrap" : "line-clamp-2"}`}
-      >
+      {/* 지시문은 언제나 두 줄까지. 전문은 [결과 열기] 팝업이 원문 그대로 보여준다. */}
+      <p className="line-clamp-2 text-caption text-ink-muted" title={run.task}>
         {run.task}
       </p>
 
-      {expanded && (run.result || run.error) && (
-        <div
-          className={`mt-2 rounded-md border-l-2 px-2.5 py-1.5 text-caption whitespace-pre-wrap ${
-            run.error ? "border-error bg-error-subtle text-ink" : "border-hairline bg-surface-1 text-ink"
-          }`}
-        >
-          {run.error ?? run.result}
-        </div>
-      )}
-
-      <div className="mt-1.5 flex items-center gap-2 text-caption">
+      {/*
+        우측 패널을 좁히면 이 줄이 가장 먼저 눌린다 — flex 항목은 기본이 `shrink` 라
+        버튼 폭이 글자 하나만큼 줄고, 그러면 한글이 **한 글자씩 세로로** 선다.
+        여기 있는 것은 전부 짧은 라벨이라 줄일 이유가 없다 → `shrink-0` + `nowrap` 으로
+        가로를 못 박고, 넘치면 줄을 바꾼다(`flex-wrap`).
+      */}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption">
         <button
-          className="text-accent hover:underline"
-          onClick={() => setExpanded((value) => !value)}
+          className="shrink-0 whitespace-nowrap text-accent hover:underline"
+          title={t("agents.openResultHint")}
+          onClick={() => setResultOpen(true)}
         >
-          {expanded
-            ? t("agents.collapse")
-            : run.result || run.error
-              ? t("agents.showResult")
-              : t("agents.showAll")}
+          {t("agents.openResult")}
         </button>
         {usage && (
-          <UsageTag usage={usage.usage} cost={usage.cost} modelId={usage.modelId} variant="cost" />
+          <UsageTag
+            usage={usage.usage}
+            cost={usage.cost}
+            modelId={usage.modelId}
+            variant="cost"
+            className="shrink-0"
+          />
         )}
-        <span className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <span className="ml-auto flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           {active && (
             <button
-              className="rounded-sm px-2 py-0.5 text-accent transition-colors hover:bg-hover"
+              className="rounded-sm px-2 py-0.5 whitespace-nowrap text-accent transition-colors hover:bg-hover"
               onClick={() => cancel(run.id)}
             >
               {t("agents.stop")}
             </button>
           )}
           <button
-            className="rounded-sm px-2 py-0.5 text-ink-muted transition-colors hover:bg-hover hover:text-error"
+            className="rounded-sm px-2 py-0.5 whitespace-nowrap text-ink-muted transition-colors hover:bg-hover hover:text-error"
             onClick={() => void remove(run.id)}
           >
             {t("common.delete")}
           </button>
         </span>
       </div>
+
+      <AgentResultModal run={resultOpen ? run : null} onClose={() => setResultOpen(false)} />
     </div>
   );
 }

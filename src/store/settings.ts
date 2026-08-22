@@ -29,6 +29,7 @@ import {
   type Locale,
 } from "@/lib/i18n";
 import { DEFAULT_THEME, applyTheme, normalizeTheme, type ThemePreference } from "@/lib/theme";
+import { DEFAULT_ZOOM, clampZoom } from "@/lib/zoom";
 
 /**
  * 기본 시스템 프롬프트. **화면 언어를 따라간다** — 영어를 고른 사용자에게 한국어로
@@ -53,6 +54,12 @@ interface SettingsState extends ProviderCredentials {
   language: Locale;
   /** 화면 테마. 실제 적용은 `applyTheme` 가 `<html data-theme>` 에 새긴다. */
   theme: ThemePreference;
+  /**
+   * 대화 목록의 확대 배율. 화면 전체가 아니라 **읽는 면만** 키운다
+   * (계단과 판정은 `lib/zoom.ts`). 눈이 편한 크기는 사람마다 다르고 잘 안 바뀌므로
+   * 세션이 아니라 디스크에 남긴다.
+   */
+  chatZoom: number;
   systemPrompt: string;
   effort: Effort;
   maxSteps: number;
@@ -120,6 +127,7 @@ type PersistedSettings = Pick<
   | "localModels"
   | "modelId"
   | "theme"
+  | "chatZoom"
   | "language"
   | "systemPrompt"
   | "effort"
@@ -148,6 +156,7 @@ const PERSISTED_KEYS: (keyof PersistedSettings)[] = [
   "localModels",
   "modelId",
   "theme",
+  "chatZoom",
   "language",
   "systemPrompt",
   "effort",
@@ -191,6 +200,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   localModels: [],
   modelId: DEFAULT_MODEL_ID,
   theme: DEFAULT_THEME,
+  chatZoom: DEFAULT_ZOOM,
   // 첫 실행이면 OS 언어로 짐작한 값이 이미 들어 있다(`lib/i18n/locale.ts`).
   language: getLocale(),
   systemPrompt: defaultSystemPrompt(),
@@ -238,6 +248,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
           ? canonicalModelId(persisted.subagentModelId)
           : "",
         theme: normalizeTheme(persisted.theme),
+        // 옛 설정에는 없던 키다. 손으로 고쳐 넣은 이상한 값도 여기서 계단 안으로 자른다.
+        chatZoom: clampZoom(persisted.chatZoom),
         // 저장된 언어가 없으면(첫 실행·옛 설정) 지금 짐작한 값을 그대로 둔다.
         language: persisted.language ? normalizeLocale(persisted.language) : getLocale(),
         mcpServers: persisted.mcpServers ?? [],
