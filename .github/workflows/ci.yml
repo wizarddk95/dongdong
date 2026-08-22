@@ -17,11 +17,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      # node 를 먼저 깔고 그 위에 pnpm 을 올린다. 순서가 반대면 pnpm 이 러너의 기본 node 로
+      # 설치돼 뒤에 오는 setup-node 와 어긋난다.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+      # 쓸 버전은 package.json 의 packageManager 가 정한다.
+      - uses: pnpm/action-setup@v4
+      # setup-node 의 `cache: pnpm` 은 쓰지 않는다. 그 옵션은 `pnpm store path` 를 부르는데
+      # 거기서 깨진다 — 같은 setup-node 가 cargo 잡 세 곳에서는 캐시 없이 멀쩡히 돈다.
+      # 의존성이 100여 개뿐이라 캐시로 아끼는 시간보다 CI 가 조용한 쪽이 낫다.
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
