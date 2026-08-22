@@ -65,17 +65,20 @@ export interface SkillOptions {
   }) => Promise<DelegateResult>;
 }
 
-/** 셸 실행마다 붙이는 중단 토큰. `crypto.randomUUID` 가 없는 환경(구형 웹뷰)도 대비한다. */
-function newCancelToken(): string {
+/**
+ * 진짜로 돌고 있는 작업(셸 프로세스 · MCP 서버)에 붙이는 중단 토큰.
+ * `crypto.randomUUID` 가 없는 환경(구형 웹뷰)도 대비한다.
+ */
+export function newCancelToken(prefix = "call"): string {
   const uuid = globalThis.crypto?.randomUUID?.();
-  return uuid ?? `shell-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return uuid ?? `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** 도구 하나가 LLM 컨텍스트를 통째로 잡아먹지 않도록 출력에 상한을 둔다. */
-const MAX_TOOL_OUTPUT_CHARS = 20_000;
+/** 도구 하나가 LLM 컨텍스트를 통째로 잡아먹지 않도록 출력에 상한을 둔다. MCP 도구도 같은 자를 쓴다. */
+export const MAX_TOOL_OUTPUT_CHARS = 20_000;
 const MAX_DIR_ENTRIES = 300;
 
-function clip(text: string, limit = MAX_TOOL_OUTPUT_CHARS) {
+export function clip(text: string, limit = MAX_TOOL_OUTPUT_CHARS) {
   if (text.length <= limit) return { text, clipped: false };
   return { text: `${text.slice(0, limit)}\n…(이하 ${text.length - limit}자 생략)`, clipped: true };
 }
@@ -209,7 +212,7 @@ export function buildSkills(options: SkillOptions = {}): ToolSet {
       }),
       execute: async ({ command, cwd, timeoutMs }, { abortSignal }) => {
         // 중단을 누르면 프로세스를 실제로 죽여야 한다. 토큰으로 Rust 쪽 실행을 찾아 트리째 정리한다.
-        const cancelToken = newCancelToken();
+        const cancelToken = newCancelToken("shell");
         const onAbort = () => {
           void ipc.cancelShellCommand(cancelToken).catch(() => {});
         };

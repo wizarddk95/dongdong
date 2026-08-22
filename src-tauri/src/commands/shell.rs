@@ -14,6 +14,7 @@ use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::paths;
+use crate::process::kill_tree;
 use crate::state::AppState;
 
 #[cfg(windows)]
@@ -95,28 +96,6 @@ impl Drop for Registration {
             }
         }
     }
-}
-
-/// 자식만 죽이면 손자(예: `cmd /C pnpm dev` 안의 node)가 살아남아 파이프를 계속 물고 있는다.
-/// Windows 는 taskkill 로 트리째 정리한다.
-#[cfg(windows)]
-fn kill_tree(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &pid.to_string()])
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-/// 그 외 OS 는 자식만 정리한다. (프로세스 그룹까지 다루려면 libc 의존성이 필요하다)
-#[cfg(not(windows))]
-fn kill_tree(pid: u32) {
-    let _ = Command::new("kill")
-        .args(["-9", &pid.to_string()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
 }
 
 /// 실행 중인 셸 명령을 취소한다. 없는 토큰이면 false.

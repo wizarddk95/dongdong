@@ -35,17 +35,31 @@ pub async fn mcp_connect(
     blocking(move || registry.connect(&config, root)).await
 }
 
+/// 도구 하나를 부른다.
+///
+/// `cancel_token` 은 중단용이다 — 프론트가 만들어 넘기고, 같은 값으로 `mcp_cancel_tool` 을
+/// 부르면 멈춘다 (셸의 `execute_shell_command` 와 같은 모양).
 #[tauri::command]
 pub async fn mcp_call_tool(
     registry: State<'_, McpRegistry>,
     server_id: String,
     name: String,
     arguments: Option<Value>,
+    cancel_token: Option<String>,
 ) -> AppResult<McpToolResult> {
     let registry = (*registry).clone();
     let arguments = arguments.unwrap_or_else(|| Value::Object(Default::default()));
 
-    blocking(move || registry.call_tool(&server_id, &name, arguments)).await
+    blocking(move || registry.call_tool(&server_id, &name, arguments, cancel_token.as_deref())).await
+}
+
+/// 진행 중인 도구 호출을 중단한다.
+///
+/// 파이프 읽기가 블로킹이라 자식 프로세스를 죽여야 읽기가 풀린다 → 그 서버 연결도 함께
+/// 끊긴다. 프론트가 곧바로 다시 붙이므로 다음 턴에는 도구가 그대로 있다.
+#[tauri::command]
+pub fn mcp_cancel_tool(registry: State<'_, McpRegistry>, cancel_token: String) -> AppResult<bool> {
+    Ok(registry.cancel(&cancel_token))
 }
 
 #[tauri::command]

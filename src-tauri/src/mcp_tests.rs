@@ -180,8 +180,16 @@ rl.on("line", (line) => {
     send({ jsonrpc: "2.0", id: message.id, result: { tools: [
       { name: "echo", description: "받은 문자열을 되돌려준다",
         inputSchema: { type: "object", properties: { text: { type: "string" } } } },
+      { name: "slow", description: "한참 걸린다 (중단 테스트용)",
+        inputSchema: { type: "object" } },
     ]}});
   } else if (message.method === "tools/call") {
+    // 중단 테스트: 응답을 아주 늦게 보내 그 사이에 죽일 수 있게 한다.
+    if (message.params && message.params.name === "slow") {
+      setTimeout(() => send({ jsonrpc: "2.0", id: message.id,
+        result: { content: [{ type: "text", text: "늦었다" }] } }), 60000);
+      return;
+    }
     const text = (message.params && message.params.arguments && message.params.arguments.text) || "";
     send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "echo: " + text }] } });
   }
@@ -227,18 +235,18 @@ fn talks_to_a_real_stdio_server() {
 
     assert_eq!(info.server_name.as_deref(), Some("fake"));
     assert_eq!(info.protocol_version, "2025-06-18");
-    assert_eq!(info.tools.len(), 1);
+    assert_eq!(info.tools.len(), 2);
     assert_eq!(info.tools[0].name, "echo");
 
     let result = registry
-        .call_tool("fake", "echo", json!({ "text": "안녕" }))
+        .call_tool("fake", "echo", json!({ "text": "안녕" }), None)
         .expect("도구 호출 실패");
     assert_eq!(result.text, "echo: 안녕");
     assert!(!result.is_error);
 
     // 같은 연결로 두 번 이상 부를 수 있어야 한다 (id 가 증가해도 응답을 제대로 짝짓는지).
     let again = registry
-        .call_tool("fake", "echo", json!({ "text": "두 번째" }))
+        .call_tool("fake", "echo", json!({ "text": "두 번째" }), None)
         .expect("두 번째 호출 실패");
     assert_eq!(again.text, "echo: 두 번째");
 
@@ -275,4 +283,58 @@ fn reports_a_command_that_cannot_start() {
         "{message}"
     );
     assert!(registry.list().unwrap().is_empty(), "실패한 서버는 남지 않는다");
+}
+
+#[test]
+fn cancel_stops_a_tool_call() {
+    if !node_available() {
+        eprintln!("node 가 없어 MCP 중단 테스트를 건너뜁니다");
+        return;
+    }
+
+    let dir = std::env::temp_dir()
+        .join("dongdong-tests")
+        .join(format!("mcp-cancel-{}", crate::db::queries::new_id()));
+    std::fs::create_dir_all(&dir).expect("임시 디렉터리 생성 실패");
+    let script = dir.join("fake-mcp-server.cjs");
+    std::fs::write(&script, FAKE_SERVER_JS).expect("가짜 서버 작성 실패");
+
+    let config: super::mcp::McpServerConfig = serde_json::from_value(json!({
+        "id": "slowpoke",
+        "name": "slowpoke",
+        "command": "node",
+        "args": [script.to_string_lossy()],
+        // 타임아웃이 먼저 걸리면 중단을 검증하지 못한다 — 넉넉히 둔다.
+        "timeoutMs": 120000,
+    }))
+    .expect("설정 역직렬화 실패");
+
+    let registry = super::mcp::McpRegistry::default();
+    registry.connect(&config, None).expect("MCP 연결 실패");
+
+    // 아직 시작도 안 한 토큰은 취소할 것이 없다.
+    assert!(!registry.cancel("없는-토큰"));
+
+    let canceller = registry.clone();
+    std::thread::spawn(move || {
+        // 호출이 등록될 틈을 준 뒤 누른다.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(canceller.cancel("t-1"), "진행 중인 호출을 찾아야 한다");
+    });
+
+    let started = std::time::Instant::now();
+    let error = registry
+        .call_tool("slowpoke", "slow", json!({}), Some("t-1"))
+        .expect_err("중단했으면 실패로 끝나야 한다");
+
+    // 60초 뒤에 올 응답을 기다리지 않고 곧바로 풀려야 한다.
+    assert!(started.elapsed() < std::time::Duration::from_secs(20), "{:?}", started.elapsed());
+    let message = error.to_string();
+    assert!(message.contains("중단"), "{message}");
+    assert!(!message.contains("응답하지 않아"), "타임아웃으로 읽히면 안 된다: {message}");
+
+    // 자식을 죽였으니 연결도 사라진다 — 상태가 거짓말하지 않아야 한다.
+    assert!(registry.list().unwrap().is_empty());
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

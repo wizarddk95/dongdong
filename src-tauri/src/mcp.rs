@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 
 use crate::db::queries::now;
 use crate::error::{AppError, AppResult};
+use crate::process::kill_tree;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -288,10 +289,51 @@ struct McpConnection {
 
 impl Drop for McpConnection {
     fn drop(&mut self) {
-        // 앱이 닫히거나 연결을 끊으면 자식 프로세스도 함께 정리한다.
+        // 앱이 닫히거나 연결을 끊으면 서버 프로세스도 함께 정리한다.
+        kill_connection(&self.child);
         if let Ok(mut child) = self.child.lock() {
-            let _ = child.kill();
             let _ = child.wait();
+        }
+    }
+}
+
+/// 서버 프로세스를 **트리째** 죽인다.
+///
+/// Windows 에서 `npx`·`node` 같은 명령은 `cmd /C` 를 거쳐 뜨므로(`spawn_server`) 자식은
+/// cmd 이고 진짜 서버는 손자다. cmd 만 죽이면 손자가 stdout 을 계속 물고 있어 리더의
+/// `read` 가 EOF 를 못 본다 → 타임아웃도 중단도 읽기를 못 풀고 그대로 매달린다.
+fn kill_connection(child: &Arc<Mutex<Child>>) {
+    let Ok(mut child) = child.lock() else { return };
+    kill_tree(child.id());
+    // taskkill 이 없거나 실패한 환경을 위한 보루.
+    let _ = child.kill();
+}
+
+/// 진행 중인 도구 호출 하나. 중단 버튼이 눌리면 여기서 찾아 자식을 죽인다.
+///
+/// 파이프 읽기는 블로킹이라 **자식을 죽여 EOF 를 만드는 것 말고는 읽기를 푸는 방법이 없다**
+/// (타임아웃 감시가 쓰는 방법과 같다). 그래서 중단은 그 서버 연결까지 함께 끊는다 —
+/// 프론트가 곧바로 다시 붙인다(`store/mcp.ts`).
+struct RunningCall {
+    child: Arc<Mutex<Child>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+type Calls = Arc<Mutex<HashMap<String, RunningCall>>>;
+
+/// 등록을 RAII 로 잡아 둔다 — 어떤 경로로 빠져나가도 레지스트리에 찌꺼기가 남지 않는다.
+/// (셸의 `Registration` 과 같은 모양)
+struct CallRegistration {
+    calls: Calls,
+    token: Option<String>,
+}
+
+impl Drop for CallRegistration {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.take() {
+            if let Ok(mut map) = self.calls.lock() {
+                map.remove(&token);
+            }
         }
     }
 }
@@ -300,6 +342,9 @@ impl Drop for McpConnection {
 #[derive(Default, Clone)]
 pub struct McpRegistry {
     servers: Arc<Mutex<HashMap<String, Arc<Mutex<McpConnection>>>>>,
+    /// `cancelToken` → 그 토큰으로 도는 호출. 서버 목록과 **다른 잠금**이어야 한다 —
+    /// 도구가 도는 동안 연결 잠금은 호출자가 쥐고 있어서 중단이 그걸 기다리면 영영 못 죽인다.
+    calls: Calls,
 }
 
 /// 블로킹 요청이 영원히 멈추지 않도록 감시한다.
@@ -327,9 +372,7 @@ fn with_timeout<T>(
             }
             if !done.load(Ordering::Relaxed) {
                 killed.store(true, Ordering::Relaxed);
-                if let Ok(mut child) = child.lock() {
-                    let _ = child.kill();
-                }
+                kill_connection(&child);
             }
         });
     }
@@ -481,7 +524,13 @@ impl McpRegistry {
         Ok(info)
     }
 
-    pub fn call_tool(&self, server_id: &str, name: &str, arguments: Value) -> AppResult<McpToolResult> {
+    pub fn call_tool(
+        &self,
+        server_id: &str,
+        name: &str,
+        arguments: Value,
+        cancel_token: Option<&str>,
+    ) -> AppResult<McpToolResult> {
         let connection = self
             .lock()?
             .get(server_id)
@@ -496,6 +545,24 @@ impl McpRegistry {
         let timeout = connection.timeout;
         let logs = connection.logs.clone();
 
+        // 중단 버튼이 찾아올 자리를 만들어 둔다. 호출이 어떻게 끝나든 Drop 이 치운다.
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let _registration = cancel_token.map(|token| {
+            if let Ok(mut map) = self.calls.lock() {
+                map.insert(
+                    token.to_string(),
+                    RunningCall {
+                        child: child.clone(),
+                        cancelled: cancelled.clone(),
+                    },
+                );
+            }
+            CallRegistration {
+                calls: self.calls.clone(),
+                token: Some(token.to_string()),
+            }
+        });
+
         let result = with_timeout(&child, timeout, name, || {
             connection.peer.call_tool(name, arguments)
         });
@@ -506,8 +573,31 @@ impl McpRegistry {
             Err(error) => {
                 drop(connection);
                 self.lock()?.remove(server_id);
+                if cancelled.load(Ordering::Relaxed) {
+                    // 타임아웃 문구가 나가면 사용자가 자기가 누른 것을 서버 탓으로 읽는다.
+                    return Err(AppError::invalid(format!(
+                        "도구 호출을 중단했습니다 ({name})"
+                    )));
+                }
                 Err(self.with_logs(error, &logs))
             }
+        }
+    }
+
+    /// 진행 중인 도구 호출을 중단한다. 없는 토큰이면 false.
+    pub fn cancel(&self, cancel_token: &str) -> bool {
+        let entry = match self.calls.lock() {
+            Ok(mut map) => map.remove(cancel_token),
+            Err(_) => None,
+        };
+
+        match entry {
+            Some(call) => {
+                call.cancelled.store(true, Ordering::Relaxed);
+                kill_connection(&call.child);
+                true
+            }
+            None => false,
         }
     }
 

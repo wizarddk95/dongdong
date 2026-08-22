@@ -3,6 +3,7 @@ mod db;
 mod error;
 mod mcp;
 mod paths;
+mod process;
 mod state;
 
 #[cfg(test)]
@@ -75,6 +76,7 @@ pub fn run() {
             // MCP 브리지 (Phase 4-α)
             commands::mcp::mcp_connect,
             commands::mcp::mcp_call_tool,
+            commands::mcp::mcp_cancel_tool,
             commands::mcp::mcp_disconnect,
             commands::mcp::mcp_list_servers,
             commands::mcp::mcp_server_logs,

@@ -94,7 +94,19 @@ export const useMcp = create<McpState>((set, get) => ({
 
   logs: (serverId) => ipc.mcpServerLogs(serverId),
 
-  tools: () => buildMcpTools(get().servers).tools,
+  tools: () =>
+    buildMcpTools(get().servers, {
+      // 중단은 서버 프로세스를 죽여 연결까지 끊는다(파이프 읽기를 푸는 방법이 그것뿐이다).
+      // 여기서 곧바로 다시 붙이지 않으면 다음 턴에 도구가 조용히 사라진다.
+      cancelTool: async (serverId, cancelToken) => {
+        await ipc.mcpCancelTool(cancelToken);
+        const config = useSettings
+          .getState()
+          .mcpServers.find((server) => server.id === serverId);
+        if (config && config.enabled !== false) await get().connect(config);
+        else await get().refresh();
+      },
+    }).tools,
 
   origins: () => buildMcpTools(get().servers).origins,
 }));

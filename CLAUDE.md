@@ -11,7 +11,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 334 / cargo 45. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 338 / cargo 46. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -30,7 +30,8 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - **마이그레이션**: `db/schema.rs` 의 `MIGRATIONS` 배열 **끝에만 추가**. 기존 항목 수정 금지(이미 만들어진 DB 와 어긋난다).
 - **경로**: 파일 경로는 `paths.rs` 경유. `resolve_within()` 이 프로젝트 루트 밖 접근을 막는다.
 - **오래 걸리는 command 는 `async` + `spawn_blocking`**. 동기 command 는 메인 스레드를 막아 UI 가 언다.
-- **중단 경로를 끊지 말 것**: 새 도구를 붙이면 `abortSignal` 을 반드시 존중한다. `runner.ts` 가 `abortableTools()` 로 한 번 감싸 주지만, 백그라운드에서 진짜 돌고 있는 작업(프로세스·자식 프로세스)은 도구가 스스로 정리해야 한다(`execute_shell_command` → `cancel_shell_command`).
+- **중단 경로를 끊지 말 것**: 새 도구를 붙이면 `abortSignal` 을 반드시 존중한다. `runner.ts` 가 `abortableTools()` 로 한 번 감싸 주지만, 백그라운드에서 진짜 돌고 있는 작업(프로세스·자식 프로세스)은 도구가 스스로 정리해야 한다(`execute_shell_command` → `cancel_shell_command`, `mcp_call_tool` → `mcp_cancel_tool`).
+- **도구 출력에는 상한을 둔다**: `skills.ts` 의 `clip()`(20,000자)을 지난다. MCP 도구도 예외가 아니다 — 검색·크롤 결과 하나가 컨텍스트를 통째로 먹는다.
 - **스트리밍 중 DB 쓰기 금지**. 토큰은 Zustand 에만 쌓고 **스텝 경계**(도구 호출 확정 / 턴 종료)에서만 저장한다.
 - **`MODEL_CATALOG`(`lib/ai/providers.ts`) 는 사용자 소유** — 임의로 고치지 않는다.
 - **색·활자는 토큰만 쓴다**: 컴포넌트에 `zinc-800` 같은 팔레트 값이나 `#hex` 를 직접 적지 않는다.
@@ -50,6 +51,7 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
 - Tauri HTTP 플러그인은 그래도 요청마다 웹뷰 주소로 **`Origin` 헤더를 강제로 붙인다**(플러그인 Rust 쪽 `commands.rs`). Anthropic 은 `Origin` 이 있으면 브라우저 직접 호출로 보고 `CORS requests must set 'anthropic-dangerous-direct-browser-access' header` 로 거부한다 → `createAnthropic({ headers: { "anthropic-dangerous-direct-browser-access": "true" } })` 로 켜 준다. 키가 로컬 밖으로 안 나가므로 안전하다.
 - **AI SDK 의 중단은 "청크가 흐를 때만" 관측된다**. `streamText` 는 스트림에서 청크를 하나 읽은 뒤에 `abortSignal.aborted` 를 확인한다. 도구가 실행 중이면 청크가 없으므로 [중단]을 눌러도 아무 일도 일어나지 않는다 → 도구 자체를 중단 시그널과 경주시킨다(`lib/ai/abort.ts`). 도구가 거절되면 tool-error 청크가 흐르고 그때 스트림이 닫힌다.
 - **Windows 에서 자식만 kill 하면 파이프가 안 닫힌다**. `cmd /C pnpm dev` 처럼 손자가 생기는 명령은 cmd 를 죽여도 손자가 stdout 을 물고 있어 리더 스레드의 `read` 가 EOF 를 못 본다 → `join()` 이 영구 대기하고 도구 호출이 영영 안 끝난다. `taskkill /T /F` 로 트리째 죽이고, 리더 조인에도 유예 시간을 둔다(`commands/shell.rs`).
+  **셸만의 문제가 아니다** — MCP 서버도 `npx`·`node` 가 `cmd /C` 를 거쳐 뜨므로 자식은 cmd 이고 서버는 손자다. cmd 만 죽이면 타임아웃도 중단도 읽기를 못 풀고 그대로 매달린다(테스트가 60초를 기다리다 잡았다). 그래서 죽이는 곳은 전부 `process.rs` 의 `kill_tree()` 를 지난다.
 - **사고 강도는 공급자마다 키가 다르고, 모델마다 받는 값이 다르다**. Anthropic 은
   `anthropic.effort`, OpenAI·Gemini 는 `openai.reasoningEffort` 다 — Gemini 도 OpenAI 호환
   계층을 타는데 `@ai-sdk/openai` 의 chat 모델이 providerOptions 를 **`"openai"` 고정 키**로
@@ -170,6 +172,7 @@ src-tauri/src/
   lib.rs                command 등록 지점
   state.rs              프로젝트별 SQLite 커넥션 (with_conn)
   paths.rs              경로 정규화 + 루트 밖 차단
+  process.rs            프로세스 트리 kill (셸·MCP 공용 — 손자까지 죽여야 파이프가 닫힌다)
   db/{schema,models,queries}.rs
   commands/{workspace,shell,fs,session,settings,memory,agent,mcp}.rs
   mcp.rs                MCP stdio 클라이언트 (JSON-RPC 피어 + 프로세스 레지스트리)
@@ -216,6 +219,9 @@ src-tauri/src/
 - **투명성이 이 툴의 경쟁력**: assistant 노드의 `context_snapshot` 에 그 시점 LLM 입력 원문을 남기고 인스펙터로 보여준다. 새 기능도 "무엇이 LLM 에 갔는지" 숨기지 않게 만든다.
 - **프로젝트 지침**: 연 프로젝트 루트의 `AGENTS.md` 를 매 턴 다시 읽어 시스템 프롬프트 맨 앞에 원문 그대로 싣는다(서브에이전트에도 전달).
 - **서브에이전트**: `delegate_task` → 컨텍스트가 격리된 별도 실행, 요약만 상위로. `parent_message_id` 가 가리키는 노드의 턴에서 위/아래로 분기해 그려진다(대시보드 탭과 병행). `onDelegate` 없이 ToolSet 을 만들면 도구가 노출되지 않아 재위임이 구조적으로 불가능하다. 상태는 `agent_runs`.
-- **MCP**: 외부 서버를 stdio 자식 프로세스로 띄워 도구를 `mcp__서버__도구` 이름으로 합친다. 파이프 읽기는 블로킹이라 요청마다 감시 스레드로 타임아웃을 건다.
+- **MCP**: 외부 서버를 stdio 자식 프로세스로 띄워 도구를 `mcp__서버__도구` 이름으로 합친다.
+  파이프 읽기는 블로킹이라 요청마다 감시 스레드로 타임아웃을 건다. **중단도 같은 방법뿐이다** —
+  읽기를 푸는 길이 서버를 죽이는 것밖에 없어서 중단하면 그 연결도 끊긴다 → `store/mcp.ts` 가
+  곧바로 다시 붙인다(안 그러면 다음 턴에 도구가 조용히 사라진다).
 
 설계 배경과 상세는 `README.md`. 로컬 오픈소스 모델 운용은 `docs/local-llm.md`. 디자인 규율은 `docs/design.md`.

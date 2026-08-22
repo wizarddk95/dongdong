@@ -231,8 +231,20 @@ export const reapAgentRuns = (sessionId: string, projectPath?: string) =>
 export const mcpConnect = (config: McpServerConfig, projectPath?: string) =>
   call<McpServerInfo>("mcp_connect", { config, projectPath });
 
-export const mcpCallTool = (serverId: string, name: string, args?: unknown) =>
-  call<McpToolResult>("mcp_call_tool", { serverId, name, arguments: args ?? {} });
+/** `cancelToken` 을 함께 넘기면 같은 값으로 `mcpCancelTool` 을 불러 중단할 수 있다. */
+export const mcpCallTool = (
+  serverId: string,
+  name: string,
+  args?: unknown,
+  cancelToken?: string,
+) => call<McpToolResult>("mcp_call_tool", { serverId, name, arguments: args ?? {}, cancelToken });
+
+/**
+ * 진행 중인 도구 호출을 중단한다. 파이프 읽기가 블로킹이라 서버 프로세스를 죽여야
+ * 읽기가 풀린다 → 그 서버 연결도 함께 끊긴다(부른 쪽이 다시 붙인다).
+ */
+export const mcpCancelTool = (cancelToken: string) =>
+  call<boolean>("mcp_cancel_tool", { cancelToken });
 
 export const mcpDisconnect = (serverId: string) =>
   call<boolean>("mcp_disconnect", { serverId });
