@@ -1,0 +1,13 @@
+# 줄끝은 저장소·워킹트리 양쪽 모두 LF 하나로 못 박는다.
+#
+# Tauri CLI 는 `tauri dev`/`tauri build` 를 시작하자마자 매니페스트 동기화로
+# src-tauri/Cargo.toml 을 toml_edit 로 다시 쓰는데, 그때 줄끝이 LF 가 된다.
+# 윈도우 기본값(core.autocrlf=true)으로 CRLF 체크아웃을 해 두었다면 파일 크기가
+# 줄 수만큼 줄어들고, git 은 크기가 다르면 내용을 읽어 보지도 않고 "수정됨" 으로
+# 끊는다(ie_modified 의 size 단축 경로) → git diff 는 빈 출력인데 git status 는
+# 영원히 M 이고, 그 파일을 건드리는 커밋이 오면 git pull 이 통째로 중단된다.
+# eol=lf 로 체크아웃부터 LF 로 받으면 CLI 가 다시 써도 크기가 안 변한다.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
