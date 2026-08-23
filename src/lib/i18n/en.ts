@@ -145,6 +145,7 @@ tool is needed, then call it. The user reads that line to confirm the request la
   "tool.group.shell": "Run shell",
   "tool.group.memory": "Memory",
   "tool.group.subagents": "Subagents",
+  "tool.group.ask": "Ask the user",
   "tool.group.mcp": "MCP server tools",
   "tool.readFile.description":
     "Read a single file. Paths relative to the project root are recommended. Binary files come back as metadata only, without contents.",
@@ -194,6 +195,19 @@ tool is needed, then call it. The user reads that line to confirm the request la
   "tool.delegate.name": "Short name to show on the dashboard (e.g. 'test runner')",
   "tool.delegate.task":
     "Instructions the subagent can read and carry out alone. Include the file paths it needs and what counts as done.",
+  "tool.askUser.description":
+    "Put the choice to the user instead of guessing. Use it before starting work where the answer forks and the fork is expensive to undo — a library, a design direction, how much to delete, a policy call. Ask up to {max} topics at once; for each one the user picks an option or writes their own in the last slot. Do not ask about anything you could settle by reading a file or running a command — go check. If the user declines to answer, you are told so.",
+  "tool.askUser.questions":
+    "The topics to ask about (up to {max}). Only put things a person genuinely has to decide.",
+  "tool.askUser.header": "Short topic name for the chip (e.g. 'Auth method')",
+  "tool.askUser.question": "The question itself — a sentence or two on what is being chosen and why",
+  "tool.askUser.multiSelect": "True if several options can be picked together. Defaults to false",
+  "tool.askUser.options":
+    "The options to choose from ({min}-{max}). Keep them distinct. Do not add a write-your-own entry — the app always appends one.",
+  "tool.askUser.optionLabel": "Option name. Short, and clearly different from the others",
+  "tool.askUser.optionDescription": "One line on what picking this changes (optional)",
+  "tool.askUser.cancelledHint":
+    "The user chose not to answer. Do not ask the same thing again — proceed on a sensible default and say in your reply what you assumed.",
 
   // ── Usage · cost ────────────────────────────────────────────────────
   "usage.unknownModel": "Model unknown",
@@ -252,6 +266,13 @@ tool is needed, then call it. The user reads that line to confirm the request la
   "approvals.aborted": "Aborted.",
   "approvals.denied": "The user denied running this command.",
   "approvals.turnEnded": "The turn ended, so the request was cancelled.",
+
+  // ── Asking the user (choice card) ───────────────────────────────────
+  "questions.empty": "Nothing to ask about, so no card was shown.",
+  "questions.aborted": "Stopped.",
+  "questions.cancelled": "The user chose not to answer this question.",
+  "questions.turnEnded": "The turn ended, so the question was cancelled.",
+  "questions.customPrefix": "Own answer: {text}",
 
   // ── UI (shared · shell · lists) ─────────────────────────────────────
   "common.close": "Close",
@@ -495,6 +516,29 @@ C:/projects`,
   "chat.runningTool": "Running a tool",
   "chat.waitingApprovalHint": "Waiting for you to press [Run] or [Deny] on the card above.",
   "chat.runningToolHint": "Shell commands cut off after 2 minutes by default, 10 at most. Press [Stop] to end one sooner.",
+  "chat.waitingChoice": "Waiting for your choice",
+  "chat.waitingChoiceHint": "Waiting for you to finish choosing on the card above and press [Send]. Press [Skip this] if you would rather not answer.",
+
+  // ── Choice card ─────────────────────────────────────────────────────
+  "questions.title": "Your call",
+  "questions.fromSubagent": "Subagent · {name}",
+  "questions.queued": "{count} queued",
+  "questions.progress": "Topic {index}/{total}",
+  "questions.answeredCount": "Answered {count}/{total}",
+  "questions.hint": "The agent is asking before it decides for you. Use ←/→ to move between topics and ↑/↓ to move through the options. A number key picks that option outright; Ctrl+Enter sends. Nothing is final until you press [Send], so you can go back and change an earlier answer.",
+  "questions.multiSelect": "Pick any number",
+  "questions.singleSelect": "Pick one",
+  "questions.noOptions": "The model offered no options — write your answer below.",
+  "questions.customLabel": "Write your own",
+  "questions.customPlaceholder": "None of the options fit? Type it here",
+  "questions.prev": "Previous",
+  "questions.next": "Next",
+  "questions.submit": "Send",
+  "questions.submitHint": "Hands your answers back to the agent (Ctrl+Enter).",
+  "questions.cancel": "Skip this",
+  "questions.cancelHint": "Move on without choosing. The agent is told it got no answer and decides for itself.",
+  "questions.remaining": "{count} left",
+  "questions.readyHint": "All answered.",
   "chat.branchCost": "This branch",
   "chat.branchCostHint": "What the branch you are looking at cost — root to active node.",
   "chat.sessionCost": "Whole session",

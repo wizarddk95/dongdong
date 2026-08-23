@@ -12,7 +12,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 512 / cargo 63. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 556 / cargo 63. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -220,6 +220,7 @@ src/
   lib/ai/thoughtSignature.ts  Gemini 3.x thought_signature 왕복 (응답에서 줍고 다음 요청에 되붙이기)
   lib/ai/errors.ts      공급자 에러 → 읽을 수 있는 한 줄 (APICallError.responseBody 를 편다)
   lib/ai/approval.ts    셸 실행 승인 판정(순수) — 규칙 뽑기·매칭·위험 명령 판별
+  lib/ai/questions.ts   사용자 선택 판정(순수) — 모델이 보낸 목록 접기·답 굳히기·주제 이동
   lib/ai/attachments.ts `@` 참조 파일을 읽어 메시지에 싣는 블록으로 (바이너리는 자리표만)
   lib/ai/datetime.ts    지금 시각 블록 — 모델이 학습 시점을 "지금" 으로 착각하지 않게
   lib/mention.ts        `@` 토큰 찾기·끼워 넣기·뽑기 (순수). 입력칸과 전송 경로가 같은 규칙을 쓴다
@@ -235,11 +236,13 @@ src/
   lib/ai/instructions.ts 프로젝트 AGENTS.md 로딩 + 시스템 프롬프트 조합 (+ 앱이 고정으로 싣는 답변 규칙)
   store/                workspace(트리) · chat(턴) · agents(서브) · mcp · skills · settings
                         approvals — 승인 대기열 + 세션 수명 허용 규칙 (디스크에 남기지 않는다)
+                        questions — 사용자 선택 대기열 (기억해 두는 것이 없다: 판단은 매번 새 판단이다)
   components/           chat · flow(턴 그래프) · agents · mcp · inspect · skills · hooks
                         SettingsModal.tsx — 좌측 섹션 목록 + 한 번에 한 섹션 (일반·모델·공급자·도구·스킬·훅·MCP)
                         ErrorBoundary.tsx — 렌더 예외로 창이 새까매지는 것을 막는다
                         UsageMeter.tsx — 토큰·요금·컨텍스트 게이지 (채팅/턴/세션 공용)
                         chat/ApprovalPrompt.tsx — 셸 실행 승인 카드 (입력칸 바로 위, 한 번에 하나)
+                        chat/QuestionPrompt.tsx — 사용자 선택 카드 (한 번에 한 주제 · 주제 사이를 오갈 수 있다)
                         chat/MentionPicker.tsx — `@` 자동완성 (방향키 이동 · Enter 선택)
                         agents/AgentResultModal.tsx — 서브에이전트 요약 팝업 (대시보드·턴 그래프 공용)
                         Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·Hint·입력 크롬). 새 UI 는 여기서 가져다 쓴다
@@ -320,6 +323,18 @@ src-tauri/src/
   **진행 표시는 두 상태를 갈라 말해야 한다** — "도구 실행 중" 만 떠 있으면 승인을 기다리는
   중인지 진짜로 도는 중인지 구별할 수 없어 멀쩡한 명령이 "무한 로딩" 으로 읽힌다.
   채팅 하단 바가 `승인 대기 중` / `도구 실행 중` 과 **경과 초**를 함께 적는다.
+- **사용자 선택**: 판단이 갈리는 자리에서 모델이 `ask_user_question` 으로 선택지를 띄우고
+  사람이 고른다. 구조는 승인 게이트와 같다 — 도구 하나가 카드 앞에서 멈춰 서고, 판정·파생은
+  전부 `lib/ai/questions.ts` 의 순수 함수이며 묻고 기다리는 일만 `store/questions.ts` 가 한다
+  (**판정을 UI 에 따로 적지 말 것**). 주제는 최대 4개를 묶어 묻되 **화면에는 한 번에 하나**다.
+  **마지막 칸은 언제나 직접 입력**이고(모델이 낸 보기가 전부 틀렸을 때 빠져나갈 길이 없으면
+  이 카드는 대화를 막는다), 하나만 고르는 주제에서는 직접 입력이 고른 보기를 밀어낸다.
+  **[보내기] 전까지 아무것도 확정되지 않는다** — `←`/`→` 와 주제 칩으로 앞 주제로 돌아가
+  고칠 수 있어야 한다(잘못 누른 한 번이 되돌릴 수 없으면 사람은 카드를 무서워한다).
+  답하지 않기는 예외가 아니라 **결과**다(던지면 턴이 끊기고, 결과로 주면 모델이 기본값을
+  고르고 무엇을 가정했는지 밝힌다). 진행 표시는 `선택 대기 중` 을 따로 적는다 —
+  승인 대기와 도구 실행과 셋을 갈라 말하지 않으면 멀쩡한 턴이 무한 로딩으로 읽힌다.
+  서브에이전트도 같은 카드로 묻는다(누가 묻는지 이름이 뜬다).
 - **셸은 반드시 끝난다**: 타임아웃은 기본 2분·최대 10분이고 **양쪽에서 접는다**
   (`tools.ts` 의 `MAX_SHELL_TIMEOUT_MS` · `shell.rs` 의 `effective_timeout`).
   상한이 없으면 모델이 크게 잡아 온 `timeoutMs` 하나로 턴이 몇 시간이고 멈춰 선다.

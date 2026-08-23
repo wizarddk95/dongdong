@@ -26,6 +26,7 @@ import * as ipc from "@/lib/ipc";
 import { extractMentions } from "@/lib/mention";
 import { useAgents } from "@/store/agents";
 import { useApprovals } from "@/store/approvals";
+import { useQuestions } from "@/store/questions";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
 import { useSkills } from "@/store/skills";
@@ -178,6 +179,8 @@ export const useChat = create<ChatState>((set, get) => ({
           sessionId,
           // 셸은 실행 직전에 사용자에게 묻는다(설정이 "자동 실행" 이면 게이트가 그냥 통과시킨다).
           requestApproval: (ask) => useApprovals.getState().request(ask),
+          // 판단이 갈리는 자리에서는 모델이 넘겨짚지 않고 사람에게 목록으로 묻는다.
+          requestChoice: (input) => useQuestions.getState().request(input),
           // 위임은 서브에이전트 스토어가 실행한다. 결과 요약만 도구 결과로 돌아온다.
           onDelegate: ({ name, task, signal }) =>
             useAgents.getState().spawn({ name, task, signal, parentMessageId: assistantId }),
@@ -333,6 +336,7 @@ export const useChat = create<ChatState>((set, get) => ({
       controller = null;
       // 턴이 끝났는데 카드가 남아 있으면 누를 곳 없는 버튼이 된다.
       useApprovals.getState().clear();
+      useQuestions.getState().clear();
       set({
         running: false,
         stopping: false,

@@ -140,6 +140,7 @@ export const ko = {
   "tool.group.shell": "쉘 실행",
   "tool.group.memory": "메모리",
   "tool.group.subagents": "서브에이전트",
+  "tool.group.ask": "사용자 선택",
   "tool.group.mcp": "MCP 서버 도구",
   "tool.readFile.description":
     "파일 하나를 읽는다. 경로는 프로젝트 루트 기준 상대 경로를 권장한다. 바이너리는 내용 없이 메타데이터만 돌아온다.",
@@ -186,6 +187,19 @@ export const ko = {
   "tool.delegate.name": "대시보드에 표시할 짧은 이름 (예: '테스트 러너')",
   "tool.delegate.task":
     "서브에이전트가 혼자 읽고 수행할 수 있는 작업 지시. 필요한 파일 경로와 완료 기준을 포함할 것.",
+  "tool.askUser.description":
+    "판단이 갈리는 자리에서 넘겨짚지 말고 사용자에게 선택지를 보여주고 고르게 한다. 라이브러리·설계 방향·삭제 범위·정책처럼 답이 여러 갈래이고 되돌리기 어려운 일을 시작하기 전에 쓴다. 한 번에 최대 {max}개 주제를 묶어 물을 수 있고, 사용자는 각 주제에서 보기를 고르거나 마지막 칸에 직접 적는다. 파일을 읽거나 명령을 돌려 확인할 수 있는 사실은 묻지 말고 직접 확인할 것. 사용자가 답하지 않으면 그 사실이 결과로 돌아온다.",
+  "tool.askUser.questions":
+    "물어볼 주제 목록 (최대 {max}개). 정말 사람이 정해야 하는 것만 담는다.",
+  "tool.askUser.header": "칩에 뜨는 짧은 주제 이름 (예: '인증 방식')",
+  "tool.askUser.question": "질문 전문. 무엇을 왜 고르는지 한두 문장으로",
+  "tool.askUser.multiSelect": "여러 개를 함께 고를 수 있으면 true. 기본값 false",
+  "tool.askUser.options":
+    "고를 수 있는 보기 ({min}~{max}개). 서로 겹치지 않게 쓴다. 직접 입력 칸은 앱이 항상 하나 더 붙이므로 여기 넣지 말 것.",
+  "tool.askUser.optionLabel": "보기 이름. 짧고 서로 구별되게",
+  "tool.askUser.optionDescription": "이걸 고르면 무엇이 달라지는지 한 줄 (선택)",
+  "tool.askUser.cancelledHint":
+    "사용자가 답하지 않았습니다. 같은 질문을 다시 던지지 말고, 합리적인 기본값으로 진행하되 무엇을 가정했는지 답변에 밝히세요.",
 
   // ── 사용량 · 요금 ───────────────────────────────────────────────────
   "usage.unknownModel": "모델 미상",
@@ -244,6 +258,13 @@ export const ko = {
   "approvals.aborted": "중단되었습니다.",
   "approvals.denied": "사용자가 이 명령의 실행을 거부했습니다.",
   "approvals.turnEnded": "턴이 끝나 요청이 취소되었습니다.",
+
+  // ── 사용자 선택 (질문 카드) ─────────────────────────────────────────
+  "questions.empty": "물어볼 주제가 없어 카드를 띄우지 않았습니다.",
+  "questions.aborted": "중단되었습니다.",
+  "questions.cancelled": "사용자가 이 질문에 답하지 않기로 했습니다.",
+  "questions.turnEnded": "턴이 끝나 질문이 취소되었습니다.",
+  "questions.customPrefix": "직접 입력: {text}",
 
   // ── 화면 (공통 · 껍데기 · 목록) ─────────────────────────────────────
   "common.close": "닫기",
@@ -487,6 +508,29 @@ C:/projects`,
   "chat.runningTool": "도구 실행 중",
   "chat.waitingApprovalHint": "위 카드에서 [실행] 또는 [거부] 를 누를 때까지 기다립니다.",
   "chat.runningToolHint": "셸 명령은 기본 2분, 최대 10분에서 자동으로 끊깁니다. 그 전에 멈추려면 [중지] 를 누르세요.",
+  "chat.waitingChoice": "선택 대기 중",
+  "chat.waitingChoiceHint": "위 카드에서 선택을 마치고 [보내기] 를 누를 때까지 기다립니다. 답하지 않으려면 [답하지 않기] 를 누르세요.",
+
+  // ── 사용자 선택 카드 ────────────────────────────────────────────────
+  "questions.title": "선택이 필요합니다",
+  "questions.fromSubagent": "서브에이전트 · {name}",
+  "questions.queued": "대기 {count}건",
+  "questions.progress": "주제 {index}/{total}",
+  "questions.answeredCount": "답함 {count}/{total}",
+  "questions.hint": "에이전트가 스스로 판단하기 전에 묻고 있습니다. 방향키 ←/→ 로 주제를 옮기고 ↑/↓ 로 보기를 고릅니다. 숫자 키를 누르면 그 번호의 보기가 바로 선택되고, Ctrl+Enter 로 보냅니다. [보내기] 전까지는 아무것도 확정되지 않으니 앞 주제로 돌아가 고쳐도 됩니다.",
+  "questions.multiSelect": "여러 개 선택",
+  "questions.singleSelect": "하나만 선택",
+  "questions.noOptions": "모델이 보기를 주지 않았습니다 — 아래 칸에 직접 적어 주세요.",
+  "questions.customLabel": "직접 입력",
+  "questions.customPlaceholder": "보기가 맞지 않으면 여기에 직접 적습니다",
+  "questions.prev": "이전 주제",
+  "questions.next": "다음 주제",
+  "questions.submit": "보내기",
+  "questions.submitHint": "고른 답을 에이전트에게 돌려줍니다 (Ctrl+Enter).",
+  "questions.cancel": "답하지 않기",
+  "questions.cancelHint": "고르지 않고 넘깁니다. 에이전트는 답을 받지 못했다는 사실을 알고 스스로 판단합니다.",
+  "questions.remaining": "남은 주제 {count}개",
+  "questions.readyHint": "모두 골랐습니다.",
   "chat.branchCost": "현재 분기",
   "chat.branchCostHint": "지금 보고 있는 분기(루트에서 활성 노드까지의 줄기)에 든 비용입니다.",
   "chat.sessionCost": "전체 세션",

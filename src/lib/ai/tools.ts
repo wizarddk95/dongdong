@@ -16,6 +16,13 @@
 import { tool, type ToolSet } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
+import {
+  MAX_OPTIONS,
+  MAX_QUESTIONS,
+  MIN_OPTIONS,
+  summarizeAsk,
+  type ChoiceOutcome,
+} from "@/lib/ai/questions";
 import { redact } from "@/lib/ai/redact";
 import { t, type MessageKey } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
@@ -32,6 +39,8 @@ export interface ToolToggles {
   memory: boolean;
   /** delegate_task (서브에이전트 위임) */
   subagents: boolean;
+  /** ask_user_question (사용자에게 선택지를 물어보기) */
+  ask: boolean;
   /** 연결된 MCP 서버가 제공하는 도구 (`buildMcpTools` 로 따로 만들어 합친다) */
   mcp: boolean;
 }
@@ -42,6 +51,7 @@ export const DEFAULT_TOOLS: ToolToggles = {
   shell: true,
   memory: true,
   subagents: true,
+  ask: true,
   mcp: true,
 };
 
@@ -90,6 +100,15 @@ export interface ToolOptions {
    * 넘기지 않으면 예전처럼 곧바로 실행한다(테스트와 승인이 필요 없는 호출 경로).
    */
   requestApproval?: (ask: ApprovalAsk) => Promise<{ approved: boolean; reason?: string }>;
+  /**
+   * 사용자 선택 게이트 — `ask_user_question` 이 지난다.
+   * 넘기지 않으면 그 도구 자체가 노출되지 않는다(물을 곳이 없는데 부를 수 있으면 안 된다).
+   */
+  requestChoice?: (input: {
+    questions: unknown;
+    origin?: string;
+    signal?: AbortSignal;
+  }) => Promise<ChoiceOutcome>;
   /** 승인 카드에 "누가 요청했는지" 를 적기 위한 이름. 서브에이전트가 채운다. */
   origin?: string;
 }
@@ -148,6 +167,7 @@ export const TOOL_GROUPS: { id: keyof ToolToggles; labelKey: MessageKey; tools: 
   { id: "shell", labelKey: "tool.group.shell", tools: ["execute_shell_command"] },
   { id: "memory", labelKey: "tool.group.memory", tools: ["remember", "recall"] },
   { id: "subagents", labelKey: "tool.group.subagents", tools: ["delegate_task"] },
+  { id: "ask", labelKey: "tool.group.ask", tools: ["ask_user_question"] },
   { id: "mcp", labelKey: "tool.group.mcp", tools: ["mcp__<server>__<tool>"] },
 ];
 
@@ -407,6 +427,67 @@ export function buildTools(options: ToolOptions = {}): ToolSet {
     });
   }
 
+  // 물을 곳(카드)이 있을 때만 노출한다. 게이트 없이 이 도구를 켜면 모델은 아무도 듣지
+  // 않는 질문을 던지고 그대로 멈춰 선다.
+  if (enabled.ask && options.requestChoice) {
+    const requestChoice = options.requestChoice;
+    tools.ask_user_question = tool({
+      description: t("tool.askUser.description", { max: MAX_QUESTIONS }),
+      inputSchema: z.object({
+        questions: z
+          .array(
+            z.object({
+              header: z.string().describe(t("tool.askUser.header")),
+              question: z.string().describe(t("tool.askUser.question")),
+              multiSelect: z.boolean().optional().describe(t("tool.askUser.multiSelect")),
+              options: z
+                .array(
+                  z.object({
+                    label: z.string().describe(t("tool.askUser.optionLabel")),
+                    description: z
+                      .string()
+                      .optional()
+                      .describe(t("tool.askUser.optionDescription")),
+                  }),
+                )
+                .describe(t("tool.askUser.options", { min: MIN_OPTIONS, max: MAX_OPTIONS })),
+            }),
+          )
+          .describe(t("tool.askUser.questions", { max: MAX_QUESTIONS })),
+      }),
+      execute: async ({ questions }, { abortSignal }) => {
+        const outcome = await requestChoice({
+          questions,
+          origin: options.origin,
+          signal: abortSignal,
+        });
+
+        // 취소는 예외가 아니라 **결말**이다 — 던지면 턴이 에러로 끊기지만, 결과로
+        // 돌려주면 모델이 스스로 판단하거나 다시 묻는 수를 고를 수 있다.
+        if (!outcome.answered) {
+          return {
+            answered: false,
+            cancelled: true,
+            reason: clip(outcome.reason, 1_000).text,
+            hint: t("tool.askUser.cancelledHint"),
+          };
+        }
+
+        return {
+          answered: true,
+          // 사람이 적은 글도 컨텍스트로 들어간다 → 가리기·상한을 함께 지난다.
+          answers: outcome.answers.map((answer) => ({
+            header: answer.header,
+            question: answer.question,
+            multiSelect: answer.multiSelect,
+            selected: answer.selected.map((label) => clip(label, 1_000).text),
+            ...(answer.custom ? { custom: clip(answer.custom, 2_000).text } : {}),
+          })),
+        };
+      },
+    });
+  }
+
   return tools;
 }
 
@@ -418,6 +499,11 @@ export function enabledToolNames(options: ToolOptions = {}): string[] {
 /** 도구 호출을 트리/버블에 한 줄로 보여줄 때 쓰는 요약. */
 export function summarizeToolCall(toolName: string, input: unknown): string {
   const record = (input ?? {}) as Record<string, unknown>;
+  // 질문 카드는 인자가 목록이라 위 규칙에 걸리지 않는다 — 주제 이름을 이어 붙여 보여준다.
+  if (Array.isArray(record.questions)) {
+    const summary = summarizeAsk(record.questions as { header?: string; question?: string }[]);
+    return summary ? `${toolName}(${summary})` : toolName;
+  }
   const hint =
     typeof record.command === "string"
       ? record.command

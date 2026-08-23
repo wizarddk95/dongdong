@@ -74,7 +74,8 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
   Gemini, or `local:` — any OpenAI-compatible server on your machine (Ollama, LM Studio,
   llama.cpp, vLLM). Pricing, context windows, and capability flags live in one catalog.
   With a local model, nothing leaves the machine.
-- **Tools** — file read/write, shell, memory, and subagent delegation, each toggleable.
+- **Tools** — file read/write, shell, memory, subagent delegation, and asking you a
+  question, each toggleable.
   Tool output is capped so one crawl result can't eat the whole context window.
 - **Skills, which are not tools.** A skill is a procedure document. Only its name and
   one-line description are loaded each turn; the model pulls the body with `load_skill`
@@ -88,6 +89,13 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
   sentence or two about what it is doing and why — the line you read to confirm your
   request landed. The app ships that rule itself, so it holds even if you rewrite the
   system prompt.
+- **It asks instead of guessing.** When a call is genuinely yours to make — a library, a
+  design direction, how much to delete — `ask_user_question` puts a choice card above the
+  composer and the tool waits there for you. Several topics per card (one shown at a
+  time), single- or multi-select per topic, and a write-your-own slot at the end of every
+  list. Arrow keys move between topics, so an answer you already gave stays editable;
+  nothing is final until you press [Send]. Declining is an answer too — the agent is told
+  it got none, and proceeds on a stated assumption.
 - **MCP bridge.** External MCP servers run as stdio child processes; their tools are
   merged in as `mcp__<server>__<tool>`.
 - **Hooks.** Non-blocking side effects on turn start / finish / error — an OS

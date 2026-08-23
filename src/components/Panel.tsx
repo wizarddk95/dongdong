@@ -54,7 +54,9 @@ const SIZES: Record<ButtonSize, string> = {
   md: "rounded-sm px-4 py-2.5 text-button",
 };
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+// `React.ComponentProps` 로 받는 이유는 `ref` 다 — React 19 는 함수 컴포넌트도 ref 를
+// 평범한 prop 으로 받는데, `ButtonHTMLAttributes` 에는 그 자리가 없다.
+interface ButtonProps extends React.ComponentProps<"button"> {
   variant?: ButtonVariant;
   size?: ButtonSize;
 }

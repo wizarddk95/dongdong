@@ -20,6 +20,7 @@ import { toStoredUsage } from "@/lib/ai/usage";
 import { t } from "@/lib/i18n";
 import * as ipc from "@/lib/ipc";
 import { useApprovals } from "@/store/approvals";
+import { useQuestions } from "@/store/questions";
 import { useMcp } from "@/store/mcp";
 import { useSettings } from "@/store/settings";
 import { useSkills } from "@/store/skills";
@@ -155,6 +156,8 @@ export const useAgents = create<AgentsState>((set, get) => {
             // 서브에이전트가 부른 셸도 같은 게이트를 지난다 — 위임했다고 승인이 면제되면
             // "묻는 모드" 가 위임 한 줄로 뚫린다. 카드에는 누가 요청했는지 이름이 뜬다.
             requestApproval: (ask) => useApprovals.getState().request(ask),
+            // 서브에이전트도 사람에게 물을 수 있다 — 카드에 누가 묻는지 이름이 뜬다.
+            requestChoice: (input) => useQuestions.getState().request(input),
             origin: name,
           }),
           ...(settings.tools.mcp ? useMcp.getState().tools() : {}),

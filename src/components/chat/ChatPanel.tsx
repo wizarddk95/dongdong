@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApprovalPrompt } from "@/components/chat/ApprovalPrompt";
 import { MentionPicker, useMentionPicker } from "@/components/chat/MentionPicker";
+import { QuestionPrompt } from "@/components/chat/QuestionPrompt";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ContextModal } from "@/components/inspect/ContextModal";
 import { MemoryModal } from "@/components/inspect/MemoryModal";
@@ -26,6 +27,7 @@ import { buildTurns, toBubbles, turnLabel } from "@/lib/turns";
 import { useAgents } from "@/store/agents";
 import { useApprovals } from "@/store/approvals";
 import { useChat } from "@/store/chat";
+import { useQuestions } from "@/store/questions";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
 
@@ -39,6 +41,9 @@ export function ChatPanel() {
   const agentRuns = useAgents((state) => state.runs);
   // 승인을 기다리는 중인지 알아야 아래 진행 표시가 거짓말을 하지 않는다.
   const approvalQueue = useApprovals((state) => state.queue);
+  // 사용자 선택을 기다리는 중인지도 마찬가지다 — "도구 실행 중" 만 떠 있으면
+  // 사람이 답할 차례라는 것이 어디에도 안 적힌다.
+  const questionQueue = useQuestions((state) => state.queue);
 
   const {
     running,
@@ -297,16 +302,27 @@ export function ChatPanel() {
       )}
 
       <ApprovalPrompt />
+      <QuestionPrompt />
 
       {pendingToolCalls.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-hairline bg-surface-1 px-3 py-1.5 text-caption text-ink">
           <span
-            className={`animate-pulse ${approvalQueue.length > 0 ? "text-warning" : "text-accent"}`}
+            className={`animate-pulse ${
+              questionQueue.length > 0
+                ? "text-accent"
+                : approvalQueue.length > 0
+                  ? "text-warning"
+                  : "text-accent"
+            }`}
           >
             ●
           </span>
           <span className="text-body-emphasis">
-            {approvalQueue.length > 0 ? t("chat.waitingApproval") : t("chat.runningTool")}
+            {questionQueue.length > 0
+              ? t("chat.waitingChoice")
+              : approvalQueue.length > 0
+                ? t("chat.waitingApproval")
+                : t("chat.runningTool")}
           </span>
           {pendingToolCalls.map((call) => (
             <span key={call.toolCallId} className="rounded-full bg-surface-2 px-2 py-0.5 font-mono">
@@ -316,9 +332,11 @@ export function ChatPanel() {
           <span
             className="ml-auto shrink-0 tabular-nums text-ink-muted"
             title={
-              approvalQueue.length > 0
-                ? t("chat.waitingApprovalHint")
-                : t("chat.runningToolHint")
+              questionQueue.length > 0
+                ? t("chat.waitingChoiceHint")
+                : approvalQueue.length > 0
+                  ? t("chat.waitingApprovalHint")
+                  : t("chat.runningToolHint")
             }
           >
             {toolElapsed}초

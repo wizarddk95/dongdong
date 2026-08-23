@@ -417,6 +417,121 @@ describe("도구 실행", () => {
   });
 });
 
+describe("사용자 선택 게이트", () => {
+  const TOPICS = [
+    {
+      header: "라이브러리",
+      question: "무엇으로 만들까요?",
+      options: [{ label: "A" }, { label: "B" }],
+    },
+  ];
+
+  it("물을 곳이 없으면 도구 자체가 노출되지 않는다 — 아무도 안 듣는 질문을 던지게 두지 않는다", () => {
+    expect(enabledToolNames()).not.toContain("ask_user_question");
+    expect(enabledToolNames({ requestChoice: vi.fn() })).toContain("ask_user_question");
+    // 설정에서 끄면 게이트가 있어도 사라진다.
+    expect(
+      enabledToolNames({ requestChoice: vi.fn(), enabled: { ask: false } }),
+    ).not.toContain("ask_user_question");
+  });
+
+  it("모델이 보낸 목록과 부른 사람을 게이트로 그대로 넘긴다", async () => {
+    const requestChoice = vi.fn().mockResolvedValue({
+      answered: true,
+      answers: [
+        {
+          header: "라이브러리",
+          question: "무엇으로 만들까요?",
+          multiSelect: false,
+          selected: ["A"],
+          answered: true,
+        },
+      ],
+    });
+
+    const result = (await run(
+      buildTools({ requestChoice, origin: "테스트 러너" }).ask_user_question,
+      { questions: TOPICS },
+    )) as Record<string, unknown>;
+
+    expect(requestChoice).toHaveBeenCalledWith(
+      expect.objectContaining({ questions: TOPICS, origin: "테스트 러너" }),
+    );
+    expect(result.answered).toBe(true);
+    expect(result.answers).toEqual([
+      {
+        header: "라이브러리",
+        question: "무엇으로 만들까요?",
+        multiSelect: false,
+        selected: ["A"],
+      },
+    ]);
+  });
+
+  it("직접 입력한 답도 함께 돌아간다", async () => {
+    const requestChoice = vi.fn().mockResolvedValue({
+      answered: true,
+      answers: [
+        {
+          header: "범위",
+          question: "어디까지?",
+          multiSelect: true,
+          selected: ["A"],
+          custom: "그리고 이것도",
+          answered: true,
+        },
+      ],
+    });
+
+    const result = (await run(buildTools({ requestChoice }).ask_user_question, {
+      questions: TOPICS,
+    })) as { answers: Record<string, unknown>[] };
+
+    expect(result.answers[0].custom).toBe("그리고 이것도");
+  });
+
+  it("답하지 않아도 던지지 않고 결과로 돌려준다 — 모델이 다음 수를 고른다", async () => {
+    const requestChoice = vi
+      .fn()
+      .mockResolvedValue({ answered: false, reason: "지금은 정하지 않겠습니다" });
+
+    const result = (await run(buildTools({ requestChoice }).ask_user_question, {
+      questions: TOPICS,
+    })) as Record<string, unknown>;
+
+    expect(result.answered).toBe(false);
+    expect(result.cancelled).toBe(true);
+    expect(String(result.reason)).toContain("지금은 정하지");
+    // 다시 묻지 말고 기본값으로 가라는 지침이 결과에 함께 실린다.
+    expect(String(result.hint).length).toBeGreaterThan(0);
+  });
+
+  it("사람이 적은 답도 비밀값 가리기를 지난다 — 그대로 컨텍스트에 남는 글이다", async () => {
+    setRedactionSecrets(["sk-secret-value-123456"]);
+    const requestChoice = vi.fn().mockResolvedValue({
+      answered: true,
+      answers: [
+        {
+          header: "키",
+          question: "무엇을 쓸까요?",
+          multiSelect: false,
+          selected: ["sk-secret-value-123456"],
+          custom: "키는 sk-secret-value-123456 입니다",
+          answered: true,
+        },
+      ],
+    });
+
+    const result = (await run(buildTools({ requestChoice }).ask_user_question, {
+      questions: TOPICS,
+    })) as { answers: { selected: string[]; custom: string }[] };
+
+    expect(result.answers[0].custom).not.toContain("sk-secret-value-123456");
+    expect(result.answers[0].selected[0]).not.toContain("sk-secret-value-123456");
+    setRedactionSecrets([]);
+  });
+});
+
 describe("summarizeToolCall", () => {
   it("경로/명령/키를 골라 한 줄로 줄인다", () => {
     expect(summarizeToolCall("read_file", { path: "src/App.tsx" })).toBe("read_file(src/App.tsx)");
@@ -428,6 +543,15 @@ describe("summarizeToolCall", () => {
       "delegate_task(테스트 러너)",
     );
     expect(summarizeToolCall("recall", {})).toBe("recall");
+  });
+
+  it("질문 카드는 주제 이름을 이어 붙인다 — 인자가 목록이라 위 규칙에 안 걸린다", () => {
+    expect(
+      summarizeToolCall("ask_user_question", {
+        questions: [{ header: "라이브러리" }, { header: "배포" }],
+      }),
+    ).toBe("ask_user_question(라이브러리, 배포)");
+    expect(summarizeToolCall("ask_user_question", { questions: [] })).toBe("ask_user_question");
   });
 
   it("아주 긴 인자는 잘라 낸다", () => {
