@@ -95,7 +95,10 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
   time), single- or multi-select per topic, and a write-your-own slot at the end of every
   list. Arrow keys move between topics, so an answer you already gave stays editable;
   nothing is final until you press [Send]. Declining is an answer too — the agent is told
-  it got none, and proceeds on a stated assumption.
+  it got none, and proceeds on a stated assumption. Neither the choice card nor the
+  approval card hides the conversation: they take space below the transcript rather than
+  floating over it, the transcript follows itself back to the bottom when they appear,
+  and a card that runs long scrolls inside itself instead of eating the screen.
 - **Show it, don't describe it.** Paste a screenshot with `Ctrl+V`, drop it onto the
   composer, pick a file with the clip button, or point at one already in the project with
   `@path/to/shot.png` — all four land in the same place and go to the model as an actual
@@ -121,6 +124,10 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
 - **Readable at your size.** Zoom the conversation with `Ctrl` + wheel, `Ctrl+=` /
   `Ctrl+-`, or the `− 100% +` control above the composer; `Ctrl+0` puts it back. The
   setting is remembered.
+- **Room to read.** Collapse the session list with `Ctrl+B` and the conversation-tree
+  pane with `Ctrl+L` (`Cmd` on a Mac) — they work with the cursor in the composer too.
+  Two toggles in the top bar do the same, and the collapsed state is remembered. The
+  composer itself resizes too: drag the rule above it, double-click to reset.
 - **Markdown preview in the file viewer.** Open a `.md` file from the Files tab and hit
   [Preview] to see it rendered — same parser, same renderer as the chat.
 - Light and dark themes, driven entirely by semantic tokens in one stylesheet.

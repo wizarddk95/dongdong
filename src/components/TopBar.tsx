@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 
 import { Button, SELECT_SM } from "@/components/Panel";
+import type { MessageKey } from "@/lib/i18n";
 import { buildModelOptions, hasCredentialFor, modelLabel, parseModelId } from "@/lib/ai/providers";
 import { useT } from "@/lib/i18n/useT";
 import { useSettings } from "@/store/settings";
@@ -8,6 +9,64 @@ import { useWorkspace } from "@/store/workspace";
 
 interface TopBarProps {
   onOpenSettings: () => void;
+}
+
+/**
+ * 패널 여닫기 토글 — 세션 목록 · 대화 트리.
+ *
+ * 접힌 패널은 화면에서 사라지므로 **되돌리는 손잡이가 화면에 남아 있어야 한다**
+ * (단축키만 남기면 실수로 접은 사람이 앱을 다시 켠다). 지금 열려 있는지는
+ * 색이 아니라 아이콘의 채움과 `aria-pressed` 가 말한다.
+ */
+function PanelToggle({
+  open,
+  labelKey,
+  hintKey,
+  side,
+  onToggle,
+}: {
+  open: boolean;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
+  /** 이 패널이 붙어 있는 쪽 — 아이콘의 채워진 칸이 그쪽으로 간다. */
+  side: "left" | "right";
+  onToggle: () => void;
+}) {
+  const t = useT();
+  return (
+    <Button
+      variant="ghost"
+      aria-pressed={open}
+      title={t(hintKey)}
+      aria-label={t(hintKey)}
+      onClick={onToggle}
+      className={open ? "text-ink" : ""}
+    >
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <rect
+          x="1.75"
+          y="2.75"
+          width="12.5"
+          height="10.5"
+          rx="1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        {/* 열려 있으면 그쪽 칸이 채워진다 — 색맹에게도 상태가 모양으로 읽힌다. */}
+        <rect
+          x={side === "left" ? 1.75 : 10.25}
+          y="2.75"
+          width="4"
+          height="10.5"
+          rx="1.5"
+          fill={open ? "currentColor" : "none"}
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+      </svg>
+      <span className="hidden lg:inline">{t(labelKey)}</span>
+    </Button>
+  );
 }
 
 /**
@@ -23,6 +82,8 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
   const updateSettings = useSettings((state) => state.update);
   const credentials = useSettings((state) => state.credentials);
   const localModels = useSettings((state) => state.localModels);
+  const showSessions = useSettings((state) => state.showSessions);
+  const showTree = useSettings((state) => state.showTree);
 
   const modelOptions = buildModelOptions(localModels);
   const known = modelOptions.some((option) => option.id === modelId);
@@ -70,6 +131,23 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
       {/* 내비 — 48px */}
       <div className="flex h-12 items-center gap-3 border-b border-hairline bg-canvas px-4">
         <span className="shrink-0 text-body-emphasis text-ink">dongdong</span>
+
+        <div className="flex shrink-0 items-center gap-0.5">
+          <PanelToggle
+            open={showSessions}
+            side="left"
+            labelKey="app.toggleSessions"
+            hintKey={showSessions ? "app.hideSessionsHint" : "app.showSessionsHint"}
+            onToggle={() => void updateSettings({ showSessions: !showSessions })}
+          />
+          <PanelToggle
+            open={showTree}
+            side="right"
+            labelKey="app.toggleTree"
+            hintKey={showTree ? "app.hideTreeHint" : "app.showTreeHint"}
+            onToggle={() => void updateSettings({ showTree: !showTree })}
+          />
+        </div>
 
         <div className="flex shrink-0 items-center gap-1">
           <Button variant="primary" onClick={pickFolder} disabled={loading}>

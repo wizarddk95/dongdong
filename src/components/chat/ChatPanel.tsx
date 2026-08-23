@@ -30,6 +30,7 @@ import {
   MAX_IMAGES_PER_MESSAGE,
   type AttachedImage,
 } from "@/lib/images";
+import { INPUT_DEFAULT, clampInputHeight } from "@/lib/panelSize";
 import { buildIndex, pathTo, siblingsOf } from "@/lib/tree";
 import { isDefaultZoom, zoomIn, zoomOut, zoomPercent } from "@/lib/zoom";
 import { buildTurns, toBubbles, turnLabel } from "@/lib/turns";
@@ -39,6 +40,9 @@ import { useChat } from "@/store/chat";
 import { useQuestions } from "@/store/questions";
 import { useSettings } from "@/store/settings";
 import { useWorkspace } from "@/store/workspace";
+
+/** 바닥에 붙어 있다고 볼 여유(px). 확대 배율 때문에 잔량이 정확히 0 으로 안 떨어진다. */
+const BOTTOM_SLACK = 24;
 
 export function ChatPanel() {
   const t = useT();
@@ -72,6 +76,7 @@ export function ChatPanel() {
   const injectDateTime = useSettings((state) => state.injectDateTime);
   const shellApproval = useSettings((state) => state.shellApproval);
   const chatZoom = useSettings((state) => state.chatZoom);
+  const chatInputHeight = useSettings((state) => state.chatInputHeight);
   const updateSettings = useSettings((state) => state.update);
 
   const [draft, setDraft] = useState("");
@@ -92,6 +97,16 @@ export function ChatPanel() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   /** 도구가 붙잡고 있는 시간(초). "언제 끝나나" 를 사람이 셀 수 있어야 한다. */
   const [toolElapsed, setToolElapsed] = useState(0);
+  /**
+   * 입력칸 높이를 끌고 있는 중인가. 끌기 시작한 지점과 그때의 높이를 함께 잡아 둔다 —
+   * 이동량만 더해야 커서와 손잡이가 어긋나지 않는다.
+   */
+  const [inputDrag, setInputDrag] = useState<{ y: number; height: number } | null>(null);
+  /**
+   * 끄는 동안의 높이. 메모리에만 두었다가 손을 뗄 때 설정으로 넘긴다 —
+   * 설정에 바로 쓰면 픽셀마다 `settings.json` 을 때린다. null 이면 저장된 값을 쓴다.
+   */
+  const [inputHeight, setInputHeight] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -112,9 +127,83 @@ export function ChatPanel() {
     return { path, bubbles: toBubbles(path), index: buildIndex(messages) };
   }, [messages, activeParentId]);
 
+  /**
+   * 맨 아래에 붙어 따라 내려갈 것인가.
+   *
+   * 위로 올려 옛 답을 읽는 중인 사람을 끌어내리면 안 되므로 상태를 하나 들고 있는다.
+   * 판정을 `onScroll` 한 곳에서만 하지 않는 이유는 **부드러운 스크롤** 때문이다 —
+   * 애니메이션이 도는 동안에도 `scroll` 이 계속 뜨는데 그 중간값은 아직 바닥이 아니라서,
+   * 거기서 `false` 로 내리면 스트리밍 중에 스스로 따라가기를 꺼 버린다.
+   * 그래서 **바닥에 닿았을 때만 켜고**, 끄는 것은 사람이 실제로 위로 굴렸을 때만 한다.
+   */
+  const stickToBottom = useRef(true);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
+    const box = scrollRef.current;
+    if (!box) return;
+    box.scrollTo({ top: box.scrollHeight, behavior });
+  }, []);
+
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [path.length, streamingText]);
+    if (!stickToBottom.current) return;
+    scrollToBottom("smooth");
+  }, [path.length, streamingText, scrollToBottom]);
+
+  /**
+   * 승인 카드·선택 카드가 뜨면 대화 목록의 **높이가 줄어든다**(둘 다 목록 아래에
+   * 자리를 차지하는 형제다). 스크롤 위치는 그대로라 방금 도착한 답이 카드 뒤로
+   * 밀려 화면 밖으로 나가고, 사람에게는 "팝업이 새 메시지를 가렸다" 로 보인다.
+   *
+   * 그래서 목록의 크기가 바뀌면 — 카드가 뜨고 지는 것, 입력칸을 끌어 늘리는 것,
+   * 창 크기가 바뀌는 것 전부 — 붙어 있던 사람은 다시 바닥으로 데려간다.
+   * 여기서는 부드럽게 굴리지 않는다. 카드가 뜨는 순간은 이미 화면이 한 번 움직인
+   * 뒤라 애니메이션이 하나 더 붙으면 어지럽다.
+   */
+  useEffect(() => {
+    const box = scrollRef.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottom.current) scrollToBottom("auto");
+    });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
+
+  /**
+   * 입력칸 높이 끌기.
+   *
+   * 위로 끌면 커지고 아래로 끌면 작아진다 — 손잡이가 입력칸 **위**에 있으므로
+   * 커서가 올라간 만큼(`시작 y - 지금 y`) 높이를 더한다. 패널 분할선과 같은 이유로
+   * 리스너를 `window` 에 건다: 손이 손잡이 밖으로 나가도 끌기가 이어져야 한다.
+   * 저장은 손을 뗄 때 한 번만 — 픽셀마다 디스크를 때리면 안 된다.
+   */
+  useEffect(() => {
+    if (!inputDrag) return;
+
+    function onMove(event: PointerEvent) {
+      if (!inputDrag) return;
+      setInputHeight(clampInputHeight(inputDrag.height + (inputDrag.y - event.clientY)));
+    }
+    function onUp() {
+      setInputDrag(null);
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [inputDrag]);
+
+  useEffect(() => {
+    if (inputDrag || inputHeight === null) return;
+    if (inputHeight !== chatInputHeight) void updateSettings({ chatInputHeight: inputHeight });
+    setInputHeight(null);
+  }, [inputDrag, inputHeight, chatInputHeight, updateSettings]);
+
+  /** 지금 그릴 입력칸 높이 — 끄는 중이면 손끝의 값, 아니면 저장된 값. */
+  const effectiveInputHeight = inputHeight ?? clampInputHeight(chatInputHeight);
 
   /**
    * 도구가 몇 초째 붙잡고 있는지 센다.
@@ -333,7 +422,23 @@ export function ChatPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas">
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-auto p-4"
+        onScroll={(event) => {
+          const box = event.currentTarget;
+          // 켜기만 한다 — 끄는 것은 아래 `onWheel` 이 맡는다(윗 주석 참고).
+          if (box.scrollHeight - box.scrollTop - box.clientHeight <= BOTTOM_SLACK) {
+            stickToBottom.current = true;
+          }
+        }}
+        onWheel={(event) => {
+          // Ctrl + 휠은 스크롤이 아니라 확대다 — 따라가기 상태를 건드리면 안 된다.
+          if (event.ctrlKey || event.metaKey) return;
+          // 사람이 위로 굴렸다 = 옛 답을 읽는 중이다. 새 내용이 와도 끌어내리지 않는다.
+          if (event.deltaY < 0) stickToBottom.current = false;
+        }}
+      >
         {path.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             {/* 빈 화면은 이 앱이 유일하게 큰 활자를 쓸 자리다 — 웨이트 300 의 디스플레이. */}
@@ -427,15 +532,38 @@ export function ChatPanel() {
       )}
 
       {/*
+        입력칸 높이 손잡이 — 패널 분할선과 같은 부품이다(잡히는 영역만 위아래로 넓힌 1px 선).
+        긴 지시문을 쓸 때 세 줄짜리 창으로는 방금 쓴 문단이 스스로 보이지 않는다.
+        자리는 입력 영역의 **위 테두리** 그 자체다: 여기가 대화와 입력이 맞닿는 선이라
+        선 하나가 두 몫(경계 · 손잡이)을 한다.
+      */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        title={t("chat.resizeInput")}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          setInputDrag({ y: event.clientY, height: effectiveInputHeight });
+        }}
+        onDoubleClick={() => setInputHeight(INPUT_DEFAULT)}
+        className={`group relative h-px shrink-0 cursor-row-resize transition-colors ${
+          // 파일을 끌고 왔을 때도 이 선이 함께 청록으로 변한다 — 놓을 자리의 테두리다.
+          inputDrag || dropping ? "bg-accent" : "bg-hairline hover:bg-accent"
+        }`}
+      >
+        <span className="absolute inset-x-0 -top-1.5 -bottom-1.5" />
+      </div>
+
+      {/*
         끌어다 놓기. Tauri 의 `dragDropEnabled` 를 **꺼야** 여기까지 온다 —
         켜져 있으면 OS 레벨에서 창이 먼저 가로채고 웹뷰의 `dataTransfer` 는 빈 채로 온다
         (`src-tauri/tauri.conf.json`). 받는 길은 붙여넣기와 완전히 같다(`addImages`):
         같은 형식 · 같은 장수 상한 · 같은 모델 게이팅을 지난다.
       */}
       <div
-        className={`shrink-0 border-t p-3 transition-colors ${
-          dropping ? "border-accent bg-accent-subtle" : "border-hairline"
-        }`}
+        className={`shrink-0 p-3 transition-colors ${
+          inputDrag ? "cursor-row-resize select-none" : ""
+        } ${dropping ? "bg-accent-subtle" : ""}`}
         onDragOver={(event) => {
           // 파일이 아닌 드래그(글자 선택 등)는 그냥 지나가게 둔다.
           if (!event.dataTransfer.types.includes("Files")) return;
@@ -656,9 +784,10 @@ export function ChatPanel() {
                   ? t("chat.inputPlaceholder")
                   : t("chat.waiting")
               }
-              rows={3}
+              // 높이는 줄 수가 아니라 px 다 — 손잡이로 끄는 값이라 계단이 없어야 한다.
+              style={{ height: effectiveInputHeight }}
               disabled={!project}
-              className="min-h-0 w-full resize-none rounded-md border border-field-rule bg-field px-3.5 py-2.5 text-body-sm text-ink transition-colors placeholder:text-ink-subtle hover:border-ink-subtle focus:border-accent disabled:cursor-not-allowed disabled:border-hairline disabled:bg-surface-1 disabled:text-ink-disabled"
+              className="block min-h-0 w-full resize-none rounded-md border border-field-rule bg-field px-3.5 py-2.5 text-body-sm text-ink transition-colors placeholder:text-ink-subtle hover:border-ink-subtle focus:border-accent disabled:cursor-not-allowed disabled:border-hairline disabled:bg-surface-1 disabled:text-ink-disabled"
             />
           </div>
           {/*

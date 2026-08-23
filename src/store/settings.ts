@@ -28,6 +28,7 @@ import {
   t,
   type Locale,
 } from "@/lib/i18n";
+import { INPUT_DEFAULT, clampInputHeight } from "@/lib/panelSize";
 import { DEFAULT_THEME, applyTheme, normalizeTheme, type ThemePreference } from "@/lib/theme";
 import { DEFAULT_ZOOM, clampZoom } from "@/lib/zoom";
 
@@ -60,6 +61,18 @@ interface SettingsState extends ProviderCredentials {
    * 세션이 아니라 디스크에 남긴다.
    */
   chatZoom: number;
+  /**
+   * 좌측 세션 목록 · 우측 대화 트리 패널을 펼쳐 두는가(`Ctrl+B` · `Ctrl+L`).
+   * 폭(`panelSize`)과 달리 이건 "이 패널을 안 본다" 는 결정이라 디스크에 남긴다 —
+   * 앱을 다시 켤 때마다 접으라고 하면 접는 뜻이 없다.
+   */
+  showSessions: boolean;
+  showTree: boolean;
+  /**
+   * 채팅 입력칸 높이(px). 확대 배율과 같은 이유로 디스크에 남긴다 —
+   * 긴 지시문을 쓰는 사람은 매번 다시 늘리고 싶지 않다.
+   */
+  chatInputHeight: number;
   systemPrompt: string;
   effort: Effort;
   maxSteps: number;
@@ -128,6 +141,9 @@ type PersistedSettings = Pick<
   | "modelId"
   | "theme"
   | "chatZoom"
+  | "showSessions"
+  | "showTree"
+  | "chatInputHeight"
   | "language"
   | "systemPrompt"
   | "effort"
@@ -157,6 +173,9 @@ const PERSISTED_KEYS: (keyof PersistedSettings)[] = [
   "modelId",
   "theme",
   "chatZoom",
+  "showSessions",
+  "showTree",
+  "chatInputHeight",
   "language",
   "systemPrompt",
   "effort",
@@ -201,6 +220,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
   modelId: DEFAULT_MODEL_ID,
   theme: DEFAULT_THEME,
   chatZoom: DEFAULT_ZOOM,
+  showSessions: true,
+  showTree: true,
+  chatInputHeight: INPUT_DEFAULT,
   // 첫 실행이면 OS 언어로 짐작한 값이 이미 들어 있다(`lib/i18n/locale.ts`).
   language: getLocale(),
   systemPrompt: defaultSystemPrompt(),
@@ -250,6 +272,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
         theme: normalizeTheme(persisted.theme),
         // 옛 설정에는 없던 키다. 손으로 고쳐 넣은 이상한 값도 여기서 계단 안으로 자른다.
         chatZoom: clampZoom(persisted.chatZoom),
+        // 옛 설정에는 없던 키다. 없거나 이상한 값이면 **펼친 쪽**으로 간다 —
+        // 숨어 있는 패널을 찾으라고 하는 것보다 접는 법을 알려 주는 편이 낫다.
+        showSessions: persisted.showSessions !== false,
+        showTree: persisted.showTree !== false,
+        chatInputHeight: clampInputHeight(persisted.chatInputHeight),
         // 저장된 언어가 없으면(첫 실행·옛 설정) 지금 짐작한 값을 그대로 둔다.
         language: persisted.language ? normalizeLocale(persisted.language) : getLocale(),
         mcpServers: persisted.mcpServers ?? [],

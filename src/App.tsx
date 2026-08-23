@@ -14,6 +14,7 @@ import {
   clampSidebarWidth,
   defaultRightWidth,
 } from "@/lib/panelSize";
+import { matchPanelShortcut } from "@/lib/shortcuts";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import { useAgents } from "@/store/agents";
 import { useChat } from "@/store/chat";
@@ -52,6 +53,11 @@ export default function App() {
   const running = useChat((state) => state.running);
   const settingsLoaded = useSettings((state) => state.loaded);
   const theme = useSettings((state) => state.theme);
+  // 패널 여닫기. 폭과 달리 디스크에 남는다 — "이 패널은 안 본다" 는 결정이라
+  // 앱을 다시 켤 때마다 되살아나면 접은 뜻이 없다.
+  const showSessions = useSettings((state) => state.showSessions);
+  const showTree = useSettings((state) => state.showTree);
+  const updateSettings = useSettings((state) => state.update);
   const connectMcp = useMcp((state) => state.connectEnabled);
   // 스킬 문서는 프로젝트마다 다르다(.dongdong/skills) → 폴더를 열 때 다시 읽는다.
   const refreshSkills = useSkills((state) => state.refresh);
@@ -110,6 +116,35 @@ export default function App() {
     };
   }, [dragging]);
 
+  /**
+   * `Ctrl+B` · `Ctrl+L` — 패널 여닫기.
+   *
+   * 창 전체에 건다 — 입력칸에 커서를 둔 채로 누르는 것이 이 단축키를 쓰는 가장 흔한
+   * 순간이고, 수식 키가 붙은 조합이라 타이핑과 헷갈릴 일이 없다. 판정은 전부
+   * `lib/shortcuts.ts` 에 있다(버튼의 툴팁도 같은 규칙을 말해야 하므로 여기 따로 적지 않는다).
+   * `preventDefault()` 는 웹뷰가 제 기본 동작(주소 줄 포커스 같은 것)을 가져가지 않게 한다.
+   */
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const panel = matchPanelShortcut({
+        key: event.key,
+        code: event.code,
+        shiftKey: event.shiftKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+      });
+      if (!panel) return;
+      event.preventDefault();
+      void updateSettings(
+        panel === "sessions" ? { showSessions: !showSessions } : { showTree: !showTree },
+      );
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showSessions, showTree, updateSettings]);
+
   useEffect(() => {
     void bootstrap();
     void loadSettings();
@@ -160,24 +195,32 @@ export default function App() {
       )}
 
       <main ref={mainRef} className="flex min-h-0 flex-1">
-        <SessionSidebar width={sidebarWidth} />
+        {/*
+          접으면 분할선까지 함께 사라진다 — 패널 없는 분할선은 끌 것이 없는 손잡이다.
+          다시 펴는 길은 상단 바의 토글과 `Ctrl+B` 둘이다.
+        */}
+        {showSessions && (
+          <>
+            <SessionSidebar width={sidebarWidth} />
 
-        {/* 세션 목록 분할선 — 우측 것과 같은 부품이다(잡히는 영역만 좌우로 넓힌 1px 선). */}
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          title={t("app.resizeSidebar")}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            setDragging("sidebar");
-          }}
-          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT)}
-          className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
-            dragging === "sidebar" ? "bg-accent" : "bg-hairline hover:bg-accent"
-          }`}
-        >
-          <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
-        </div>
+            {/* 세션 목록 분할선 — 우측 것과 같은 부품이다(잡히는 영역만 좌우로 넓힌 1px 선). */}
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              title={t("app.resizeSidebar")}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                setDragging("sidebar");
+              }}
+              onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+              className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
+                dragging === "sidebar" ? "bg-accent" : "bg-hairline hover:bg-accent"
+              }`}
+            >
+              <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+            </div>
+          </>
+        )}
 
         <div
           ref={splitRef}
@@ -188,90 +231,98 @@ export default function App() {
             <ChatPanel />
           </section>
 
-          {/* 분할선 — 끌어서 채팅 폭을 넓힌다 */}
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            title={t("app.resizeChat")}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              setDragging("right");
-            }}
-            onDoubleClick={() => {
-              const box = splitRef.current?.getBoundingClientRect();
-              if (box) setRightWidth(defaultRightWidth(box.width));
-            }}
-            className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
-              dragging === "right" ? "bg-accent" : "bg-hairline hover:bg-accent"
-            }`}
-          >
-            {/* 1px 선은 집기 어려워 잡히는 영역만 좌우로 넓힌다 */}
-            <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
-          </div>
+          {/*
+            대화 트리 패널을 접으면 채팅이 창을 다 쓴다. 분할선도 함께 사라진다 —
+            끌 패널이 없는 손잡이는 잡을 것이 없다. 다시 펴는 길은 상단 바의 토글과 `Ctrl+L`.
+          */}
+          {showTree && (
+            <>
+              {/* 분할선 — 끌어서 채팅 폭을 넓힌다 */}
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                title={t("app.resizeChat")}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  setDragging("right");
+                }}
+                onDoubleClick={() => {
+                  const box = splitRef.current?.getBoundingClientRect();
+                  if (box) setRightWidth(defaultRightWidth(box.width));
+                }}
+                className={`group relative w-px shrink-0 cursor-col-resize transition-colors ${
+                  dragging === "right" ? "bg-accent" : "bg-hairline hover:bg-accent"
+                }`}
+              >
+                {/* 1px 선은 집기 어려워 잡히는 영역만 좌우로 넓힌다 */}
+                <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+              </div>
 
-          {/* 우: 노드 트리 시각화 (+ Phase 1 도구들) */}
-          <section
-            className="flex min-h-0 shrink-0 flex-col"
-            style={{ width: rightWidth ?? "40%" }}
-          >
-            {/*
-             * 탭은 배경으로 고르지 않는다. 선택된 것만 잉크색 글자에 2px 청록 밑줄이
-             * 붙고, 나머지는 1px 헤어라인 위에 흐리게 남는다.
-             */}
-            {/*
-             * 패널을 좁히면 탭이 먼저 눌린다 — flex 항목은 기본이 `shrink` 라
-             * 라벨 폭이 글자 하나까지 줄고 "서브에이전트" 가 세로로 선다.
-             * 라벨은 가로로 못 박고, 자리가 모자라면 줄 자체가 옆으로 스크롤한다.
-             */}
-            <nav
-              role="tablist"
-              className="flex shrink-0 overflow-x-auto border-b border-hairline bg-canvas px-2"
-            >
-              {TABS.map((item) => {
-                const selected = tab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    role="tab"
-                    aria-selected={selected}
-                    onClick={() => setTab(item.id)}
-                    /*
-                     * 크기는 고정하고 **웨이트와 밑줄만** 바꾼다 — 선택에 따라 글자
-                     * 크기가 달라지면 탭 폭이 흔들려서 누를 때마다 줄이 출렁인다.
-                     */
-                    className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-body-sm whitespace-nowrap transition-colors ${
-                      selected
-                        ? "border-accent font-semibold text-ink"
-                        : "border-transparent text-ink-muted hover:bg-hover hover:text-ink"
-                    }`}
-                  >
-                    {t(item.labelKey)}
-                    {item.id === "agents" && activeAgents > 0 && (
-                      // 채움색은 accent 가 아니라 primary — 다크에서 흰 글자와의 대비가 여기서만 충분하다.
-                      <span className="rounded-full bg-primary px-1.5 text-caption text-on-primary">
-                        {activeAgents}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
+              {/* 우: 노드 트리 시각화 (+ Phase 1 도구들) */}
+              <section
+                className="flex min-h-0 shrink-0 flex-col"
+                style={{ width: rightWidth ?? "40%" }}
+              >
+                {/*
+                 * 탭은 배경으로 고르지 않는다. 선택된 것만 잉크색 글자에 2px 청록 밑줄이
+                 * 붙고, 나머지는 1px 헤어라인 위에 흐리게 남는다.
+                 */}
+                {/*
+                 * 패널을 좁히면 탭이 먼저 눌린다 — flex 항목은 기본이 `shrink` 라
+                 * 라벨 폭이 글자 하나까지 줄고 "서브에이전트" 가 세로로 선다.
+                 * 라벨은 가로로 못 박고, 자리가 모자라면 줄 자체가 옆으로 스크롤한다.
+                 */}
+                <nav
+                  role="tablist"
+                  className="flex shrink-0 overflow-x-auto border-b border-hairline bg-canvas px-2"
+                >
+                  {TABS.map((item) => {
+                    const selected = tab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        role="tab"
+                        aria-selected={selected}
+                        onClick={() => setTab(item.id)}
+                        /*
+                         * 크기는 고정하고 **웨이트와 밑줄만** 바꾼다 — 선택에 따라 글자
+                         * 크기가 달라지면 탭 폭이 흔들려서 누를 때마다 줄이 출렁인다.
+                         */
+                        className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-body-sm whitespace-nowrap transition-colors ${
+                          selected
+                            ? "border-accent font-semibold text-ink"
+                            : "border-transparent text-ink-muted hover:bg-hover hover:text-ink"
+                        }`}
+                      >
+                        {t(item.labelKey)}
+                        {item.id === "agents" && activeAgents > 0 && (
+                          // 채움색은 accent 가 아니라 primary — 다크에서 흰 글자와의 대비가 여기서만 충분하다.
+                          <span className="rounded-full bg-primary px-1.5 text-caption text-on-primary">
+                            {activeAgents}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </nav>
 
-            <div className="min-h-0 flex-1">
-              {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
-              {tab === "agents" && <AgentDashboard />}
-              {tab === "files" && (
-                <div className="h-full min-h-0 overflow-hidden p-3">
-                  <FileExplorer />
+                <div className="min-h-0 flex-1">
+                  {tab === "tree" && <FlowCanvas onFocusAgents={() => setTab("agents")} />}
+                  {tab === "agents" && <AgentDashboard />}
+                  {tab === "files" && (
+                    <div className="h-full min-h-0 overflow-hidden p-3">
+                      <FileExplorer />
+                    </div>
+                  )}
+                  {tab === "shell" && (
+                    <div className="flex h-full flex-col p-3">
+                      <ShellConsole />
+                    </div>
+                  )}
                 </div>
-              )}
-              {tab === "shell" && (
-                <div className="flex h-full flex-col p-3">
-                  <ShellConsole />
-                </div>
-              )}
-            </div>
-          </section>
+              </section>
+            </>
+          )}
         </div>
       </main>
 

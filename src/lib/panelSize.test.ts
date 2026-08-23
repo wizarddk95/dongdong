@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   CHAT_MIN,
+  INPUT_DEFAULT,
+  INPUT_MAX,
+  INPUT_MIN,
   RIGHT_MIN,
   SIDEBAR_MAX,
   SIDEBAR_MIN,
+  clampInputHeight,
   clampRightWidth,
   clampSidebarWidth,
   defaultRightWidth,
@@ -62,5 +66,29 @@ describe("clampSidebarWidth", () => {
 
   it("남는 자리가 없어도 최소 폭은 지킨다 (창이 아주 좁을 때)", () => {
     expect(clampSidebarWidth(400, 500)).toBe(SIDEBAR_MIN);
+  });
+});
+
+describe("clampInputHeight", () => {
+  it("범위 안의 값은 그대로 둔다", () => {
+    expect(clampInputHeight(120)).toBe(120);
+  });
+
+  it("하한 아래로 내려가지 않는다", () => {
+    expect(clampInputHeight(10)).toBe(INPUT_MIN);
+  });
+
+  it("상한 위로 올라가지 않는다", () => {
+    expect(clampInputHeight(9999)).toBe(INPUT_MAX);
+  });
+
+  it("소수점 좌표는 정수로 떨어진다", () => {
+    expect(clampInputHeight(120.6)).toBe(121);
+  });
+
+  it("설정 파일이 손으로 고쳐졌으면 기본값으로 되돌린다", () => {
+    expect(clampInputHeight(undefined)).toBe(INPUT_DEFAULT);
+    expect(clampInputHeight("크게")).toBe(INPUT_DEFAULT);
+    expect(clampInputHeight(Number.NaN)).toBe(INPUT_DEFAULT);
   });
 });

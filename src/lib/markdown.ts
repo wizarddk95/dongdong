@@ -6,6 +6,8 @@
  * 스트리밍 중 잘린 코드펜스·수식도 제 모습으로 보여야 하므로 `closed` 를 남긴다.
  * 수식은 구분 기호만 걷어 내고 원문을 그대로 넘긴다 — LaTeX 해석은 그리는 쪽(KaTeX) 일이다.
  * 원문 HTML 은 파싱하지 않고 텍스트로 흘려보낸다(React 가 그대로 이스케이프).
+ * 예외는 `<br>` 하나 — 표의 칸은 줄바꿈 문자를 담을 수 없어 모델이 칸 안에서 줄을 나누는
+ * 길이 이것뿐이다(자세한 이유는 `parseInline` 의 해당 분기).
  */
 
 export type InlineNode =
@@ -432,6 +434,22 @@ export function parseInline(source: string): InlineNode[] {
     }
 
     if (ch === "<") {
+      /*
+       * `<br>` — 원문 HTML 중 **유일하게** 해석하는 태그다.
+       *
+       * 마크다운 표의 한 행은 곧 한 줄이라 칸 안에 줄바꿈 문자를 넣을 수 없다.
+       * 그래서 모델은 칸을 여러 줄로 쓸 때 `<br>` 를 적고, 그걸 글자로 흘리면
+       * 표에 `<br>` 가 그대로 박혀 정작 정보가 많은 표일수록 읽을 수 없게 된다.
+       * (GFM 도 같은 이유로 표 칸의 원문 HTML 을 허용한다)
+       */
+      const br = /^<br\s*\/?>/i.exec(source.slice(i));
+      if (br) {
+        flush();
+        nodes.push({ type: "break" });
+        i += br[0].length;
+        continue;
+      }
+
       const auto = /^<((?:https?:\/\/|mailto:)[^>\s]+)>/.exec(source.slice(i));
       if (auto) {
         flush();

@@ -81,6 +81,19 @@ describe("parseInline", () => {
   it("줄바꿈은 break 노드가 된다", () => {
     expect(flatten(parseInline("첫 줄\n둘째 줄"))).toBe("첫 줄\\n둘째 줄");
   });
+
+  it("`<br>` 도 줄바꿈이다 — 표의 칸이 줄을 나누는 유일한 길이다", () => {
+    expect(flatten(parseInline("첫 줄<br>둘째 줄"))).toBe("첫 줄\\n둘째 줄");
+    expect(flatten(parseInline("a<br/>b"))).toBe("a\\nb");
+    expect(flatten(parseInline("a<br />b"))).toBe("a\\nb");
+    expect(flatten(parseInline("a<BR>b"))).toBe("a\\nb");
+  });
+
+  it("`<br>` 를 뺀 원문 HTML 은 여전히 글자다", () => {
+    expect(flatten(parseInline("<b>굵게</b>"))).toBe("<b>굵게</b>");
+    expect(flatten(parseInline("<break>"))).toBe("<break>");
+    expect(flatten(parseInline("`<br>`"))).toBe("code(<br>)");
+  });
 });
 
 describe("parseMarkdown", () => {
@@ -177,6 +190,16 @@ describe("parseMarkdown", () => {
   it("HTML 은 해석하지 않고 글자로 남긴다", () => {
     const blocks = parseMarkdown("<script>alert(1)</script>");
     expect(text(blocks[0])).toBe("<script>alert(1)</script>");
+  });
+
+  it("표 칸 안의 `<br>` 로 줄을 나눈다", () => {
+    const [table] = parseMarkdown(
+      "| 입력 | 출력 |\n| --- | --- |\n| 수분율<br>보관 기간 | 복원성 점수 |",
+    );
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    expect(flatten(table.rows[0][0])).toBe("수분율\\n보관 기간");
+    expect(flatten(table.rows[0][1])).toBe("복원성 점수");
   });
 });
 

@@ -44,3 +44,21 @@ export function clampSidebarWidth(width: number, windowWidth: number): number {
   const max = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, room));
   return Math.round(Math.min(Math.max(width, SIDEBAR_MIN), max));
 }
+
+/* ─────────────── 채팅 입력칸 높이 ─────────────── */
+
+/** 한 줄은 보이는 하한. 이보다 낮으면 쓰던 글이 스스로 안 보인다. */
+export const INPUT_MIN = 56;
+/** 넓혀도 이 이상은 안 간다 — 입력칸이 대화를 밀어내면 안 된다. */
+export const INPUT_MAX = 520;
+/** 기본 높이(= 예전의 `rows={3}`). 더블클릭하면 여기로 돌아온다. */
+export const INPUT_DEFAULT = 74;
+
+/**
+ * 입력칸 높이를 [INPUT_MIN, INPUT_MAX] 로 자른다.
+ * 설정 파일이 손으로 고쳐질 수 있으므로 숫자가 아닌 값도 여기서 기본값으로 되돌린다.
+ */
+export function clampInputHeight(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return INPUT_DEFAULT;
+  return Math.round(Math.min(Math.max(value, INPUT_MIN), INPUT_MAX));
+}

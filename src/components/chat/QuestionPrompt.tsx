@@ -179,12 +179,17 @@ export function QuestionPrompt() {
     }
   }
 
+  /*
+   * 카드가 아무리 길어도 대화를 통째로 밀어내지는 못하게 상한을 둔다 — 카드가 화면을
+   * 다 먹으면 방금 온 답을 보면서 판단할 수가 없다. 넘치면 카드 안쪽이 스크롤한다.
+   * (카드가 뜨느라 줄어든 만큼 대화를 다시 바닥으로 데려가는 일은 `ChatPanel` 이 맡는다)
+   */
   return (
     <div
       onKeyDown={onKeyDown}
       role="group"
       aria-label={t("questions.title")}
-      className="shrink-0 border-t border-hairline border-l-2 border-l-accent bg-accent-subtle px-3 py-2.5"
+      className="max-h-[45vh] shrink-0 overflow-y-auto border-t border-hairline border-l-2 border-l-accent bg-accent-subtle px-3 py-2.5"
     >
       <div className="mb-1.5 flex flex-wrap items-center gap-2 text-caption text-ink-muted">
         <span className="text-body-emphasis text-ink">{t("questions.title")}</span>
