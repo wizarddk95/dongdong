@@ -54,6 +54,8 @@ pub fn run() {
             commands::fs::delete_path,
             commands::fs::path_info,
             commands::fs::search_project_files,
+            commands::fs::save_attachment,
+            commands::fs::read_attachment,
             // sessions & messages (대화 트리)
             commands::session::create_session,
             commands::session::list_sessions,

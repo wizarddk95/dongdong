@@ -3,7 +3,7 @@
 `dongdong` — 노드 기반 대화 시각화를 갖춘 **로컬 코딩 에이전트** (Tauri 2 + React 19).
 도커/샌드박스 없이 사용자 OS 권한으로 직접 실행하고, 프로젝트 루트의 `.agent_workspace/local.db`(SQLite)에 저장한다.
 Phase 1~4 완료: 워크스페이스·대화 트리 → LLM 스트리밍 → 도구/Inspector → 서브에이전트 + MCP 브리지.
-그 위에 스킬(절차서) · 훅(비차단 자동 동작) · 셸 실행 승인 · `@` 파일 참조 · **한국어/영어 UI** 가 올라가 있다.
+그 위에 스킬(절차서) · 훅(비차단 자동 동작) · 셸 실행 승인 · `@` 파일 참조 · **이미지 첨부** · **한국어/영어 UI** 가 올라가 있다.
 
 ## 작업 후 반드시 통과시킬 것
 
@@ -12,7 +12,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 556 / cargo 63. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 598 / cargo 71. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -62,6 +62,14 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
   그래서 첫 페인트 전 테마 스크립트도 `public/theme-boot.js` 로 빼 두었다. 원격 자원(CDN·폰트·이미지)을
   새로 들이려면 CSP 와 `capabilities/default.json` 을 함께 고쳐야 한다. 새 LLM 도메인도 마찬가지.
   (`style-src` 의 `'unsafe-inline'` 은 React Flow 가 인라인 style 로 뷰포트를 옮기기 때문에 뺄 수 없다)
+- **이미지 바이트는 대화에 넣지 않는다**: 사용자 노드의 `content` 에는 마커 한 줄
+  (`<image sha="…" w="…" h="…" />`)만 남고 바이트는 `.agent_workspace/attachments/<sha>.<ext>` 에
+  내용주소로 눕는다. 페이로드(`TurnContext.messages`)에 실리는 것도 **참조**(`dd-image:<sha>`)이고,
+  진짜 바이트로 바뀌는 곳은 `runner.ts` 의 `hydrateImages()` **한 곳뿐**이다 —
+  `context_snapshot` 이 스텝마다 저장되므로 거기에 base64 가 들어가면 5스텝 턴이 이미지를
+  다섯 벌 복사한다. 새 경로에서 이미지를 실을 때 참조 단계를 건너뛰면 그 구멍이 다시 열린다.
+  **파일 이름이 되는 sha 는 양쪽에서 모양을 본다**(`is_sha256()` / `isSha256()`) — 안 보면
+  `../` 한 줄로 워크스페이스 밖에 쓴다. 확장자도 `mediaType` 문자열이 아니라 Rust 의 허용 목록에서만 나온다.
 - **스트리밍 중 DB 쓰기 금지**. 토큰은 Zustand 에만 쌓고 **스텝 경계**(도구 호출 확정 / 턴 종료)에서만 저장한다.
 - **`MODEL_CATALOG`(`lib/ai/providers.ts`) 는 사용자 소유** — 임의로 고치지 않는다.
 - **색·활자는 토큰만 쓴다**: 컴포넌트에 `zinc-800` 같은 팔레트 값이나 `#hex` 를 직접 적지 않는다.
@@ -222,6 +230,9 @@ src/
   lib/ai/approval.ts    셸 실행 승인 판정(순수) — 규칙 뽑기·매칭·위험 명령 판별
   lib/ai/questions.ts   사용자 선택 판정(순수) — 모델이 보낸 목록 접기·답 굳히기·주제 이동
   lib/ai/attachments.ts `@` 참조 파일을 읽어 메시지에 싣는 블록으로 (바이너리는 자리표만)
+                        이미지 마커(`<image sha=…/>`) 직렬화·파싱과 페이로드 참조(`dd-image:`)도 여기
+  lib/ai/imageTokens.ts 이미지 한 장의 토큰(순수) — 공급자마다 공식이 다르다. 축소 상한도 여기서 정한다
+  lib/images.ts         이미지의 웹뷰 쪽 절반 — 디코드·축소·SHA-256·저장·되읽기 (Rust 에 이미지 크레이트를 안 들인다)
   lib/ai/datetime.ts    지금 시각 블록 — 모델이 학습 시점을 "지금" 으로 착각하지 않게
   lib/mention.ts        `@` 토큰 찾기·끼워 넣기·뽑기 (순수). 입력칸과 전송 경로가 같은 규칙을 쓴다
   lib/ai/redact.ts      비밀값 가리기 — 도구 출력·에러 문구에서 API 키를 지운다 (`clip()` 이 부른다)
@@ -244,6 +255,7 @@ src/
                         chat/ApprovalPrompt.tsx — 셸 실행 승인 카드 (입력칸 바로 위, 한 번에 하나)
                         chat/QuestionPrompt.tsx — 사용자 선택 카드 (한 번에 한 주제 · 주제 사이를 오갈 수 있다)
                         chat/MentionPicker.tsx — `@` 자동완성 (방향키 이동 · Enter 선택)
+                        chat/ImageThumb.tsx — 첨부 이미지 썸네일 (입력칸·말풍선 공용)
                         agents/AgentResultModal.tsx — 서브에이전트 요약 팝업 (대시보드·턴 그래프 공용)
                         Panel.tsx — 공통 부품(Button·Panel·Modal·Tag·Hint·입력 크롬). 새 UI 는 여기서 가져다 쓴다
 src-tauri/src/
@@ -254,6 +266,7 @@ src-tauri/src/
   db/{schema,models,queries}.rs
   commands/{workspace,shell,fs,session,settings,skills,memory,agent,mcp}.rs
                         fs.rs 의 `search_project_files` 가 `@` 자동완성 목록을 만든다
+                        fs.rs 의 `save_attachment`/`read_attachment` 가 이미지 바이트를 눕히고 되읽는다
                         (빌드 산출물 디렉터리는 애초에 훑지 않는다)
                         skills.rs 만 프로젝트 루트 밖(앱 설정 디렉터리)을 연다 — 전역 스킬이 거기 산다
   mcp.rs                MCP stdio 클라이언트 (JSON-RPC 피어 + 프로세스 레지스트리)
@@ -344,6 +357,18 @@ src-tauri/src/
   텍스트가 아닌 파일은 **본문을 싣지 않는다**: 엑셀·워드·PDF 는 경로·종류·크기만 남기고
   `load_skill("xlsx"|"docx"|"pdf")` 로 절차를 열어 Python 으로 직접 읽으라고 짚어 준다.
   실린 내용은 `clip()` 을 지나므로 상한(파일당 20,000자·합계 60,000자)과 비밀값 가리기가 함께 걸린다.
+- **이미지 첨부**: 입력칸에 `Ctrl+V` 로 붙여넣거나 클립 버튼(`input[type=file]`)으로 고른다.
+  **`plugin-dialog` 을 쓰지 않는 이유**가 설계의 절반이다 — 대화상자는 *경로*를 주는데
+  바탕화면 스크린샷은 루트 밖이라 `resolve_within()` 이 막고, 그걸 뚫으려면 담장에 구멍을
+  내야 한다. 붙여넣기·파일 선택은 바이트를 곧바로 주므로 담장을 건드릴 일이 없다.
+  긴 변 1568px 을 넘으면 **웹뷰가 먼저 줄인다**(공급자는 어차피 줄이면서 요금은 원본 기준이다).
+  줄일 때만 webp 로 다시 굽고 이미 작으면 원본 바이트 그대로다.
+  **컨텍스트 게이지는 이미지를 자 수 환산에서 빼고 공식으로 더한다** — 참조는 자 수가 거의
+  0인데 토큰은 수천이라, 안 빼면 비율이 망가져 남은 대화를 통째로 과소평가한다
+  (`projectTokens()` 가 실측 토큰에서도 기준점의 이미지 몫을 뺀다).
+  모델 게이팅은 `acceptsImages()` 하나를 화면과 전송이 함께 쓴다. `MODEL_CATALOG` 은 사용자
+  소유라 `supportsVision` 이 **비어 있는 모델은 막지 않는다**(모른다고 잠그면 멀쩡한 모델에서
+  버튼이 사라진다). 턴을 지워도 눕은 바이트는 안 지운다 — 되돌리기가 그 파일을 필요로 한다.
 - **화면 언어**: 한국어 · 영어 두 벌이고 설정의 [일반]에서 고른다. 바뀌는 것은 화면 문구만이
   아니다 — 기본 시스템 프롬프트, 도구 설명(`tools.ts`), 스킬 목록 블록과 내장 스킬 본문,
   `@` 첨부 안내, 현재 시각 블록이 함께 간다. 처음 켤 때는 OS 언어로 짐작하고(`detectLocale`),

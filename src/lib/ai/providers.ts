@@ -1072,6 +1072,32 @@ export function sendsEffort(id: string): boolean {
   return supportedEffortsFor(id) !== undefined;
 }
 
+/**
+ * 이미지를 받는 모델인가.
+ *
+ * **`MODEL_CATALOG` 은 사용자 소유**라 비어 있는 항목을 우리가 채우지 않는다. 그래서 답은
+ * 셋이다 — 카탈로그가 `true` 라고 적어 둔 것, `false` 라고 적어 둔 것, **아무 말이 없는 것**.
+ * 아무 말이 없으면 막지 않는다: 지금 카탈로그의 OpenAI 항목들이 그렇고, 이걸 "지원 안 함"
+ * 으로 접으면 멀쩡히 이미지를 받는 모델에서 첨부 버튼이 사라진다.
+ * 사용자가 어떤 모델을 `false` 로 적어 두면 그때 게이트가 살아난다.
+ */
+export type VisionSupport = "yes" | "no" | "unknown";
+
+export function visionSupport(id: string): VisionSupport {
+  const flag = findModelOption(id)?.supportsVision;
+  if (flag === true) return "yes";
+  if (flag === false) return "no";
+  return "unknown";
+}
+
+/**
+ * 이미지를 실어 보낼 수 있는가. 화면(첨부 버튼·붙여넣기)과 전송 경로가 같은 함수를 쓴다 —
+ * 판정을 UI 에 따로 적으면 반드시 어긋난다.
+ */
+export function acceptsImages(id: string): boolean {
+  return visionSupport(id) !== "no";
+}
+
 /** 강도의 크기 순서. "가장 가까운 값" 을 찾을 때의 기준자다. */
 const EFFORT_ORDER: Effort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 

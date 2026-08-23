@@ -285,6 +285,78 @@ describe("contextStatus", () => {
     expect(status.estimated).toBe(false);
   });
 
+  it("이미지 토큰은 자 수 환산에서 빼고 따로 더한다", () => {
+    // 마지막 호출: 27,000 토큰 중 2,000 은 이미지 몫이다 → 글의 비율은 78,000 / 25,000 = 3.12자/토큰.
+    // 이걸 빼지 않으면 78,000 / 27,000 = 2.889 가 되어 남은 대화를 과소평가한다.
+    const status = contextStatus(
+      "anthropic:claude-opus-5",
+      usage({ inputTokens: 27_000, outputTokens: 600 }),
+      "anthropic:claude-opus-5",
+      {
+        chars: 81_000,
+        messageCount: 26,
+        measuredChars: 78_000,
+        imageTokens: 2_000,
+        measuredImageTokens: 2_000,
+      },
+    );
+
+    expect(status.charsPerToken).toBeCloseTo(3.12, 3);
+    // 3,000자 늘었고 이미지는 그대로 → 3,000 / 3.12 ≈ 962
+    expect(status.projectedTokens).toBe(962);
+    expect(status.used).toBe(27_962);
+  });
+
+  it("이미지를 새로 붙이면 그 장수만큼 토큰이 는다 (환산이 아니라 공식으로)", () => {
+    const status = contextStatus(
+      "anthropic:claude-opus-5",
+      usage({ inputTokens: 27_000, outputTokens: 600 }),
+      "anthropic:claude-opus-5",
+      {
+        chars: 78_000,
+        messageCount: 26,
+        measuredChars: 78_000,
+        // 앞선 호출에는 이미지가 없었고, 지금 1,048 토큰짜리 한 장을 붙였다.
+        imageTokens: 1_048,
+        measuredImageTokens: 0,
+      },
+    );
+
+    // 자 수는 그대로이므로 늘어난 몫은 이미지뿐이다.
+    expect(status.projectedTokens).toBe(1_048);
+    expect(status.used).toBe(28_048);
+    expect(status.estimated).toBe(true);
+  });
+
+  it("이미지를 뺀 분기는 그만큼 줄어든다", () => {
+    const status = contextStatus(
+      "anthropic:claude-opus-5",
+      usage({ inputTokens: 27_000, outputTokens: 600 }),
+      "anthropic:claude-opus-5",
+      {
+        chars: 78_000,
+        messageCount: 26,
+        measuredChars: 78_000,
+        imageTokens: 0,
+        measuredImageTokens: 1_048,
+      },
+    );
+
+    expect(status.projectedTokens).toBe(-1_048);
+    expect(status.used).toBe(25_952);
+  });
+
+  it("이미지 필드가 없는 옛 호출도 그대로 굴러간다", () => {
+    const status = contextStatus(
+      "anthropic:claude-opus-5",
+      usage({ inputTokens: 27_000, outputTokens: 600 }),
+      "anthropic:claude-opus-5",
+      { chars: 81_000, messageCount: 26, measuredChars: 78_000 },
+    );
+
+    expect(status.projectedTokens).toBe(1_038);
+  });
+
   it("페이로드를 모르면(세션 카드) 마지막 호출의 입력+출력으로 물러난다", () => {
     const status = contextStatus(
       "anthropic:claude-opus-5",

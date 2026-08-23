@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentRun,
   AgentRunPatch,
+  AttachmentBytes,
   DeleteOutcome,
   DirEntry,
   FileContent,
@@ -25,6 +26,7 @@ import type {
   PathInfo,
   Project,
   ProjectFile,
+  SavedAttachment,
   Session,
   SessionOverview,
   ShellOptions,
@@ -138,6 +140,27 @@ export const deletePath = (path: string, options?: { projectPath?: string; recur
     projectPath: options?.projectPath,
     recursive: options?.recursive,
   });
+
+/**
+ * 이미지 바이트를 프로젝트 워크스페이스에 눕힌다.
+ *
+ * SHA-256 은 **웹뷰가** 계산해 보낸다(바이트가 이미 여기 있다). base64 로 건네는 이유는
+ * Tauri 가 `Vec<u8>` 을 JSON 숫자 배열로 직렬화하기 때문이다 — 1MB 이미지가 4MB 가 된다.
+ */
+export const saveAttachment = (
+  input: { sha: string; data: string; mediaType: string },
+  projectPath?: string,
+) =>
+  call<SavedAttachment>("save_attachment", {
+    sha: input.sha,
+    data: input.data,
+    mediaType: input.mediaType,
+    projectPath,
+  });
+
+/** 저장된 첨부를 base64 로 되읽는다. */
+export const readAttachment = (sha: string, projectPath?: string) =>
+  call<AttachmentBytes>("read_attachment", { sha, projectPath });
 
 export const pathInfo = (path: string, projectPath?: string) =>
   call<PathInfo>("path_info", { path, projectPath });

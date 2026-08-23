@@ -10,6 +10,14 @@ import type { ModelMessage, ToolResultPart, ToolSet } from "@ai-sdk/provider-uti
 
 import { abortableTools } from "@/lib/ai/abort";
 import {
+  imageRef,
+  parseImageMarkers,
+  shaOfRef,
+  splitImageMarkers,
+  type ImageAttachment,
+} from "@/lib/ai/attachments";
+import { sumImageTokens } from "@/lib/ai/imageTokens";
+import {
   providerOptionsFor,
   resolveModel,
   type Effort,
@@ -17,6 +25,7 @@ import {
 } from "@/lib/ai/providers";
 import { extraContentFor, rememberExtraContent } from "@/lib/ai/thoughtSignature";
 import { lastCallNode, readUsage, type ContextPayload, type Usage } from "@/lib/ai/usage";
+import { t } from "@/lib/i18n";
 import { pathTo } from "@/lib/tree";
 import type { Message } from "@/types/ipc";
 
@@ -74,6 +83,11 @@ export interface RunTurnOptions {
   context: TurnContext;
   credentials: ProviderCredentials;
   tools?: ToolSet;
+  /**
+   * 참조로 실려 있는 이미지의 실제 바이트. 없으면 참조 자리는 "찾을 수 없다" 글로 바뀐다
+   * — 참조 문자열을 그대로 흘리면 공급자가 base64 로 알아듣고 400 을 낸다.
+   */
+  images?: ImageBytes;
   abortSignal?: AbortSignal;
   onTextDelta: (delta: string) => void;
   onReasoningDelta?: (delta: string) => void;
@@ -132,6 +146,99 @@ export function readToolResults(value: unknown): StoredToolResult[] {
   );
 }
 
+type UserContent = Extract<ModelMessage, { role: "user" }>["content"];
+
+/**
+ * 사용자 노드의 본문을 LLM 파트로. 이미지 마커가 없으면 **문자열 하나 그대로 둔다**
+ * (도구를 안 쓴 assistant 응답을 문자열로 두는 것과 같은 이유 — 가볍고, 기존 대화와 모양이 같다).
+ *
+ * 이미지 파트에 들어가는 것은 참조(`dd-image:<sha>`)이지 바이트가 아니다.
+ * 바이트로 바뀌는 곳은 `hydrateImages()` 하나뿐이고, 그건 `runTurn()` 이 보내기 직전에 부른다.
+ */
+export function userContent(content: string): UserContent {
+  const pieces = splitImageMarkers(content);
+  if (!pieces.some((piece) => piece.type === "image")) return content;
+
+  const parts: Exclude<UserContent, string> = [];
+  for (const piece of pieces) {
+    if (piece.type === "text") {
+      if (piece.text.trim()) parts.push({ type: "text", text: piece.text });
+      continue;
+    }
+    parts.push({
+      type: "file",
+      mediaType: piece.image.mediaType,
+      filename: piece.image.name,
+      data: { type: "data", data: imageRef(piece.image.sha) },
+    });
+  }
+  return parts;
+}
+
+/** 이 체인이 싣고 있는 이미지들. 전송 전에 무엇을 읽어 와야 하는지 알려 준다. */
+export function imagesInChain(chain: Message[]): ImageAttachment[] {
+  return chain
+    .filter((node) => node.role === "user" && node.status !== "error")
+    .flatMap((node) => parseImageMarkers(node.content));
+}
+
+/**
+ * 파트의 `data` 에서 참조를 꺼낸다.
+ *
+ * `FilePart.data` 는 태그된 모양(`{ type:"data", data }`)도 되고 맨 문자열도 된다 —
+ * 우리는 태그된 쪽으로만 쓰지만, 둘 다 보지 않으면 SDK 가 모양을 정규화하는 순간
+ * 하이드레이션이 조용히 아무 일도 안 하게 된다(참조가 그대로 나가서 400 이다).
+ */
+function shaOfPart(data: unknown): string | null {
+  const direct = shaOfRef(data);
+  if (direct) return direct;
+
+  if (typeof data === "object" && data !== null && "data" in data) {
+    return shaOfRef((data as { data: unknown }).data);
+  }
+  return null;
+}
+
+/** 되읽어 온 바이트. `lib/images.ts` 의 `loadAttachments()` 가 만들어 준다. */
+export type ImageBytes = ReadonlyMap<string, { mediaType: string; base64: string }>;
+
+/**
+ * 참조를 진짜 바이트로 갈아 끼운다. **원본을 건드리지 않는다** —
+ * `context.messages` 는 이미 `context_snapshot` 으로 저장돼 스토어가 들고 있는 객체다.
+ *
+ * 못 찾은 이미지는 글로 바꾼다(워크스페이스를 지웠거나 다른 프로젝트에서 연 대화다).
+ * 참조 문자열을 그대로 흘리면 공급자가 base64 로 알아듣고 400 을 낸다.
+ */
+export function hydrateImages(messages: ModelMessage[], images: ImageBytes): ModelMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "user" || typeof message.content === "string") return message;
+    if (!message.content.some((part) => part.type === "file" && shaOfPart(part.data))) {
+      return message;
+    }
+
+    const content = message.content.map((part) => {
+      if (part.type !== "file") return part;
+      const sha = shaOfPart(part.data);
+      if (!sha) return part;
+
+      const bytes = images.get(sha);
+      if (!bytes) {
+        return {
+          type: "text" as const,
+          text: t("attachment.imageMissing", { name: part.filename ?? sha.slice(0, 12) }),
+        };
+      }
+      return {
+        ...part,
+        mediaType: bytes.mediaType,
+        data: { type: "data" as const, data: bytes.base64 },
+      };
+    });
+
+    return { ...message, content };
+  });
+}
+
 /**
  * DB 의 대화 노드 체인을 LLM 이 받는 메시지 배열로 변환한다.
  *
@@ -160,7 +267,8 @@ export function toModelMessages(chain: Message[]): ModelMessage[] {
     if (node.status === "streaming" || node.status === "error") continue;
 
     if (node.role === "user") {
-      if (node.content.trim()) out.push({ role: "user", content: node.content });
+      if (!node.content.trim()) continue;
+      out.push({ role: "user", content: userContent(node.content) });
       continue;
     }
 
@@ -240,20 +348,30 @@ export function contextPayloadOf(
   chain: Message[],
   allMessages: Message[],
   system: string,
+  modelId: string,
 ): ContextPayload {
   const next = { system, messages: toModelMessages(chain) };
   const anchorNode = lastCallNode(chain);
+  const anchorChain = anchorNode ? pathTo(allMessages, anchorNode.parentId) : null;
   const anchor = anchorNode
     ? {
         system: (anchorNode.contextSnapshot as Partial<TurnContext> | null)?.system ?? system,
-        messages: toModelMessages(pathTo(allMessages, anchorNode.parentId)),
+        messages: toModelMessages(anchorChain ?? []),
       }
     : null;
+
+  // 이미지는 자 수로 잴 수 없다 — 페이로드에는 참조 한 토막으로만 실린다.
+  // 공식은 공급자마다 다르므로 **다음 턴에 쓸 모델** 기준으로 센다(분모가 그 모델의 창이다).
+  const sizeOf = (image: ImageAttachment) => ({ width: image.width, height: image.height });
 
   return {
     chars: payloadChars(next),
     messageCount: next.messages.length,
     measuredChars: anchor ? payloadChars(anchor) : null,
+    imageTokens: sumImageTokens(modelId, imagesInChain(chain).map(sizeOf)),
+    measuredImageTokens: anchorChain
+      ? sumImageTokens(modelId, imagesInChain(anchorChain).map(sizeOf))
+      : null,
   };
 }
 
@@ -289,6 +407,7 @@ export async function runTurn({
   context,
   credentials,
   tools,
+  images,
   abortSignal,
   onTextDelta,
   onReasoningDelta,
@@ -300,7 +419,8 @@ export async function runTurn({
   const result = streamText({
     model,
     system: context.system,
-    messages: context.messages,
+    // 스냅샷에는 참조가 남고, 바이트로 바뀌는 것은 여기 한 곳뿐이다.
+    messages: hydrateImages(context.messages, images ?? new Map()),
     // 도구에 중단을 붙여서 넘긴다 — 안 그러면 도구가 도는 동안 [중단]이 먹지 않는다.
     ...(tools && Object.keys(tools).length > 0 ? { tools: abortableTools(tools) } : {}),
     stopWhen: stepCountIs(context.maxSteps),

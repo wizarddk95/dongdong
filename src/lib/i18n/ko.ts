@@ -64,6 +64,19 @@ export const ko = {
   "attachment.none": "없음",
   "attachment.header":
     "사용자가 @ 로 지목한 파일입니다. 아래 내용은 이미 읽어서 실어 두었으니 같은 파일을 다시 읽지 마세요.",
+  "attachment.imageMissing": "[이미지를 찾을 수 없습니다: {name}]",
+
+  // ── 이미지 첨부 (입력칸) ────────────────────────────────────────────
+  "image.attach": "이미지 첨부",
+  "image.attachHint": "이미지를 붙여넣거나(Ctrl+V) 여기서 골라 함께 보냅니다.",
+  "image.remove": "첨부 빼기",
+  "image.preview": "첨부한 이미지",
+  "image.resized": "긴 변 {edge}px 로 줄여서 보냅니다",
+  "image.tooMany": "이미지는 한 번에 {max}장까지 붙일 수 있습니다.",
+  "image.unsupported": "이미지 형식이 아니거나 지원하지 않는 형식입니다 (PNG · JPEG · WebP · GIF).",
+  "image.failed": "이미지를 붙이지 못했습니다: {error}",
+  "image.noVision": "지금 고른 모델은 이미지를 받지 않습니다.",
+  "image.needsProject": "이미지를 붙이려면 프로젝트를 먼저 여세요.",
 
   // ── 현재 시각 블록 (모델용) ─────────────────────────────────────────
   "datetime.weekday.sun": "일",

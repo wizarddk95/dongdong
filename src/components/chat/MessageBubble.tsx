@@ -1,7 +1,8 @@
 import { useState } from "react";
 
+import { ImageThumb } from "@/components/chat/ImageThumb";
 import { Markdown } from "@/components/chat/Markdown";
-import { attachmentTitles, splitAttachments } from "@/lib/ai/attachments";
+import { attachmentTitles, parseImageMarkers, splitAttachments } from "@/lib/ai/attachments";
 import { JsonTree } from "@/components/inspect/JsonTree";
 import {
   readToolCalls,
@@ -78,6 +79,8 @@ export function MessageBubble({
   const attached =
     message.role === "user" && !streaming ? splitAttachments(message.content) : null;
   const body = streaming ? (liveText ?? "") : (attached?.body ?? message.content);
+  // 첨부 블록에 실린 이미지들. 마커만 저장돼 있고 바이트는 워크스페이스에서 온다.
+  const images = attached?.block ? parseImageMarkers(attached.block) : [];
   const reasoning = isTool
     ? ""
     : streaming
@@ -163,6 +166,20 @@ export function MessageBubble({
         // 스트리밍 커서는 본문 끝에 붙여 마지막 블록 안에서 흐르게 한다.
         <Markdown text={streaming ? `${body}▌` : body} />
       ) : null}
+
+      {/*
+        이미지는 접지 않는다. 텍스트 첨부는 접어야 말풍선이 안 덮이지만, 이미지는
+        **무엇을 보냈는지가 한눈에 보여야** 하는 것 자체가 요점이다 (게다가 접힌 칩에는
+        `<image sha="…"/>` 라는 알아볼 수 없는 한 줄만 남는다).
+      */}
+      {images.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {images.map((image) => (
+            // 프로젝트를 안 넘기면 Rust 가 활성 워크스페이스를 쓴다 — 말풍선은 언제나 그 프로젝트다.
+            <ImageThumb key={image.sha} image={image} size={72} />
+          ))}
+        </div>
+      )}
 
       {attached?.block && (
         <div className="mt-2 border-t border-hairline pt-2">

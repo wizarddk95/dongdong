@@ -13,6 +13,13 @@ import {
   attachmentTitles,
   documentTypeOf,
   extensionOf,
+  imageMarker,
+  imageRef,
+  isSha256,
+  parseImageMarker,
+  parseImageMarkers,
+  shaOfRef,
+  splitImageMarkers,
   formatBytes,
   MAX_ATTACHMENT_CHARS,
   resolveMention,
@@ -20,6 +27,7 @@ import {
   splitAttachments,
   withAttachments,
   type Attachment,
+  type ImageAttachment,
 } from "@/lib/ai/attachments";
 import * as ipc from "@/lib/ipc";
 
@@ -230,5 +238,119 @@ describe("attachmentBlock / splitAttachments", () => {
     const block = attachmentBlock([text, document]);
     expect(attachmentTitles(block)).toHaveLength(2);
     expect(attachmentTitles(block)[0]).toContain("src/a.ts");
+  });
+});
+
+// ------------------------------------------------------------- 이미지 마커
+
+const SHA = "a".repeat(64);
+
+function image(partial: Partial<ImageAttachment> = {}): ImageAttachment {
+  return {
+    sha: SHA,
+    mediaType: "image/png",
+    width: 1024,
+    height: 768,
+    size: 319_488,
+    name: "shot.png",
+    ...partial,
+  };
+}
+
+describe("이미지 마커 — content 에 남는 한 줄", () => {
+  it("적었다가 그대로 되읽는다", () => {
+    const source = image();
+    const parsed = parseImageMarker(imageMarker(source).replace(/^<image\s+|\s*\/>$/g, ""));
+    expect(parsed).toEqual(source);
+  });
+
+  it("본문에서 순서대로 뽑는다", () => {
+    const content = `앞\n${imageMarker(image())}\n사이\n${imageMarker(image({ sha: "b".repeat(64), name: "두번째.webp" }))}\n뒤`;
+    const found = parseImageMarkers(content);
+
+    expect(found).toHaveLength(2);
+    expect(found[0].name).toBe("shot.png");
+    expect(found[1].sha).toBe("b".repeat(64));
+  });
+
+  it("따옴표·꺾쇠가 든 이름도 마커를 끊지 않는다", () => {
+    const tricky = image({ name: 'a"b<c>&d.png' });
+    const found = parseImageMarkers(imageMarker(tricky));
+
+    expect(found).toHaveLength(1);
+    expect(found[0].name).toBe('a"b<c>&d.png');
+  });
+
+  it("sha 모양이 어긋난 마커는 무시한다 (손으로 고친 대화가 전송을 막으면 안 된다)", () => {
+    expect(parseImageMarkers('<image sha="../../etc/passwd" w="10" h="10" />')).toEqual([]);
+    expect(parseImageMarkers('<image sha="ABC" w="10" h="10" />')).toEqual([]);
+    expect(parseImageMarkers("이미지가 없는 평범한 본문")).toEqual([]);
+  });
+
+  it("sha 판정은 소문자 hex 64자만 통과시킨다", () => {
+    expect(isSha256(SHA)).toBe(true);
+    expect(isSha256("A".repeat(64))).toBe(false);
+    expect(isSha256("a".repeat(63))).toBe(false);
+    expect(isSha256(`${"a".repeat(62)}/x`)).toBe(false);
+  });
+
+  it("참조는 접두사로 알아보고 sha 를 되돌려준다", () => {
+    expect(shaOfRef(imageRef(SHA))).toBe(SHA);
+    expect(shaOfRef("iVBORw0KGgo=")).toBeNull();
+    expect(shaOfRef(undefined)).toBeNull();
+  });
+});
+
+describe("splitImageMarkers — 본문을 텍스트와 이미지로 가른다", () => {
+  it("앞뒤 텍스트를 살려 순서를 지킨다", () => {
+    const pieces = splitImageMarkers(`앞${imageMarker(image())}뒤`);
+
+    expect(pieces.map((piece) => piece.type)).toEqual(["text", "image", "text"]);
+    expect(pieces[0]).toEqual({ type: "text", text: "앞" });
+    expect(pieces[2]).toEqual({ type: "text", text: "뒤" });
+  });
+
+  it("이미지가 없으면 텍스트 한 조각뿐이다", () => {
+    expect(splitImageMarkers("그냥 글")).toEqual([{ type: "text", text: "그냥 글" }]);
+  });
+
+  it("빈 본문은 아무 조각도 만들지 않는다", () => {
+    expect(splitImageMarkers("")).toEqual([]);
+  });
+
+  it("못 알아본 마커는 텍스트로 남는다 (조용히 지우지 않는다)", () => {
+    const broken = '<image sha="짧음" w="1" h="1" />';
+    expect(splitImageMarkers(broken)).toEqual([{ type: "text", text: broken }]);
+  });
+});
+
+describe("이미지 첨부 블록", () => {
+  function attachment(): Attachment {
+    return {
+      path: "shot.png",
+      displayPath: "shot.png",
+      kind: "image",
+      size: 319_488,
+      body: "",
+      truncated: false,
+      image: image(),
+    };
+  }
+
+  it("본문 대신 마커가 실리고 제목에 크기가 적힌다", () => {
+    const block = attachmentBlock([attachment()]);
+
+    expect(block).toContain("## shot.png (image/png · 1024×768 · 312.0KB)");
+    expect(block).toContain(imageMarker(image()));
+    // base64 는 어디에도 없다 — 그게 이 설계의 요점이다.
+    expect(block).not.toContain("base64");
+  });
+
+  it("저장된 본문에서 다시 갈라 이미지를 찾아낼 수 있다", () => {
+    const content = withAttachments("이거 봐 줘", [attachment()]);
+    const { body, block } = splitAttachments(content);
+
+    expect(body).toBe("이거 봐 줘");
+    expect(parseImageMarkers(block ?? "")).toEqual([image()]);
   });
 });

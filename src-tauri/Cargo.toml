@@ -24,6 +24,8 @@ tauri-plugin-http = "2"
 # 답변 완료 훅이 창 밖으로 알림을 띄운다 (OS 알림 센터).
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
+# 이미지 첨부는 IPC 위를 base64 문자열로 건넌다 — `Vec<u8>` 은 JSON 숫자 배열이 되어 4배로 부푼다.
+base64 = "0.22"
 serde_json = "1"
 # bundled: 시스템에 SQLite 가 없어도 되도록 소스 동봉 빌드
 rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }

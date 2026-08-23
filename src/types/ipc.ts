@@ -299,6 +299,28 @@ export interface ProjectFile {
   size: number;
 }
 
+/**
+ * 저장된 이미지 첨부 하나. 바이트는 `.agent_workspace/attachments/<sha>.<ext>` 에 산다.
+ *
+ * 내용주소라 같은 스크린샷을 여러 턴에 붙여도 파일은 하나다 — `existed` 가 그걸 알려 준다.
+ */
+export interface SavedAttachment {
+  sha: string;
+  path: string;
+  relativePath: string;
+  mediaType: string;
+  size: number;
+  existed: boolean;
+}
+
+/** 되읽은 첨부. LLM 전송 직전 하이드레이션과 화면의 썸네일이 같은 모양을 쓴다. */
+export interface AttachmentBytes {
+  sha: string;
+  base64: string;
+  mediaType: string;
+  size: number;
+}
+
 export interface PathInfo {
   path: string;
   exists: boolean;

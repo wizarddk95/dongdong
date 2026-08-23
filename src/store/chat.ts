@@ -13,15 +13,27 @@
  */
 import { create } from "zustand";
 
-import { resolveMentions, withAttachments } from "@/lib/ai/attachments";
+import {
+  resolveMentions,
+  withAttachments,
+  type Attachment,
+  type ImageAttachment,
+} from "@/lib/ai/attachments";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
 import { errorMessage } from "@/lib/ai/errors";
-import { buildTurnContext, runTurn, type StepRecord, type StoredToolCall } from "@/lib/ai/runner";
+import {
+  buildTurnContext,
+  imagesInChain,
+  runTurn,
+  type StepRecord,
+  type StoredToolCall,
+} from "@/lib/ai/runner";
 import { appendSkillCatalog, buildSkillTools } from "@/lib/ai/skills";
 import { buildTools, summarizeToolCall } from "@/lib/ai/tools";
 import { toStoredUsage } from "@/lib/ai/usage";
 import { dispatchHooks, type HookEvent } from "@/lib/hooks";
 import { matchesAnyLocale, t } from "@/lib/i18n";
+import { loadAttachments } from "@/lib/images";
 import * as ipc from "@/lib/ipc";
 import { extractMentions } from "@/lib/mention";
 import { useAgents } from "@/store/agents";
@@ -44,7 +56,11 @@ interface ChatState {
   pendingToolCalls: StoredToolCall[];
   error: string | null;
 
-  send: (input: string) => Promise<void>;
+  /**
+   * 한 턴을 보낸다. `images` 는 이미 워크스페이스에 눕혀 둔 첨부다
+   * (바이트를 여기서 만지지 않는다 — `lib/images.ts` 가 이미 다 했다).
+   */
+  send: (input: string, images?: ImageAttachment[]) => Promise<void>;
   stop: () => void;
   clearError: () => void;
 }
@@ -107,9 +123,10 @@ export const useChat = create<ChatState>((set, get) => ({
   pendingToolCalls: [],
   error: null,
 
-  send: async (input) => {
+  send: async (input, images = []) => {
     const text = input.trim();
-    if (!text || get().running) return;
+    // 이미지만 붙이고 아무 말도 하지 않는 것은 정상적인 지시다("이거 봐 줘").
+    if ((!text && images.length === 0) || get().running) return;
 
     const workspace = useWorkspace.getState();
     const settings = useSettings.getState();
@@ -154,15 +171,34 @@ export const useChat = create<ChatState>((set, get) => ({
         ? await resolveMentions(mentions, { projectPath: workspace.project.rootPath })
         : [];
 
+      // 이미지는 바이트가 아니라 마커 한 줄로 실린다 — 바이트는 이미
+      // `.agent_workspace/attachments/` 에 눕어 있고, 전송 직전에 다시 읽는다.
+      const imageAttachments: Attachment[] = images.map((image) => ({
+        path: image.name,
+        displayPath: image.name,
+        kind: "image",
+        size: image.size,
+        body: "",
+        truncated: false,
+        image,
+      }));
+
       // 사용자 노드 저장 (activeParentId 아래에 붙으므로 분기가 자연스럽게 생긴다)
       const userMessage = await workspace.addMessage({
         role: "user",
-        content: withAttachments(text, attachments),
+        content: withAttachments(text, [...attachments, ...imageAttachments]),
       });
       if (!userMessage) throw new Error(t("chat.error.userNodeFailed"));
 
       // 2. 루트 → 이 노드까지의 체인이 곧 LLM 컨텍스트
       const chain = await ipc.getMessagePath(userMessage.id);
+
+      // 이 체인이 싣고 있는 이미지의 실제 바이트. 컨텍스트에는 참조만 남고,
+      // 바이트는 `runTurn()` 이 보내기 직전에 갈아 끼운다(스냅샷이 부풀지 않게).
+      const imageBytes = await loadAttachments(
+        imagesInChain(chain).map((image) => image.sha),
+        workspace.project.rootPath,
+      );
 
       // 프로젝트 지침(AGENTS.md)은 매 턴 다시 읽는다 — 대화 중에 바뀔 수 있다.
       const instructions = settings.useProjectInstructions
@@ -223,6 +259,7 @@ export const useChat = create<ChatState>((set, get) => ({
         context,
         credentials: settings.credentials(),
         tools,
+        images: imageBytes,
         abortSignal: controller.signal,
         onTextDelta: (delta) => set({ streamingText: get().streamingText + delta }),
         onReasoningDelta: (delta) =>

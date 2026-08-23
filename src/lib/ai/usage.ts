@@ -283,6 +283,15 @@ export interface ContextPayload {
   messageCount: number;
   /** 마지막 호출이 **받았던** 페이로드의 문자 수. 이게 있어야 비율이 나온다 */
   measuredChars: number | null;
+  /**
+   * 다음 턴에 나갈 **이미지**의 추정 토큰 (`lib/ai/imageTokens.ts`).
+   *
+   * 이미지는 페이로드에 참조 한 토막으로만 실린다 — 자 수는 거의 0인데 토큰은 수천이다.
+   * 자 수 환산에 섞으면 비율이 통째로 망가지므로 따로 세어 따로 더한다.
+   */
+  imageTokens?: number;
+  /** 기준점 호출이 실었던 이미지의 추정 토큰. 비율을 낼 때 실측 토큰에서 이만큼을 뺀다 */
+  measuredImageTokens?: number | null;
 }
 
 /** `projectTokens()` 의 결과. */
@@ -327,8 +336,21 @@ export function projectTokens(
     return { used, measured: used, projected: 0, charsPerToken: null };
   }
 
-  const charsPerToken = payload.measuredChars / usage.inputTokens;
-  const projected = Math.round((payload.chars - payload.measuredChars) / charsPerToken);
+  // 실측 토큰에는 그 호출이 실었던 이미지 몫이 섞여 있다. 그런데 그 이미지는 페이로드에
+  // 참조 한 토막으로만 잡히므로, 빼지 않으면 분모만 커져 비율이 통째로 망가진다
+  // (이미지 한 장 붙인 뒤 남은 대화 전체를 과소평가하게 된다).
+  const measuredImages = payload.measuredImageTokens ?? 0;
+  const textTokens = usage.inputTokens - measuredImages;
+  if (textTokens <= 0) {
+    const used = usage.inputTokens + usage.outputTokens;
+    return { used, measured: used, projected: 0, charsPerToken: null };
+  }
+
+  const charsPerToken = payload.measuredChars / textTokens;
+  const projectedText = Math.round((payload.chars - payload.measuredChars) / charsPerToken);
+  // 이미지는 환산이 아니라 공식으로 센다 — 늘어난(또는 분기로 줄어든) 장수만큼만.
+  const projected = projectedText + ((payload.imageTokens ?? 0) - measuredImages);
+
   return {
     used: Math.max(0, usage.inputTokens + projected),
     measured: usage.inputTokens,

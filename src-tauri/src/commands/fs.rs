@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use serde::Serialize;
 use tauri::State;
 
@@ -273,6 +275,177 @@ pub fn path_info(
         is_dir: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
         is_file: meta.as_ref().map(|m| m.is_file()).unwrap_or(false),
         size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+    })
+}
+
+// ------------------------------------------------------- 이미지 첨부 (blob)
+
+/// 첨부 하나의 최대 크기. 웹뷰가 이미 긴 변 1568px 로 줄여 보내므로 여기 걸리는 건
+/// 사실상 사고다 — 그래도 상한이 없으면 사고 한 번이 디스크를 채운다.
+const MAX_ATTACHMENT_BYTES: usize = 12 * 1024 * 1024;
+
+/// 받아 줄 이미지 형식과 그때 쓸 확장자.
+///
+/// **확장자를 여기서만 정하는 것이 핵심이다.** 클라이언트가 준 문자열로 파일 이름을
+/// 만들면 `image/png; .exe` 같은 것이 그대로 디스크에 앉는다.
+const ATTACHMENT_TYPES: &[(&str, &str)] = &[
+    ("image/png", "png"),
+    ("image/jpeg", "jpg"),
+    ("image/webp", "webp"),
+    ("image/gif", "gif"),
+];
+
+/// 저장된 첨부 하나. 같은 바이트를 다시 보내면 `existed` 가 참이고 파일은 하나뿐이다.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedAttachment {
+    pub sha: String,
+    pub path: String,
+    pub relative_path: String,
+    pub media_type: String,
+    pub size: u64,
+    /// 이미 같은 내용이 있었다 (내용주소 저장이라 덮어쓰지 않았다)
+    pub existed: bool,
+}
+
+/// 다시 읽어 온 첨부. LLM 으로 나갈 때도, 화면에 썸네일을 그릴 때도 이 모양을 쓴다.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentBytes {
+    pub sha: String,
+    pub base64: String,
+    pub media_type: String,
+    pub size: u64,
+}
+
+pub fn attachment_extension(media_type: &str) -> AppResult<&'static str> {
+    ATTACHMENT_TYPES
+        .iter()
+        .find(|(mime, _)| *mime == media_type)
+        .map(|(_, ext)| *ext)
+        .ok_or_else(|| AppError::invalid(format!("첨부할 수 없는 형식입니다: {media_type}")))
+}
+
+pub fn attachment_media_type(extension: &str) -> Option<&'static str> {
+    ATTACHMENT_TYPES
+        .iter()
+        .find(|(_, ext)| *ext == extension)
+        .map(|(mime, _)| *mime)
+}
+
+/// 웹뷰가 계산해 보낸 SHA-256 인가.
+///
+/// 이 값이 **파일 이름이 된다** — 모양을 못 박지 않으면 `../../evil` 한 줄로
+/// 워크스페이스 밖에 쓰게 된다. 여기는 `resolve_within()` 이 지키는 길이 아니라
+/// 우리가 루트에서 직접 조립하는 경로이므로, 담장이 이 검사 하나뿐이다.
+pub fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// 첨부가 사는 곳. `.agent_workspace` 안이라 `@` 검색도, 깃도 이 폴더를 안 본다.
+fn attachments_dir(root: &Path) -> PathBuf {
+    paths::workspace_dir(root).join("attachments")
+}
+
+/// 바이트를 `<dir>/<sha>.<ext>` 로 눕힌다. 이미 있으면 그대로 둔다(내용주소).
+pub fn put_attachment(
+    dir: &Path,
+    sha: &str,
+    media_type: &str,
+    bytes: &[u8],
+) -> AppResult<(PathBuf, bool)> {
+    if !is_sha256(sha) {
+        return Err(AppError::invalid("첨부 식별자가 SHA-256 형식이 아닙니다"));
+    }
+    if bytes.is_empty() {
+        return Err(AppError::invalid("빈 첨부는 저장하지 않습니다"));
+    }
+    if bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err(AppError::invalid(format!(
+            "첨부가 너무 큽니다 ({}바이트, 상한 {MAX_ATTACHMENT_BYTES}바이트)",
+            bytes.len()
+        )));
+    }
+
+    let extension = attachment_extension(media_type)?;
+    let path = dir.join(format!("{sha}.{extension}"));
+    if path.exists() {
+        return Ok((path, true));
+    }
+
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(&path, bytes)?;
+    Ok((path, false))
+}
+
+/// `<sha>.*` 를 찾아 되읽는다.
+///
+/// 확장자를 인자로 받지 않는 이유: 참조(`dd-image:<sha>`)를 **한 토큰으로** 두고 싶어서다.
+/// 형식이 참조에 섞이면 같은 이미지를 가리키는 표가 두 개가 된다.
+pub fn take_attachment(dir: &Path, sha: &str) -> AppResult<(PathBuf, &'static str, Vec<u8>)> {
+    if !is_sha256(sha) {
+        return Err(AppError::invalid("첨부 식별자가 SHA-256 형식이 아닙니다"));
+    }
+
+    for (media_type, extension) in ATTACHMENT_TYPES {
+        let path = dir.join(format!("{sha}.{extension}"));
+        if path.is_file() {
+            let bytes = std::fs::read(&path)?;
+            return Ok((path, media_type, bytes));
+        }
+    }
+    Err(AppError::not_found(format!("첨부 {sha}")))
+}
+
+/// 이미지 바이트를 프로젝트 워크스페이스에 저장한다.
+///
+/// SHA-256 은 **웹뷰가** 계산해서 보낸다(바이트가 이미 거기 있다). 여기서 다시 세지
+/// 않으므로 이 값은 무결성 증명이 아니라 중복 제거 키다 — 담장은 `is_sha256()` 이다.
+#[tauri::command]
+pub fn save_attachment(
+    state: State<'_, AppState>,
+    sha: String,
+    data: String,
+    media_type: String,
+    project_path: Option<String>,
+) -> AppResult<SavedAttachment> {
+    let root = state.root_of(project_path.as_deref())?;
+    let dir = attachments_dir(&root);
+
+    let bytes = STANDARD
+        .decode(data.as_bytes())
+        .map_err(|error| AppError::invalid(format!("첨부를 디코딩하지 못했습니다: {error}")))?;
+
+    let (path, existed) = put_attachment(&dir, &sha, &media_type, &bytes)?;
+
+    Ok(SavedAttachment {
+        sha,
+        relative_path: paths::relative_display(&root, &path),
+        path: path.to_string_lossy().into_owned(),
+        media_type,
+        size: bytes.len() as u64,
+        existed,
+    })
+}
+
+/// 저장된 첨부를 base64 로 되읽는다. LLM 전송 직전 하이드레이션과 썸네일이 함께 쓴다.
+#[tauri::command]
+pub fn read_attachment(
+    state: State<'_, AppState>,
+    sha: String,
+    project_path: Option<String>,
+) -> AppResult<AttachmentBytes> {
+    let root = state.root_of(project_path.as_deref())?;
+    let (_, media_type, bytes) = take_attachment(&attachments_dir(&root), &sha)?;
+
+    Ok(AttachmentBytes {
+        base64: STANDARD.encode(&bytes),
+        size: bytes.len() as u64,
+        media_type: media_type.to_string(),
+        sha,
     })
 }
 
@@ -557,5 +730,94 @@ mod tests {
     fn 대소문자를_가리지_않는다() {
         assert!(match_score("README", "readme.md", "readme.md").is_some());
         assert!(match_score("readme", "README.md", "README.md").is_some());
+    }
+
+    // ------------------------------------------------- 이미지 첨부
+
+    #[test]
+    fn sha256_모양이_아니면_거절한다() {
+        assert!(is_sha256(&"a".repeat(64)));
+        assert!(is_sha256(&"0123456789abcdef".repeat(4)));
+        // 길이가 다르다
+        assert!(!is_sha256(&"a".repeat(63)));
+        assert!(!is_sha256(&"a".repeat(65)));
+        // 대문자 · 경로 문자 — 여기서 막지 않으면 그대로 파일 이름이 된다
+        assert!(!is_sha256(&"A".repeat(64)));
+        assert!(!is_sha256("../../etc/passwd"));
+        assert!(!is_sha256(&format!("{}/x", "a".repeat(62))));
+    }
+
+    #[test]
+    fn 확장자는_허용_목록에서만_나온다() {
+        assert_eq!(attachment_extension("image/png").unwrap(), "png");
+        assert_eq!(attachment_extension("image/jpeg").unwrap(), "jpg");
+        assert!(attachment_extension("application/x-msdownload").is_err());
+        assert!(attachment_extension("image/svg+xml").is_err());
+        assert_eq!(attachment_media_type("webp"), Some("image/webp"));
+        assert_eq!(attachment_media_type("exe"), None);
+    }
+
+    #[test]
+    fn 같은_내용은_한_번만_눕는다() {
+        let temp = TempRoot::new("attach-dedupe");
+        let dir = temp.0.join("attachments");
+        let sha = "b".repeat(64);
+
+        let (first, existed) = put_attachment(&dir, &sha, "image/png", b"\x89PNG-fake").unwrap();
+        assert!(!existed);
+        let (second, existed) = put_attachment(&dir, &sha, "image/png", b"\x89PNG-fake").unwrap();
+        assert!(existed, "두 번째 저장이 파일을 다시 썼다");
+        assert_eq!(first, second);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn 저장한_뒤_형식까지_되읽는다() {
+        let temp = TempRoot::new("attach-roundtrip");
+        let dir = temp.0.join("attachments");
+        let sha = "c".repeat(64);
+
+        put_attachment(&dir, &sha, "image/webp", b"RIFF-fake").unwrap();
+        let (path, media_type, bytes) = take_attachment(&dir, &sha).unwrap();
+
+        assert_eq!(media_type, "image/webp");
+        assert_eq!(bytes, b"RIFF-fake");
+        assert!(path.ends_with(format!("{sha}.webp")));
+    }
+
+    #[test]
+    fn 없는_첨부는_찾을_수_없다고_말한다() {
+        let temp = TempRoot::new("attach-missing");
+        let dir = temp.0.join("attachments");
+        assert!(take_attachment(&dir, &"d".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn 빈_첨부와_상한_초과는_거절한다() {
+        let temp = TempRoot::new("attach-limits");
+        let dir = temp.0.join("attachments");
+        let sha = "e".repeat(64);
+
+        assert!(put_attachment(&dir, &sha, "image/png", b"").is_err());
+        let huge = vec![0u8; MAX_ATTACHMENT_BYTES + 1];
+        assert!(put_attachment(&dir, &sha, "image/png", &huge).is_err());
+        assert!(!dir.exists(), "거절한 첨부가 디렉터리를 만들었다");
+    }
+
+    #[test]
+    fn 첨부는_워크스페이스_안에_산다() {
+        let root = Path::new("/tmp/proj");
+        assert!(attachments_dir(root).ends_with("attachments"));
+        assert!(attachments_dir(root)
+            .to_string_lossy()
+            .contains(".agent_workspace"));
+    }
+
+    #[test]
+    fn base64_는_왕복한다() {
+        for sample in [&b""[..], b"a", b"ab", b"abc", b"\x00\xff\x10\x80"] {
+            let encoded = STANDARD.encode(sample);
+            assert_eq!(STANDARD.decode(encoded.as_bytes()).unwrap(), sample);
+        }
     }
 }

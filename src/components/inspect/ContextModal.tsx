@@ -143,7 +143,8 @@ export function ContextModal({ open, onClose, messageId }: ContextModalProps) {
 
     const projection = projectTokens(
       previous.usage,
-      contextPayloadOf(chain, messages, context.system),
+      // 창의 주인은 그 호출이 쓴 모델이다 — 이미지 토큰 공식이 공급자마다 다르다.
+      contextPayloadOf(chain, messages, context.system, context.modelId),
     );
     return { tokens: projection.used, exact: projection.projected === 0 };
   }, [messageId, messages, activeParentId, context.system]);

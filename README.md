@@ -96,6 +96,13 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
   list. Arrow keys move between topics, so an answer you already gave stays editable;
   nothing is final until you press [Send]. Declining is an answer too — the agent is told
   it got none, and proceeds on a stated assumption.
+- **Show it, don't describe it.** Paste a screenshot with `Ctrl+V` or pick a file with the
+  clip button and it goes to the model as an actual image. The bytes are copied into the
+  workspace under their own SHA-256, so the turn still shows what you sent months later
+  even if you delete the original. Anything over 1568px on the long edge is scaled down
+  first — providers scale it anyway and bill you for the original. What is stored in the
+  conversation is a one-line reference, not base64, so the context snapshot stays small
+  and the context ring counts image tokens with each provider's own formula.
 - **MCP bridge.** External MCP servers run as stdio child processes; their tools are
   merged in as `mcp__<server>__<tool>`.
 - **Hooks.** Non-blocking side effects on turn start / finish / error — an OS

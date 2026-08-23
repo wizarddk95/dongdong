@@ -9,9 +9,22 @@
  * 열어도 **그때 무엇이 들어갔는지가 남는다**(나중에 파일이 바뀌어도 그 턴의 기록은 그대로다).
  * 채팅 말풍선에서는 접어 둔다(`splitAttachments`).
  *
- * ## 텍스트가 아닌 파일 (엑셀 · 워드 · PDF · 이미지)
+ * ## 이미지
  *
- * 본문을 실을 수 없다. 이 앱에는 문서 파서도 비전 파이프라인도 없고, 있다 해도 xlsx 를
+ * 이미지는 본문이 아니라 **바이트**로 실린다. 사용자 노드의 `content` 에는 마커 한 줄
+ * (`<image sha="…" …/>`)만 남고, 실제 바이트는 `.agent_workspace/attachments/<sha>.<ext>` 에
+ * 내용주소로 눕는다. 그렇게 나눈 이유는 두 가지다.
+ *
+ * 1. 원본 경로만 적어 두면 스크린샷을 지우는 순간 **그 턴의 기록이 사라진다.** 첨부의
+ *    대전제는 "그때 무엇이 들어갔는지가 남는다" 이고, 이미지에서 오히려 더 중요하다.
+ * 2. base64 를 `content` 에 넣으면 말풍선 · 인스펙터 · `payloadChars()` 가 전부 메가바이트
+ *    문자열을 만지게 되고, `context_snapshot` 이 스텝마다 그걸 복사한다.
+ *
+ * 마커 → 실제 바이트로 바꾸는 일은 전송 직전 하이드레이션(`runner.ts`)이 한다.
+ *
+ * ## 텍스트가 아닌 파일 (엑셀 · 워드 · PDF)
+ *
+ * 본문을 실을 수 없다. 이 앱에는 문서 파서가 없고, 있다 해도 xlsx 를
  * 문자열로 펴서 컨텍스트에 붓는 건 대개 낭비다. 그래서 **자리표(stub)만 싣는다**:
  * 경로 · 종류 · 크기와 "어떻게 열어야 하는지" 한 줄이다. 엑셀/워드/PDF 는 이미 내장 스킬이
  * 있으므로(`lib/ai/builtinSkills.ts`) 그 스킬 이름을 짚어 준다 — 모델이 `load_skill` 로
@@ -28,6 +41,8 @@ export const ATTACH_CLOSE = "</attached_files>";
 export type AttachmentKind =
   /** 본문을 실었다 */
   | "text"
+  /** 이미지 — 마커만 남기고 바이트는 워크스페이스에 눕혔다 */
+  | "image"
   /** 디렉터리 — 목록만 실었다 */
   | "dir"
   /** 엑셀·워드·PDF 등 — 자리표만 실었다 */
@@ -51,6 +66,25 @@ export interface Attachment {
   note?: string;
   /** 본문이 상한에 걸려 잘렸는가 */
   truncated: boolean;
+  /** `kind === "image"` 일 때의 바이트 참조와 크기 */
+  image?: ImageAttachment;
+}
+
+/**
+ * 이미지 첨부 하나. 여기 있는 것이 **마커에 적히는 전부**다 —
+ * 이 정보만으로 (a) 바이트를 되찾고 (b) 토큰을 세고 (c) 화면에 크기를 적을 수 있어야 한다.
+ */
+export interface ImageAttachment {
+  /** 웹뷰가 계산한 SHA-256 (소문자 hex 64자) = 파일 이름이자 참조 키 */
+  sha: string;
+  mediaType: string;
+  /** 저장된 바이트 기준 픽셀 크기 (축소 후) — 토큰을 세는 자다 */
+  width: number;
+  height: number;
+  /** 저장된 바이트 수 */
+  size: number;
+  /** 사람이 읽을 이름. 붙여넣기처럼 이름이 없으면 만들어 붙인다 */
+  name: string;
 }
 
 /** 파일 하나가 차지할 수 있는 최대 글자. 도구 출력과 같은 자를 쓴다. */
@@ -286,11 +320,15 @@ export function attachmentTitle(attachment: Attachment): string {
       ? t(attachment.truncated ? "attachment.charsTruncated" : "attachment.chars", {
           chars: attachment.body.length.toLocaleString(),
         })
-      : attachment.kind === "dir"
-        ? t("attachment.dirLabel")
-        : attachment.kind === "missing"
-          ? t("attachment.none")
-          : formatBytes(attachment.size);
+      : attachment.kind === "image" && attachment.image
+        ? // 이미지 꼬리표는 문장이 아니라 데이터다 — 사전을 태우지 않는다.
+          // 한국어로 만든 대화를 영어로 열어도 이 줄은 그대로여야 한다(디스크에 남는 값이다).
+          `${attachment.image.mediaType} · ${attachment.image.width}×${attachment.image.height} · ${formatBytes(attachment.image.size)}`
+        : attachment.kind === "dir"
+          ? t("attachment.dirLabel")
+          : attachment.kind === "missing"
+            ? t("attachment.none")
+            : formatBytes(attachment.size);
   return `${attachment.displayPath} (${suffix})`;
 }
 
@@ -310,6 +348,10 @@ export function attachmentBlock(attachments: Attachment[]): string {
       const language = attachment.kind === "dir" ? "" : (FENCE_LANGUAGE[extensionOf(attachment.path)] ?? "");
       const note = attachment.note ? `${attachment.note}\n` : "";
       return `${header}\n${note}${fence}${language}\n${attachment.body}\n${fence}`;
+    }
+    // 이미지는 본문 대신 마커 한 줄. 전송 직전에 진짜 바이트로 바뀐다.
+    if (attachment.kind === "image" && attachment.image) {
+      return `${header}\n${imageMarker(attachment.image)}`;
     }
     return `${header}\n${attachment.note ?? ""}`;
   });
@@ -351,4 +393,142 @@ export function attachmentTitles(block: string): string[] {
     .split("\n")
     .filter((line) => line.startsWith("## "))
     .map((line) => line.slice(3).trim());
+}
+
+// ------------------------------------------------------------- 이미지 마커
+
+/**
+ * 페이로드에 실리는 이미지 참조. **base64 가 아니다.**
+ *
+ * `buildTurnContext()` 가 만든 컨텍스트는 assistant 노드의 `context_snapshot` 으로 통째로
+ * 저장되는데, 여기에 진짜 바이트가 들어 있으면 스텝마다 이미지가 한 벌씩 복사된다
+ * (5스텝 턴이면 다섯 벌). 그래서 스냅샷에는 참조만 두고, `runTurn()` 이 보내기 직전에
+ * 바이트로 갈아 끼운다. 인스펙터는 이 참조를 보고 크기·형식을 적는다 —
+ * base64 를 그대로 뿌리면 인스펙터는 읽을 수 없는 벽이 된다.
+ */
+export const IMAGE_REF_PREFIX = "dd-image:";
+
+export function imageRef(sha: string): string {
+  return `${IMAGE_REF_PREFIX}${sha}`;
+}
+
+export function isImageRef(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith(IMAGE_REF_PREFIX);
+}
+
+/** 참조에서 sha 를 뽑는다. 참조가 아니면 `null`. */
+export function shaOfRef(value: unknown): string | null {
+  return isImageRef(value) ? value.slice(IMAGE_REF_PREFIX.length) : null;
+}
+
+/** SHA-256(소문자 hex 64자)인가. Rust 쪽 `is_sha256()` 과 같은 자를 쓴다. */
+export function isSha256(value: string): boolean {
+  return /^[0-9a-f]{64}$/.test(value);
+}
+
+/** 마커 안의 이름은 따옴표·꺾쇠를 품을 수 있다 — 그대로 적으면 마커가 그 자리에서 끊긴다. */
+function escapeAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function unescapeAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+}
+
+/** 사용자 노드의 `content` 에 남는 이미지 한 줄. */
+export function imageMarker(image: ImageAttachment): string {
+  const attributes = [
+    `sha="${image.sha}"`,
+    `type="${escapeAttribute(image.mediaType)}"`,
+    `w="${image.width}"`,
+    `h="${image.height}"`,
+    `bytes="${image.size}"`,
+    `name="${escapeAttribute(image.name)}"`,
+  ];
+  return `<image ${attributes.join(" ")} />`;
+}
+
+/** 마커를 찾는 자. 쓸 때마다 새로 만든다 — 전역 정규식은 `lastIndex` 를 들고 다녀 한 건씩 샌다. */
+function markerPattern(): RegExp {
+  return /<image\s+([^>]*?)\s*\/>/g;
+}
+
+function readAttributes(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const match of raw.matchAll(/(\w+)="([^"]*)"/g)) {
+    out[match[1]] = unescapeAttribute(match[2]);
+  }
+  return out;
+}
+
+/**
+ * 마커 하나를 이미지로 되돌린다. 모양이 어긋나면 `null` —
+ * 사람이 손으로 고친 대화 하나가 전송을 통째로 막으면 안 된다.
+ */
+export function parseImageMarker(raw: string): ImageAttachment | null {
+  const attributes = readAttributes(raw);
+  const sha = attributes.sha ?? "";
+  if (!isSha256(sha)) return null;
+
+  const width = Number(attributes.w);
+  const height = Number(attributes.h);
+  const size = Number(attributes.bytes);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+
+  return {
+    sha,
+    mediaType: attributes.type || "image/png",
+    width,
+    height,
+    size: Number.isFinite(size) ? size : 0,
+    name: attributes.name || sha.slice(0, 12),
+  };
+}
+
+/** 본문에 실린 이미지들을 순서대로. 화면과 토큰 계산이 같은 목록을 쓴다. */
+export function parseImageMarkers(content: string): ImageAttachment[] {
+  const out: ImageAttachment[] = [];
+  for (const match of content.matchAll(markerPattern())) {
+    const image = parseImageMarker(match[1]);
+    if (image) out.push(image);
+  }
+  return out;
+}
+
+/** 본문을 텍스트 조각과 이미지로 가른 결과. */
+export type ContentPiece =
+  | { type: "text"; text: string }
+  | { type: "image"; image: ImageAttachment };
+
+/**
+ * 본문을 텍스트와 이미지로 가른다. `toModelMessages()` 가 파트 배열을 만들 때 쓴다.
+ *
+ * 못 알아본 마커는 **텍스트로 남겨 둔다** — 조용히 지우면 그 자리에 무엇이 있었는지가 사라진다.
+ */
+export function splitImageMarkers(content: string): ContentPiece[] {
+  const pieces: ContentPiece[] = [];
+  let cursor = 0;
+
+  for (const match of content.matchAll(markerPattern())) {
+    const image = parseImageMarker(match[1]);
+    if (!image) continue;
+
+    const start = match.index ?? 0;
+    const before = content.slice(cursor, start);
+    if (before) pieces.push({ type: "text", text: before });
+    pieces.push({ type: "image", image });
+    cursor = start + match[0].length;
+  }
+
+  const rest = content.slice(cursor);
+  if (rest) pieces.push({ type: "text", text: rest });
+  return pieces;
 }

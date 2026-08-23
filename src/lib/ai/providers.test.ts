@@ -6,6 +6,7 @@ import type { LanguageModel } from "ai";
 
 import type { Effort } from "@/lib/ai/providers";
 import {
+  acceptsImages,
   ANTHROPIC_EFFORTS,
   DEFAULT_LOCAL_BASE_URL,
   DEFAULT_MODEL_ID,
@@ -32,6 +33,7 @@ import {
   sendsEffort,
   supportedEffortsFor,
   modelLabel,
+  visionSupport,
 } from "@/lib/ai/providers";
 import { toModelMessages } from "@/lib/ai/runner";
 import type { Message } from "@/types/ipc";
@@ -849,5 +851,30 @@ describe("effectivePricing", () => {
 
   it("카탈로그에 없는 모델은 undefined", () => {
     expect(effectivePricing("openai:gpt-9")).toBeUndefined();
+  });
+});
+
+describe("visionSupport — 카탈로그가 말한 것만 말한다", () => {
+  it("카탈로그가 true 라고 적어 둔 모델은 yes", () => {
+    expect(visionSupport("anthropic:claude-opus-5")).toBe("yes");
+    expect(acceptsImages("anthropic:claude-opus-5")).toBe(true);
+  });
+
+  it("아무 말이 없는 모델은 unknown 이고, 막지 않는다", () => {
+    // 지금 카탈로그의 OpenAI 항목에는 이 플래그가 없다. "지원 안 함" 으로 접으면
+    // 멀쩡히 이미지를 받는 모델에서 첨부 버튼이 사라진다.
+    expect(visionSupport("openai:gpt-5.6-sol")).toBe("unknown");
+    expect(acceptsImages("openai:gpt-5.6-sol")).toBe(true);
+  });
+
+  it("카탈로그에 아예 없는 모델(직접 입력·로컬)도 막지 않는다", () => {
+    expect(visionSupport("local:내가-직접-띄운-모델")).toBe("unknown");
+    expect(acceptsImages("local:내가-직접-띄운-모델")).toBe(true);
+  });
+
+  it("옛 id 로 물어도 별칭을 따라간다", () => {
+    expect(visionSupport("anthropic:claude-haiku-4-5")).toBe(
+      visionSupport("anthropic:claude-haiku-4-5-20251001"),
+    );
   });
 });

@@ -67,6 +67,19 @@ export const en: Messages = {
   "attachment.none": "missing",
   "attachment.header":
     "These are files the user pointed at with @. Their contents are already attached below — do not read the same files again.",
+  "attachment.imageMissing": "[Image not found: {name}]",
+
+  // ── Image attachments (composer) ────────────────────────────────────
+  "image.attach": "Attach an image",
+  "image.attachHint": "Paste an image (Ctrl+V) or pick one here to send it along.",
+  "image.remove": "Remove attachment",
+  "image.preview": "Attached image",
+  "image.resized": "Sent scaled down to {edge}px on the long edge",
+  "image.tooMany": "You can attach up to {max} images at a time.",
+  "image.unsupported": "That is not a supported image format (PNG, JPEG, WebP, GIF).",
+  "image.failed": "Could not attach the image: {error}",
+  "image.noVision": "The selected model does not accept images.",
+  "image.needsProject": "Open a project before attaching images.",
 
   // ── Current time block (model-facing) ───────────────────────────────
   "datetime.weekday.sun": "Sun",

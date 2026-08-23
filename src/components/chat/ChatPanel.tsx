@@ -7,12 +7,14 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ContextModal } from "@/components/inspect/ContextModal";
 import { MemoryModal } from "@/components/inspect/MemoryModal";
 import { Button } from "@/components/Panel";
+import { ImageThumb } from "@/components/chat/ImageThumb";
 import { ContextRing, UsageBreakdown } from "@/components/UsageMeter";
 import { APPROVAL_MODES } from "@/lib/ai/approval";
 import { useT } from "@/lib/i18n/useT";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
-import { findModelOption, modelLabel } from "@/lib/ai/providers";
+import { acceptsImages, findModelOption, modelLabel } from "@/lib/ai/providers";
 import { contextPayloadOf } from "@/lib/ai/runner";
+import { MAX_IMAGE_EDGE } from "@/lib/ai/imageTokens";
 import { summarizeToolCall } from "@/lib/ai/tools";
 import {
   contextStatus,
@@ -21,6 +23,13 @@ import {
   readChainUsage,
   summarizeLiveUsage,
 } from "@/lib/ai/usage";
+import {
+  attachImage,
+  IMAGE_MEDIA_TYPES,
+  isImageFile,
+  MAX_IMAGES_PER_MESSAGE,
+  type AttachedImage,
+} from "@/lib/images";
 import { buildIndex, pathTo, siblingsOf } from "@/lib/tree";
 import { isDefaultZoom, zoomIn, zoomOut, zoomPercent } from "@/lib/zoom";
 import { buildTurns, toBubbles, turnLabel } from "@/lib/turns";
@@ -66,6 +75,14 @@ export function ChatPanel() {
   const updateSettings = useSettings((state) => state.update);
 
   const [draft, setDraft] = useState("");
+  /**
+   * 아직 보내지 않은 이미지 첨부. `draft` 와 같은 수명이라 스토어가 아니라 여기 산다.
+   * 바이트는 이미 워크스페이스에 눕어 있고(`attachImage`), 여기 있는 건 참조와 크기뿐이다.
+   */
+  const [images, setImages] = useState<AttachedImage[]>([]);
+  /** 붙이다 실패한 이유. 턴 에러(`error`)와 자리를 나눠 쓴다 — 원인이 다르다. */
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   // contextMessageId 가 null 이면 "다음 턴에 나갈 컨텍스트" 미리보기.
   const [contextOpen, setContextOpen] = useState(false);
@@ -75,6 +92,7 @@ export function ChatPanel() {
   const [toolElapsed, setToolElapsed] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // `@` 파일 참조 자동완성. 텍스트 규칙은 `lib/mention.ts`, 목록은 Rust 가 훑는다.
   const mention = useMentionPicker({
@@ -216,6 +234,8 @@ export function ChatPanel() {
         // 게이지도 실제로 나갈 것과 같아야 한다 — 시각 블록도 페이로드의 일부다.
         injectDateTime ? new Date() : null,
       ),
+      // 이미지 토큰 공식은 공급자마다 다르다 — 창의 주인과 같은 모델로 세야 한다.
+      modelId,
     );
 
     const last = lastCallUsage(path, modelId);
@@ -244,10 +264,70 @@ export function ChatPanel() {
 
   async function submit() {
     const text = draft.trim();
-    if (!text || !canSend) return;
+    // 이미지만 붙이고 보내는 것도 정상이다 — 스토어의 판정과 같은 자를 쓴다.
+    if ((!text && images.length === 0) || !canSend) return;
+
+    const attached = images;
     setDraft("");
-    await send(text);
+    setImages([]);
+    setImageError(null);
+    await send(text, attached);
   }
+
+  /**
+   * 붙여넣기 · 파일 선택에서 온 파일들을 첨부로 만든다.
+   *
+   * 실패는 **한 장씩** 삼킨다 — 다섯 장 중 한 장이 깨졌다고 나머지까지 버리면
+   * 사람은 무엇이 문제였는지 모른 채 처음부터 다시 붙여야 한다.
+   */
+  const addImages = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      if (!project) {
+        setImageError(t("image.needsProject"));
+        return;
+      }
+      if (!acceptsImages(modelId)) {
+        setImageError(t("image.noVision"));
+        return;
+      }
+
+      const supported = files.filter(isImageFile);
+      if (supported.length === 0) {
+        setImageError(t("image.unsupported"));
+        return;
+      }
+
+      const room = MAX_IMAGES_PER_MESSAGE - images.length;
+      if (room <= 0) {
+        setImageError(t("image.tooMany", { max: MAX_IMAGES_PER_MESSAGE }));
+        return;
+      }
+
+      setAttaching(true);
+      setImageError(supported.length > room ? t("image.tooMany", { max: MAX_IMAGES_PER_MESSAGE }) : null);
+      try {
+        for (const file of supported.slice(0, room)) {
+          try {
+            const attached = await attachImage(file, { projectPath: project.rootPath });
+            // 같은 이미지를 두 번 붙이면 한 번만 남는다 (내용주소라 파일도 하나다).
+            setImages((current) =>
+              current.some((image) => image.sha === attached.sha) ? current : [...current, attached],
+            );
+          } catch (failure) {
+            setImageError(
+              t("image.failed", {
+                error: failure instanceof Error ? failure.message : String(failure),
+              }),
+            );
+          }
+        }
+      } finally {
+        setAttaching(false);
+      }
+    },
+    [images.length, modelId, project, t],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas">
@@ -486,12 +566,44 @@ export function ChatPanel() {
           </span>
         </div>
 
+        {/*
+          붙인 이미지는 **보내기 전에 보여야 한다** — 클립보드에서 무엇이 왔는지는
+          붙여넣은 사람도 모를 때가 있고(스크린샷 두 장), 잘못 붙인 것을 되돌릴 길도 필요하다.
+        */}
+        {(images.length > 0 || imageError) && (
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            {images.map((image) => (
+              <ImageThumb
+                key={image.sha}
+                image={image}
+                projectPath={project?.rootPath}
+                onRemove={() => setImages((current) => current.filter((it) => it.sha !== image.sha))}
+              />
+            ))}
+            {images.some((image) => image.resized) && (
+              <span className="text-caption text-ink-subtle">
+                {t("image.resized", { edge: MAX_IMAGE_EDGE })}
+              </span>
+            )}
+            {imageError && <span className="text-caption text-error">{imageError}</span>}
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
           <div className="relative min-w-0 flex-1">
             <MentionPicker state={mention} />
             <textarea
               ref={textareaRef}
               value={draft}
+              onPaste={(event) => {
+                // 클립보드의 이미지는 `files` 로 온다(스크린샷은 이름 없는 파일이다).
+                // 이미지가 하나라도 있으면 텍스트 붙여넣기는 막는다 — 안 그러면
+                // 파일 경로 같은 부산물이 입력칸에 함께 떨어진다.
+                const files = Array.from(event.clipboardData.files).filter(isImageFile);
+                if (files.length === 0) return;
+                event.preventDefault();
+                void addImages(files);
+              }}
               onChange={(event) => {
                 setDraft(event.target.value);
                 mention.sync();
@@ -516,6 +628,44 @@ export function ChatPanel() {
               className="min-h-0 w-full resize-none rounded-md border border-field-rule bg-field px-3.5 py-2.5 text-body-sm text-ink transition-colors placeholder:text-ink-subtle hover:border-ink-subtle focus:border-accent disabled:cursor-not-allowed disabled:border-hairline disabled:bg-surface-1 disabled:text-ink-disabled"
             />
           </div>
+          {/*
+            파일 선택은 `plugin-dialog` 이 아니라 웹뷰의 `input[type=file]` 이다 —
+            대화상자는 **경로**를 주는데 바탕화면 스크린샷은 프로젝트 루트 밖이라
+            `resolve_within()` 이 막는다. 여기로 받으면 바이트가 곧바로 오므로
+            루트 담장에 구멍을 낼 이유가 없다(`lib/images.ts` 의 머리말 참고).
+          */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={IMAGE_MEDIA_TYPES.join(",")}
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? []);
+              // 같은 파일을 연달아 고를 수 있게 값을 비운다 (안 그러면 change 가 안 뜬다).
+              event.target.value = "";
+              void addImages(files);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!canSend || attaching || !acceptsImages(modelId)}
+            title={acceptsImages(modelId) ? t("image.attachHint") : t("image.noVision")}
+            aria-label={t("image.attach")}
+            className="mb-0.5 shrink-0 rounded-md border border-field-rule px-2.5 py-2 text-ink-muted transition-colors hover:border-ink-subtle hover:text-ink disabled:cursor-not-allowed disabled:border-hairline disabled:text-ink-disabled"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.5 3.5 0 1 1 5 5l-8 8a2 2 0 0 1-3-3l7.5-7.5"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+
           {running ? (
             <Button
               variant="danger"
@@ -535,7 +685,7 @@ export function ChatPanel() {
               variant="primary"
               size="md"
               onClick={() => void submit()}
-              disabled={!canSend || !draft.trim()}
+              disabled={!canSend || attaching || (!draft.trim() && images.length === 0)}
               className="w-24"
             >
               {t("chat.send")}
