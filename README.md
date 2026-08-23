@@ -130,6 +130,12 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
   composer itself resizes too: drag the rule above it, double-click to reset.
 - **Markdown preview in the file viewer.** Open a `.md` file from the Files tab and hit
   [Preview] to see it rendered — same parser, same renderer as the chat.
+- **Create files and folders from the Files tab.** `[+ File]` and `[+ Folder]` open a name
+  field at the top of the listing for the folder you are in; `Enter` creates it, `Esc` backs out. Bad
+  names are caught before anything is written — path separators, characters Windows cannot
+  hold, reserved device names, and names already taken (compared case-insensitively, since
+  `README.md` and `readme.md` are the same file on Windows). The target path is spelled out
+  under the field before you commit.
 - Light and dark themes, driven entirely by semantic tokens in one stylesheet.
 
 ---

@@ -335,7 +335,7 @@ export function FlowCanvas({ onFocusAgents }: FlowCanvasProps) {
               className="max-w-56 truncate"
               title={t("flow.clipboardHint", { nodes: clipboard.messageIds.length })}
             >
-              📋 {clipboard.label}
+              {t("flow.clipboard", { label: clipboard.label })}
             </span>
             <button
               className="rounded-sm px-1 transition-colors hover:bg-hover hover:text-ink"
