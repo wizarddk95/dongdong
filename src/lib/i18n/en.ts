@@ -68,6 +68,11 @@ export const en: Messages = {
   "attachment.header":
     "These are files the user pointed at with @. Their contents are already attached below — do not read the same files again.",
   "attachment.imageMissing": "[Image not found: {name}]",
+  "attachment.imageNoVision":
+    "Image · {size} — the selected model does not accept images, so it was not attached.",
+  "attachment.imageTooMany":
+    "Image · only {max} per message are attached, so this one was left out.",
+  "attachment.imageFailed": "Could not attach the image: {error}",
 
   // ── Image attachments (composer) ────────────────────────────────────
   "image.attach": "Attach an image",
@@ -80,6 +85,7 @@ export const en: Messages = {
   "image.failed": "Could not attach the image: {error}",
   "image.noVision": "The selected model does not accept images.",
   "image.needsProject": "Open a project before attaching images.",
+  "image.drop": "Drop images here to send them along",
 
   // ── Current time block (model-facing) ───────────────────────────────
   "datetime.weekday.sun": "Sun",
@@ -322,6 +328,7 @@ tool is needed, then call it. The user reads that line to confirm the request la
   "mention.kind.listOnly": "listing only",
   "mention.kind.needsSkill": "{kind} · needs a skill",
   "mention.kind.body": "contents attached",
+  "mention.kind.image": "image attached",
   "files.explorer": "File explorer",
   "files.openProjectFirst": "Open a project first",
   "files.hiddenOn": "Hidden ON",

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type RefO
 
 import { documentTypeOf } from "@/lib/ai/attachments";
 import { t } from "@/lib/i18n";
+import { isImagePath } from "@/lib/images";
 import * as ipc from "@/lib/ipc";
 import { activeMention, applyMention, type MentionToken } from "@/lib/mention";
 import type { ProjectFile } from "@/types/ipc";
@@ -185,6 +186,8 @@ export function useMentionPicker({
 /** 항목 하나가 어떤 종류인지 한 단어로. 첨부됐을 때 무슨 일이 일어날지를 미리 말해 준다. */
 function kindLabel(file: ProjectFile): string {
   if (file.isDir) return t("mention.kind.listOnly");
+  // 이미지는 본문이 아니라 바이트로 실린다 — 고르기 전에 그 사실이 보여야 한다.
+  if (isImagePath(file.relativePath)) return t("mention.kind.image");
   const document = documentTypeOf(file.relativePath);
   if (document) {
     return document.skill

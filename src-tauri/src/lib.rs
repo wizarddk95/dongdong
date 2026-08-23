@@ -48,6 +48,7 @@ pub fn run() {
             commands::shell::cancel_shell_command,
             // file system
             commands::fs::read_file,
+            commands::fs::read_file_base64,
             commands::fs::write_file,
             commands::fs::list_directory,
             commands::fs::create_directory,

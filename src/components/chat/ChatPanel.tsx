@@ -83,6 +83,8 @@ export function ChatPanel() {
   /** 붙이다 실패한 이유. 턴 에러(`error`)와 자리를 나눠 쓴다 — 원인이 다르다. */
   const [imageError, setImageError] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
+  /** 지금 입력칸 위로 파일을 끌고 왔는가. 놓을 자리임이 보여야 놓는다. */
+  const [dropping, setDropping] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   // contextMessageId 가 null 이면 "다음 턴에 나갈 컨텍스트" 미리보기.
   const [contextOpen, setContextOpen] = useState(false);
@@ -424,7 +426,37 @@ export function ChatPanel() {
         </div>
       )}
 
-      <div className="shrink-0 border-t border-hairline p-3">
+      {/*
+        끌어다 놓기. Tauri 의 `dragDropEnabled` 를 **꺼야** 여기까지 온다 —
+        켜져 있으면 OS 레벨에서 창이 먼저 가로채고 웹뷰의 `dataTransfer` 는 빈 채로 온다
+        (`src-tauri/tauri.conf.json`). 받는 길은 붙여넣기와 완전히 같다(`addImages`):
+        같은 형식 · 같은 장수 상한 · 같은 모델 게이팅을 지난다.
+      */}
+      <div
+        className={`shrink-0 border-t p-3 transition-colors ${
+          dropping ? "border-accent bg-accent-subtle" : "border-hairline"
+        }`}
+        onDragOver={(event) => {
+          // 파일이 아닌 드래그(글자 선택 등)는 그냥 지나가게 둔다.
+          if (!event.dataTransfer.types.includes("Files")) return;
+          // preventDefault 를 안 하면 브라우저 기본 동작이 이기고 drop 이 아예 안 온다.
+          event.preventDefault();
+          setDropping(true);
+        }}
+        onDragLeave={(event) => {
+          // 자식 위로 옮겨 갈 때도 dragleave 가 뜬다 — 진짜로 영역을 벗어났을 때만 끈다.
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+          setDropping(false);
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          setDropping(false);
+          // 폴더나 이미지가 아닌 파일이 섞여 와도 조용히 삼키지 않는다 —
+          // `addImages` 가 걸러 내면서 왜 안 붙었는지를 적어 준다.
+          void addImages(Array.from(event.dataTransfer.files));
+        }}
+      >
         <div className="mb-2 space-y-1.5">
           <ContextRing status={context} size={44} variant="full" />
 
@@ -570,7 +602,7 @@ export function ChatPanel() {
           붙인 이미지는 **보내기 전에 보여야 한다** — 클립보드에서 무엇이 왔는지는
           붙여넣은 사람도 모를 때가 있고(스크린샷 두 장), 잘못 붙인 것을 되돌릴 길도 필요하다.
         */}
-        {(images.length > 0 || imageError) && (
+        {(images.length > 0 || imageError || dropping) && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             {images.map((image) => (
               <ImageThumb
@@ -586,6 +618,7 @@ export function ChatPanel() {
               </span>
             )}
             {imageError && <span className="text-caption text-error">{imageError}</span>}
+            {dropping && <span className="text-caption text-accent">{t("image.drop")}</span>}
           </div>
         )}
 

@@ -32,6 +32,11 @@
  */
 import { clip } from "@/lib/ai/tools";
 import { t, type MessageKey } from "@/lib/i18n";
+import {
+  attachProjectImage,
+  imageMediaTypeOf,
+  MAX_IMAGES_PER_MESSAGE,
+} from "@/lib/images";
 import * as ipc from "@/lib/ipc";
 
 /** 첨부 블록의 경계. 말풍선에서 접을 때와 모델이 읽을 때 같은 표를 쓴다. */
@@ -184,6 +189,17 @@ function stub(
   return { path, displayPath, kind, size, body: "", note, truncated: false };
 }
 
+/** `@` 참조를 푸는 데 필요한 바깥 사정. */
+export interface MentionOptions {
+  projectPath?: string;
+  /**
+   * 지금 고른 모델이 이미지를 받는가. 화면의 첨부 버튼과 **같은 판정**(`acceptsImages()`)이
+   * 여기까지 와야 한다 — 안 오면 `@shot.png` 한 줄이 턴을 400 으로 끊는다.
+   * 안 주면 막지 않는다(모르는 모델을 잠그면 멀쩡한 모델에서 기능이 사라진다).
+   */
+  acceptsImages?: boolean;
+}
+
 /**
  * 참조된 경로 하나를 첨부로 만든다. 실패해도 던지지 않는다 —
  * 오타 하나로 메시지 전송이 통째로 막히면 안 되고, "그 파일은 못 찾았다" 는
@@ -193,9 +209,10 @@ function stub(
  */
 export async function resolveMention(
   path: string,
-  options: { projectPath?: string; budget?: number } = {},
+  options: MentionOptions & { budget?: number; imageSlots?: number } = {},
 ): Promise<Attachment> {
   const budget = options.budget ?? MAX_TOTAL_ATTACHMENT_CHARS;
+  const imageSlots = options.imageSlots ?? MAX_IMAGES_PER_MESSAGE;
 
   let info;
   try {
@@ -233,6 +250,47 @@ export async function resolveMention(
         0,
         t("attachment.dirUnreadable", { error: errorText(error) }),
       );
+    }
+  }
+
+  // 이미지는 본문이 아니라 **바이트**로 실린다 — 붙여넣기와 같은 길(`attachProjectImage`)을
+  // 타고 `.agent_workspace/attachments/` 에 눕는다. 그래서 여기서 하는 일은 마커 하나를 얻는
+  // 것뿐이고, **글자 예산(`budget`)은 건드리지 않는다** — 그건 본문을 재는 자다.
+  const mediaType = imageMediaTypeOf(path);
+  if (mediaType) {
+    // 비전 없는 모델에 이미지를 실으면 전송 자체가 400 으로 끊긴다. 자리표로 물러나면
+    // 대화는 이어지고, 무엇을 못 실었는지도 모델에게 남는다.
+    if (options.acceptsImages === false) {
+      return stub(
+        path,
+        path,
+        "binary",
+        info.size,
+        t("attachment.imageNoVision", { size: formatBytes(info.size) }),
+      );
+    }
+    if (imageSlots <= 0) {
+      return stub(
+        path,
+        path,
+        "binary",
+        info.size,
+        t("attachment.imageTooMany", { max: MAX_IMAGES_PER_MESSAGE }),
+      );
+    }
+    try {
+      const image = await attachProjectImage(path, { projectPath: options.projectPath });
+      return {
+        path,
+        displayPath: image.name,
+        kind: "image",
+        size: image.size,
+        body: "",
+        truncated: false,
+        image,
+      };
+    } catch (error) {
+      return stub(path, path, "binary", info.size, t("attachment.imageFailed", { error: errorText(error) }));
     }
   }
 
@@ -297,17 +355,24 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** 참조된 경로들을 순서대로 첨부로 만든다. 전체 상한을 함께 관리한다. */
+/**
+ * 참조된 경로들을 순서대로 첨부로 만든다. 전체 상한을 함께 관리한다.
+ *
+ * 상한은 **둘이고 자가 다르다** — 텍스트는 글자 수(`budget`), 이미지는 장수(`imageSlots`).
+ * 이미지 한 장은 마커 한 줄이라 글자로 재면 공짜처럼 보이는데 실제로는 토큰 수천을 먹는다.
+ */
 export async function resolveMentions(
   paths: string[],
-  options: { projectPath?: string } = {},
+  options: MentionOptions = {},
 ): Promise<Attachment[]> {
   const out: Attachment[] = [];
   let budget = MAX_TOTAL_ATTACHMENT_CHARS;
+  let imageSlots = MAX_IMAGES_PER_MESSAGE;
 
   for (const path of paths) {
-    const attachment = await resolveMention(path, { projectPath: options.projectPath, budget });
+    const attachment = await resolveMention(path, { ...options, budget, imageSlots });
     budget -= attachment.body.length;
+    if (attachment.kind === "image") imageSlots -= 1;
     out.push(attachment);
   }
   return out;

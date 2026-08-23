@@ -65,6 +65,11 @@ export const ko = {
   "attachment.header":
     "사용자가 @ 로 지목한 파일입니다. 아래 내용은 이미 읽어서 실어 두었으니 같은 파일을 다시 읽지 마세요.",
   "attachment.imageMissing": "[이미지를 찾을 수 없습니다: {name}]",
+  "attachment.imageNoVision":
+    "이미지 · {size} — 지금 고른 모델은 이미지를 받지 않아 싣지 않았습니다.",
+  "attachment.imageTooMany":
+    "이미지 · 한 번에 {max}장까지만 실어서 이 파일은 싣지 않았습니다.",
+  "attachment.imageFailed": "이미지를 싣지 못했습니다: {error}",
 
   // ── 이미지 첨부 (입력칸) ────────────────────────────────────────────
   "image.attach": "이미지 첨부",
@@ -77,6 +82,7 @@ export const ko = {
   "image.failed": "이미지를 붙이지 못했습니다: {error}",
   "image.noVision": "지금 고른 모델은 이미지를 받지 않습니다.",
   "image.needsProject": "이미지를 붙이려면 프로젝트를 먼저 여세요.",
+  "image.drop": "여기에 이미지를 놓으면 함께 보냅니다",
 
   // ── 현재 시각 블록 (모델용) ─────────────────────────────────────────
   "datetime.weekday.sun": "일",
@@ -314,6 +320,7 @@ export const ko = {
   "mention.kind.listOnly": "목록만",
   "mention.kind.needsSkill": "{kind} · 스킬 필요",
   "mention.kind.body": "본문 첨부",
+  "mention.kind.image": "이미지 첨부",
   "files.explorer": "파일 탐색기",
   "files.openProjectFirst": "프로젝트를 먼저 여세요",
   "files.hiddenOn": "숨김 ON",

@@ -12,7 +12,7 @@ pnpm typecheck && pnpm test && pnpm build
 cd src-tauri && cargo test --lib
 ```
 
-현재 기준 vitest 598 / cargo 71. 기능을 추가하면 테스트도 함께 붙인다.
+현재 기준 vitest 611 / cargo 73. 기능을 추가하면 테스트도 함께 붙인다.
 실제 구동 확인은 `pnpm tauri dev`.
 
 ## 기술 스택 (변경 금지)
@@ -70,6 +70,10 @@ LangChain 같은 상위 추상화를 넣지 않는다. LLM 호출은 `streamText
   다섯 벌 복사한다. 새 경로에서 이미지를 실을 때 참조 단계를 건너뛰면 그 구멍이 다시 열린다.
   **파일 이름이 되는 sha 는 양쪽에서 모양을 본다**(`is_sha256()` / `isSha256()`) — 안 보면
   `../` 한 줄로 워크스페이스 밖에 쓴다. 확장자도 `mediaType` 문자열이 아니라 Rust 의 허용 목록에서만 나온다.
+  **들어오는 길이 넷(붙여넣기 · 드롭 · 파일 선택 · `@` 참조)이어도 눕는 자리는 하나다** —
+  프로젝트 안 이미지도 경로를 적어 두지 않고 `attachProjectImage()` 로 같은 자리에 복사한다.
+  경로를 적어 두면 저장 표가 둘이 되어 `hydrateImages()` 에 분기가 하나 더 생기고, 그 분기는
+  반드시 한쪽만 고쳐진다(게다가 파일이 바뀌면 그 턴의 기록이 조용히 달라진다).
 - **스트리밍 중 DB 쓰기 금지**. 토큰은 Zustand 에만 쌓고 **스텝 경계**(도구 호출 확정 / 턴 종료)에서만 저장한다.
 - **`MODEL_CATALOG`(`lib/ai/providers.ts`) 는 사용자 소유** — 임의로 고치지 않는다.
 - **색·활자는 토큰만 쓴다**: 컴포넌트에 `zinc-800` 같은 팔레트 값이나 `#hex` 를 직접 적지 않는다.
@@ -233,6 +237,7 @@ src/
                         이미지 마커(`<image sha=…/>`) 직렬화·파싱과 페이로드 참조(`dd-image:`)도 여기
   lib/ai/imageTokens.ts 이미지 한 장의 토큰(순수) — 공급자마다 공식이 다르다. 축소 상한도 여기서 정한다
   lib/images.ts         이미지의 웹뷰 쪽 절반 — 디코드·축소·SHA-256·저장·되읽기 (Rust 에 이미지 크레이트를 안 들인다)
+                        `imageMediaTypeOf()`(경로 판정, svg 는 제외) · `attachProjectImage()`(`@` 참조)
   lib/ai/datetime.ts    지금 시각 블록 — 모델이 학습 시점을 "지금" 으로 착각하지 않게
   lib/mention.ts        `@` 토큰 찾기·끼워 넣기·뽑기 (순수). 입력칸과 전송 경로가 같은 규칙을 쓴다
   lib/ai/redact.ts      비밀값 가리기 — 도구 출력·에러 문구에서 API 키를 지운다 (`clip()` 이 부른다)
@@ -267,6 +272,8 @@ src-tauri/src/
   commands/{workspace,shell,fs,session,settings,skills,memory,agent,mcp}.rs
                         fs.rs 의 `search_project_files` 가 `@` 자동완성 목록을 만든다
                         fs.rs 의 `save_attachment`/`read_attachment` 가 이미지 바이트를 눕히고 되읽는다
+                        fs.rs 의 `read_file_base64` 는 `@` 로 지목한 프로젝트 안 이미지의 바이트
+                        (`read_file` 이 빈 문자열로 주는 것)를 같은 담장으로 가져온다
                         (빌드 산출물 디렉터리는 애초에 훑지 않는다)
                         skills.rs 만 프로젝트 루트 밖(앱 설정 디렉터리)을 연다 — 전역 스킬이 거기 산다
   mcp.rs                MCP stdio 클라이언트 (JSON-RPC 피어 + 프로세스 레지스트리)
@@ -357,7 +364,8 @@ src-tauri/src/
   텍스트가 아닌 파일은 **본문을 싣지 않는다**: 엑셀·워드·PDF 는 경로·종류·크기만 남기고
   `load_skill("xlsx"|"docx"|"pdf")` 로 절차를 열어 Python 으로 직접 읽으라고 짚어 준다.
   실린 내용은 `clip()` 을 지나므로 상한(파일당 20,000자·합계 60,000자)과 비밀값 가리기가 함께 걸린다.
-- **이미지 첨부**: 입력칸에 `Ctrl+V` 로 붙여넣거나 클립 버튼(`input[type=file]`)으로 고른다.
+- **이미지 첨부**: 입력칸에 `Ctrl+V` 로 붙여넣거나, 입력칸 영역에 **끌어다 놓거나**,
+  클립 버튼(`input[type=file]`)으로 고르거나, 프로젝트 안 이미지는 **`@경로`** 로 지목한다.
   **`plugin-dialog` 을 쓰지 않는 이유**가 설계의 절반이다 — 대화상자는 *경로*를 주는데
   바탕화면 스크린샷은 루트 밖이라 `resolve_within()` 이 막고, 그걸 뚫으려면 담장에 구멍을
   내야 한다. 붙여넣기·파일 선택은 바이트를 곧바로 주므로 담장을 건드릴 일이 없다.
@@ -366,7 +374,19 @@ src-tauri/src/
   **컨텍스트 게이지는 이미지를 자 수 환산에서 빼고 공식으로 더한다** — 참조는 자 수가 거의
   0인데 토큰은 수천이라, 안 빼면 비율이 망가져 남은 대화를 통째로 과소평가한다
   (`projectTokens()` 가 실측 토큰에서도 기준점의 이미지 몫을 뺀다).
-  모델 게이팅은 `acceptsImages()` 하나를 화면과 전송이 함께 쓴다. `MODEL_CATALOG` 은 사용자
+  **끌어다 놓기는 `tauri.conf.json` 의 `dragDropEnabled` 를 꺼야 온다** — 켜져 있으면 OS
+  레벨에서 창이 먼저 가로채고 웹뷰의 `dataTransfer` 가 빈 채로 온다(윈도우에서 특히).
+  `onDragDropEvent` 사용처가 없으므로 꺼도 잃는 것이 없다. 창 설정이라 테스트로는 못 잡는다.
+  **`@` 로 지목한 프로젝트 안 이미지**는 `read_file_base64` 로 바이트를 받아 같은 길
+  (`prepareImage` → `attachImage`)을 탄다 — `read_file` 이 바이너리를 빈 문자열로 주기 때문이고,
+  담장은 `read_file` 과 똑같이 `resolve_within()` 하나다(새 길을 뚫은 것이 아니다).
+  `.svg` 는 **일부러 이미지가 아니다**(XML 텍스트라 본문으로 싣는 편이 낫다) — `imageMediaTypeOf()`
+  에 넣는 순간 `@icon.svg` 가 텍스트 첨부에서 이미지로 조용히 바뀐다.
+  상한은 **자가 둘**이다: 텍스트는 글자 수(`budget`), 이미지는 장수(`imageSlots`) —
+  이미지를 글자 예산에 넣으면 마커 한 줄이라 공짜로 잡힌다.
+  모델 게이팅은 `acceptsImages()` 하나를 화면과 전송이 함께 쓴다.
+  **`@` 경로도 같은 게이팅을 지나야 한다**(`resolveMentions({ acceptsImages })`) — 안 그러면
+  비전 없는 모델에서 `@shot.png` 한 줄이 턴을 400 으로 끊는다. `MODEL_CATALOG` 은 사용자
   소유라 `supportsVision` 이 **비어 있는 모델은 막지 않는다**(모른다고 잠그면 멀쩡한 모델에서
   버튼이 사라진다). 턴을 지워도 눕은 바이트는 안 지운다 — 되돌리기가 그 파일을 필요로 한다.
 - **화면 언어**: 한국어 · 영어 두 벌이고 설정의 [일반]에서 고른다. 바뀌는 것은 화면 문구만이

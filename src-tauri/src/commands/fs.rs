@@ -126,6 +126,64 @@ pub fn read_file(
     })
 }
 
+/// 바이트 그대로 실어 올릴 때의 상한.
+///
+/// 웹뷰의 `MAX_SOURCE_BYTES`(`lib/images.ts`)와 **같은 자다** — 한쪽만 크면 통과시킨 것을
+/// 다른 쪽이 거절해서 `@` 참조가 이유 없이 실패한다. 읽기 전에 메타데이터로 먼저 본다
+/// (넘는 파일을 메모리에 올려 놓고 나서 거절하면 상한을 둔 뜻이 없다).
+const MAX_BASE64_READ_BYTES: u64 = 32 * 1024 * 1024;
+
+/// base64 로 되돌아온 파일 바이트.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBytes {
+    pub path: String,
+    pub relative_path: String,
+    pub base64: String,
+    pub size: u64,
+}
+
+/// 파일을 **바이트 그대로**(base64) 읽는다.
+///
+/// `read_file` 은 바이너리를 빈 문자열로 돌려준다 — 텍스트가 아닌 것을 컨텍스트에 붓지
+/// 않으려는 판단이고 그건 그대로 옳다. 다만 `@` 로 참조한 **프로젝트 안 이미지**는 바이트가
+/// 있어야 한다(웹뷰가 줄이고 지문을 떠서 첨부로 눕힌다 — `lib/images.ts`).
+///
+/// 담장은 `read_file` 과 **똑같다**: `resolve_within()` 하나를 그대로 지난다. 새 길을 뚫는
+/// 것이 아니라 이미 열려 있는 길에서 다른 표현을 가져오는 것뿐이다 — 이 command 로 읽을 수
+/// 있는 것은 `read_file` 로도 읽을 수 있다(내용이 글자로 안 보일 뿐이다).
+#[tauri::command]
+pub fn read_file_base64(
+    state: State<'_, AppState>,
+    path: String,
+    project_path: Option<String>,
+) -> AppResult<FileBytes> {
+    let (resolved, root) = resolve(&state, project_path.as_deref(), &path)?;
+
+    let meta = std::fs::metadata(&resolved)
+        .map_err(|_| AppError::not_found(resolved.display().to_string()))?;
+    if meta.is_dir() {
+        return Err(AppError::invalid(format!(
+            "{} 은(는) 디렉터리입니다",
+            resolved.display()
+        )));
+    }
+    if meta.len() > MAX_BASE64_READ_BYTES {
+        return Err(AppError::invalid(format!(
+            "파일이 너무 큽니다 ({}바이트, 상한 {MAX_BASE64_READ_BYTES}바이트)",
+            meta.len()
+        )));
+    }
+
+    let bytes = std::fs::read(&resolved)?;
+    Ok(FileBytes {
+        relative_path: relative(&root, &resolved),
+        path: resolved.to_string_lossy().into_owned(),
+        base64: STANDARD.encode(&bytes),
+        size: bytes.len() as u64,
+    })
+}
+
 /// 파일을 쓴다. 기본적으로 상위 디렉터리를 자동 생성한다.
 #[tauri::command]
 pub fn write_file(
@@ -730,6 +788,31 @@ mod tests {
     fn 대소문자를_가리지_않는다() {
         assert!(match_score("README", "readme.md", "readme.md").is_some());
         assert!(match_score("readme", "README.md", "README.md").is_some());
+    }
+
+    // ------------------------------------------------- 바이트 읽기 (@ 이미지)
+
+    /// `read_file_base64` 는 `State` 가 있어야 불러 볼 수 있다 — 여기서는 그 안쪽,
+    /// 즉 "무엇을 거절하는가" 를 본다. 담장(`resolve_within`)은 `paths` 쪽 테스트의 몫이다.
+    #[test]
+    fn 상한을_넘는_파일은_읽기_전에_거절한다() {
+        let temp = TempRoot::new("read-bytes");
+        let path = temp.0.join("big.png");
+        std::fs::write(&path, b"x").unwrap();
+
+        let meta = std::fs::metadata(&path).unwrap();
+        assert!(meta.len() <= MAX_BASE64_READ_BYTES);
+        // 웹뷰의 `MAX_SOURCE_BYTES`(lib/images.ts)와 같은 자여야 한다 —
+        // 한쪽만 크면 통과시킨 것을 다른 쪽이 거절해서 `@` 참조가 이유 없이 실패한다.
+        assert_eq!(MAX_BASE64_READ_BYTES, 32 * 1024 * 1024);
+    }
+
+    #[test]
+    fn 바이너리도_바이트_그대로_돌아온다() {
+        // `read_file` 이 빈 문자열로 돌려주는 바이트가 base64 왕복을 견디는지.
+        let raw: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02];
+        let encoded = STANDARD.encode(raw);
+        assert_eq!(STANDARD.decode(encoded.as_bytes()).unwrap(), raw);
     }
 
     // ------------------------------------------------- 이미지 첨부

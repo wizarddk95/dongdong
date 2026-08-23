@@ -47,6 +47,32 @@ const EXTENSIONS: Record<string, string> = {
   "image/gif": "gif",
 };
 
+/**
+ * 확장자로 형식을 되짚는다. `EXTENSIONS` 를 뒤집어 만드므로 **받아 줄 형식이 한 곳에만** 산다.
+ *
+ * `.svg` 는 **일부러 없다** — SVG 는 XML 텍스트라 본문으로 싣는 편이 모델에게 훨씬 쓸모 있고
+ * (그래서 `FENCE_LANGUAGE` 에 `svg: "xml"` 이 있다), 래스터로 굽자면 디코더가 하나 더 든다.
+ * 여기에 넣는 순간 `@icon.svg` 가 텍스트 첨부에서 이미지로 조용히 바뀐다.
+ */
+const MEDIA_TYPE_BY_EXTENSION: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(EXTENSIONS).map(([mediaType, ext]) => [ext, mediaType])),
+  // 저장할 때 쓰는 확장자는 `jpg` 하나뿐이지만, 읽을 때는 `.jpeg` 도 온다.
+  jpeg: "image/jpeg",
+};
+
+/** 경로만 보고 형식을 정한다. 이미지가 아니면 `null`. */
+export function imageMediaTypeOf(path: string): string | null {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return null;
+  return MEDIA_TYPE_BY_EXTENSION[name.slice(dot + 1).toLowerCase()] ?? null;
+}
+
+/** `@` 로 참조한 이 경로를 이미지로 실을 수 있는가. */
+export function isImagePath(path: string): boolean {
+  return imageMediaTypeOf(path) !== null;
+}
+
 /** 큰 배열을 한 번에 `String.fromCharCode` 에 넣으면 스택이 넘친다 — 조각내서 넘긴다. */
 function toBase64(bytes: Uint8Array): string {
   const CHUNK = 0x8000;
@@ -197,6 +223,47 @@ export async function attachImage(
     name: file.name || `image-${sha.slice(0, 8)}.${extension}`,
     resized: prepared.resized,
   };
+}
+
+/**
+ * base64 → 바이트. `toBase64()` 의 반대편.
+ *
+ * 버퍼를 직접 만들어 감싸는 이유는 타입이다 — `new Uint8Array(n)` 은 `ArrayBufferLike`(공유
+ * 버퍼일 수도 있는) 로 잡혀서 `File`/`Blob` 이 받지 않는다.
+ */
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(value);
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/**
+ * `@` 로 참조한 **프로젝트 안** 이미지를 첨부로 만든다.
+ *
+ * 붙여넣기와 **같은 길로 보낸다** — 바이트를 `File` 로 감싸 그대로 `attachImage()` 에 넘긴다.
+ * 경로만 적어 두지 않는 이유도 붙여넣기와 같다: 파일이 바뀌거나 지워져도 그 턴의 기록은
+ * 그대로여야 한다. 덕분에 저장 경로가 하나뿐이라 마커 · 참조 · 하이드레이션 · 토큰 계산이
+ * 전부 그대로 산다 — 경로를 적어 두는 두 번째 표를 만들면 `hydrateImages()` 에 분기가 는다.
+ *
+ * 바이트를 가져오는 길은 `read_file_base64` 이고, 그건 `read_file` 과 같은 담장
+ * (`resolve_within()`)을 지난다. 루트 밖은 여기로 들어오지 못한다 — 그쪽은 붙여넣기의 몫이다.
+ */
+export async function attachProjectImage(
+  path: string,
+  options: { projectPath?: string } = {},
+): Promise<AttachedImage> {
+  const mediaType = imageMediaTypeOf(path);
+  if (!mediaType) throw new Error(`이미지 형식이 아닙니다: ${path}`);
+
+  const read = await ipc.readFileBase64(path, options.projectPath);
+  const bytes = fromBase64(read.base64);
+  const name = read.relativePath.split("/").pop() || path;
+
+  // `File` 의 이름에는 경로를 넣지 않는다(구현에 따라 `/` 를 갈아 끼운다) —
+  // 대신 돌려줄 때 상대 경로로 되돌린다. 마커에 남는 것은 "어디서 온 이미지인가" 여야 한다.
+  const attached = await attachImage(new File([bytes], name, { type: mediaType }), options);
+  return { ...attached, name: read.relativePath };
 }
 
 // ------------------------------------------------------------- 되읽기

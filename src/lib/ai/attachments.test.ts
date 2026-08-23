@@ -6,6 +6,14 @@ vi.mock("@/lib/ipc", () => ({
   listDirectory: vi.fn(),
 }));
 
+// 이미지 분기는 **경로 판정과 게이팅**이 요점이다. 실제 첨부(디코드·축소·SHA-256)는
+// 브라우저 API 라 여기서 돌지 않으므로 `attachProjectImage` 만 갈아 끼우고
+// 나머지(`imageMediaTypeOf` · 장수 상한)는 원본을 그대로 쓴다.
+vi.mock("@/lib/images", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/images")>()),
+  attachProjectImage: vi.fn(),
+}));
+
 import {
   ATTACH_CLOSE,
   ATTACH_OPEN,
@@ -29,9 +37,24 @@ import {
   type Attachment,
   type ImageAttachment,
 } from "@/lib/ai/attachments";
+import { attachProjectImage, MAX_IMAGES_PER_MESSAGE } from "@/lib/images";
 import * as ipc from "@/lib/ipc";
 
 const mocked = vi.mocked(ipc);
+const mockedAttachImage = vi.mocked(attachProjectImage);
+
+/** 첨부에 성공했을 때 `attachProjectImage` 가 돌려주는 모양. */
+function attached(name: string, sha = "a".repeat(64)) {
+  return {
+    sha,
+    mediaType: "image/png",
+    width: 800,
+    height: 600,
+    size: 40_000,
+    name,
+    resized: false,
+  };
+}
 
 function info(partial: Partial<ReturnType<typeof baseInfo>> = {}) {
   return { ...baseInfo(), ...partial };
@@ -111,11 +134,55 @@ describe("resolveMention", () => {
 
   it("그 밖의 바이너리는 읽어 보고 자리표로 떨어진다", async () => {
     mocked.pathInfo.mockResolvedValue(info());
-    mocked.readFile.mockResolvedValue(fileContent("", { isBinary: true, relativePath: "a.png" }));
+    mocked.readFile.mockResolvedValue(fileContent("", { isBinary: true, relativePath: "a.zip" }));
 
-    const attachment = await resolveMention("a.png");
+    const attachment = await resolveMention("a.zip");
     expect(attachment.kind).toBe("binary");
     expect(attachment.note).toContain("실을 수 없습니다");
+  });
+
+  it("프로젝트 안 이미지는 바이트로 실린다 (본문을 읽지 않는다)", async () => {
+    mocked.pathInfo.mockResolvedValue(info({ size: 90_000 }));
+    mockedAttachImage.mockResolvedValue(attached("docs/shot.png"));
+
+    const attachment = await resolveMention("docs/shot.png", { projectPath: "C:/p" });
+
+    expect(attachment.kind).toBe("image");
+    expect(attachment.image?.sha).toBe("a".repeat(64));
+    expect(attachment.displayPath).toBe("docs/shot.png");
+    // 본문은 없다 — 마커 한 줄로 실리고 바이트는 워크스페이스에 눕는다.
+    expect(attachment.body).toBe("");
+    expect(mocked.readFile).not.toHaveBeenCalled();
+    expect(mockedAttachImage).toHaveBeenCalledWith("docs/shot.png", { projectPath: "C:/p" });
+  });
+
+  it("SVG 는 이미지가 아니라 텍스트로 실린다", async () => {
+    mocked.pathInfo.mockResolvedValue(info());
+    mocked.readFile.mockResolvedValue(fileContent("<svg/>", { relativePath: "icon.svg" }));
+
+    const attachment = await resolveMention("icon.svg");
+    expect(attachment.kind).toBe("text");
+    expect(attachment.body).toBe("<svg/>");
+    expect(mockedAttachImage).not.toHaveBeenCalled();
+  });
+
+  it("비전 없는 모델이면 이미지를 싣지 않고 자리표로 물러난다", async () => {
+    mocked.pathInfo.mockResolvedValue(info({ size: 90_000 }));
+
+    const attachment = await resolveMention("shot.png", { acceptsImages: false });
+
+    expect(attachment.kind).toBe("binary");
+    expect(attachment.note).toContain("이미지를 받지 않아");
+    expect(mockedAttachImage).not.toHaveBeenCalled();
+  });
+
+  it("첨부에 실패해도 던지지 않고 이유를 남긴다", async () => {
+    mocked.pathInfo.mockResolvedValue(info({ size: 90_000 }));
+    mockedAttachImage.mockRejectedValue(new Error("너무 큽니다"));
+
+    const attachment = await resolveMention("shot.png");
+    expect(attachment.kind).toBe("binary");
+    expect(attachment.note).toContain("너무 큽니다");
   });
 
   it("디렉터리는 목록만 싣는다", async () => {
@@ -176,6 +243,41 @@ describe("resolveMentions", () => {
     // 20,000자 × 3 = 60,000자로 한도가 소진된다 → 네 번째는 본문이 없다.
     const all = await resolveMentions(["a.ts", "b.ts", "c.ts", "d.ts"]);
     expect(all[3].body).toBe("");
+  });
+
+  it("이미지는 글자 한도가 아니라 장수로 센다", async () => {
+    mocked.pathInfo.mockResolvedValue(info({ size: 90_000 }));
+    // 앞선 텍스트가 한도를 다 써도 이미지는 그대로 실린다 — 자가 다르다.
+    mocked.readFile.mockResolvedValue(fileContent("가".repeat(MAX_ATTACHMENT_CHARS)));
+    mockedAttachImage.mockImplementation(async (path) => attached(path));
+
+    const paths = ["a.ts", "b.ts", "c.ts", "shot.png"];
+    const all = await resolveMentions(paths);
+
+    expect(all[3].kind).toBe("image");
+  });
+
+  it("장수 상한을 넘으면 나머지 이미지는 자리표가 된다", async () => {
+    mocked.pathInfo.mockResolvedValue(info({ size: 90_000 }));
+    mockedAttachImage.mockImplementation(async (path) =>
+      attached(path, path.charCodeAt(4).toString(16).padStart(64, "0")),
+    );
+
+    const paths = Array.from({ length: MAX_IMAGES_PER_MESSAGE + 2 }, (_, i) => `shot${i}.png`);
+    const all = await resolveMentions(paths);
+
+    expect(all.filter((one) => one.kind === "image")).toHaveLength(MAX_IMAGES_PER_MESSAGE);
+    expect(all[MAX_IMAGES_PER_MESSAGE].kind).toBe("binary");
+    expect(all[MAX_IMAGES_PER_MESSAGE].note).toContain(String(MAX_IMAGES_PER_MESSAGE));
+  });
+
+  it("모델이 이미지를 안 받으면 전부 자리표로 물러난다", async () => {
+    mocked.pathInfo.mockResolvedValue(info({ size: 90_000 }));
+
+    const all = await resolveMentions(["a.png", "b.jpg"], { acceptsImages: false });
+
+    expect(all.every((one) => one.kind === "binary")).toBe(true);
+    expect(mockedAttachImage).not.toHaveBeenCalled();
   });
 });
 

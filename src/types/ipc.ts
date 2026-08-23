@@ -274,6 +274,17 @@ export interface FileContent {
   isBinary: boolean;
 }
 
+/**
+ * `read_file_base64` 의 결과. `read_file` 이 빈 문자열로 돌려주는 바이너리를
+ * 바이트 그대로 가져올 때 쓴다 (`@` 로 참조한 프로젝트 안 이미지).
+ */
+export interface FileBytes {
+  path: string;
+  relativePath: string;
+  base64: string;
+  size: number;
+}
+
 export interface WriteResult {
   path: string;
   relativePath: string;

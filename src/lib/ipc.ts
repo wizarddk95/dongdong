@@ -12,6 +12,7 @@ import type {
   AttachmentBytes,
   DeleteOutcome,
   DirEntry,
+  FileBytes,
   FileContent,
   McpServerConfig,
   McpServerInfo,
@@ -107,6 +108,13 @@ export const cancelShellCommand = (token: string) =>
 
 export const readFile = (path: string, projectPath?: string) =>
   call<FileContent>("read_file", { path, projectPath });
+
+/**
+ * 파일을 바이트 그대로(base64) 읽는다. `read_file` 과 **같은 담장**(`resolve_within()`)을
+ * 지나며, 텍스트로 펼 수 없는 것(프로젝트 안 이미지)에만 쓴다.
+ */
+export const readFileBase64 = (path: string, projectPath?: string) =>
+  call<FileBytes>("read_file_base64", { path, projectPath });
 
 export const writeFile = (
   path: string,

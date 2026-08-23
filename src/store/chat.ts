@@ -20,6 +20,7 @@ import {
   type ImageAttachment,
 } from "@/lib/ai/attachments";
 import { composeSystemPrompt } from "@/lib/ai/instructions";
+import { acceptsImages } from "@/lib/ai/providers";
 import { errorMessage } from "@/lib/ai/errors";
 import {
   buildTurnContext,
@@ -168,7 +169,12 @@ export const useChat = create<ChatState>((set, get) => ({
       //    찾아 헤매지 않게 하려는 것이다. 실패한 참조도 사실대로 실린다.
       const mentions = extractMentions(text);
       const attachments = mentions.length
-        ? await resolveMentions(mentions, { projectPath: workspace.project.rootPath })
+        ? await resolveMentions(mentions, {
+            projectPath: workspace.project.rootPath,
+            // `@shot.png` 도 이미지로 실린다 — 비전 없는 모델이면 자리표로 물러나야 한다.
+            // 판정은 첨부 버튼과 **같은 함수**를 쓴다(따로 적으면 반드시 어긋난다).
+            acceptsImages: acceptsImages(settings.modelId),
+          })
         : [];
 
       // 이미지는 바이트가 아니라 마커 한 줄로 실린다 — 바이트는 이미
