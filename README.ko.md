@@ -222,7 +222,7 @@ src/                        프론트엔드 (React + TS + Tailwind v4)
   components/inspect/       ContextModal / MemoryModal / JsonTree (투명성 UI)
   components/agents/        AgentDashboard (서브에이전트 칸반) / AgentResultModal (요약 팝업)
   components/mcp/           McpServers (서버 등록 · 연결 · 도구 목록)
-  components/skills/        SkillList (스킬 켜고 끄기 · 만들기 · 본문 보기)
+  components/skills/        SkillList (스킬 켜고 끄기 · 만들기 · 본문 고쳐 쓰기)
   components/hooks/         HookList (내장 훅 토글 · 사용자 훅 등록)
   components/Panel.tsx      공통 부품 (Button · Panel · Modal · Tag · Hint · 입력 크롬) — 새 UI 는 여기서 가져다 쓴다
   components/UsageMeter.tsx 토큰 · 요금 · 컨텍스트 링 (채팅 / 턴 / 세션 공용)
@@ -407,8 +407,12 @@ description: 엑셀 파일을 읽거나 만들거나 고칠 때. openpyxl 로 �
   - 전역 — OS 앱 설정 디렉터리의 `skills/` (모든 프로젝트 공용, `settings.json` 옆)
   - 프로젝트 — 리포의 `.dongdong/skills/` (커밋되어 팀과 공유된다)
   - 배치는 `<이름>/SKILL.md` 또는 `<이름>.md`. 같은 이름이면 **프로젝트 > 전역 > 내장** 순으로 이긴다.
-- [설정] → [스킬] 에서 켜고 끄고, 새 스킬의 뼈대를 만들고, 본문을 그 자리에서 확인한다.
-  파일은 매 턴 다시 읽으므로 편집기에서 고치면 다음 턴부터 바로 반영된다(AGENTS.md 와 같은 규칙).
+- [설정] → [스킬] 에서 켜고 끄고, 새 스킬의 뼈대를 만들고, **본문을 그 자리에서 고쳐 쓴다**
+  (frontmatter 를 포함한 파일 원문 그대로 — 매 턴 실리는 `description` 도 여기서 고친다).
+  범위는 만들 때 고른다 — 전역이 기본이고, **프로젝트를 열어 두면** [프로젝트] 를 골라
+  리포의 `.dongdong/skills/` 에 만든다(프로젝트를 열지 않으면 그 칸은 잠기고 이유가 적힌다).
+  이름은 한글로 지어도 된다 — 경로가 되는 글자(`/` `\` `:` …)만 하이픈으로 접는다.
+  파일은 매 턴 다시 읽으므로 바깥 편집기에서 고쳐도 다음 턴부터 바로 반영된다(AGENTS.md 와 같은 규칙).
 - 서브에이전트도 같은 목록과 `load_skill` 을 받는다.
 
 ## 훅

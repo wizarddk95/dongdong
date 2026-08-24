@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import { builtinSkillDocs } from "@/lib/ai/builtinSkills";
 import { clip } from "@/lib/ai/tools";
+import { entryNameProblem, type NameProblem } from "@/lib/fileNames";
 import { t, type MessageKey } from "@/lib/i18n";
 import type { SkillFile } from "@/types/ipc";
 
@@ -29,6 +30,12 @@ export interface SkillDoc {
   description: string;
   /** frontmatter 를 걷어낸 본문. `load_skill` 이 돌려주는 값. */
   body: string;
+  /**
+   * 파일 원문(frontmatter 포함). 설정 화면의 편집기가 고치는 것은 **이쪽**이다 —
+   * 본문만 내주면 저장할 때 머리말을 다시 조립해야 하고, 그 조립이 파서와 어긋나는
+   * 순간 사람이 적은 description 이 조용히 사라진다.
+   */
+  raw: string;
   source: SkillSource;
   /** 디스크 스킬만 갖는다. 설정 화면이 어디를 고치면 되는지 보여줄 때 쓴다. */
   path?: string;
@@ -86,6 +93,7 @@ export function parseSkillDoc(
     name: meta.name || options.folder,
     description: meta.description || firstMeaningfulLine(body),
     body,
+    raw: content,
     source: options.source,
     path: options.path,
     truncated: options.truncated,
@@ -195,6 +203,20 @@ export function buildSkillTools(skills: SkillDoc[]): ToolSet {
       },
     }),
   };
+}
+
+/**
+ * 새 스킬 이름 판정(순수). 파일 이름 규칙(`entryNameProblem`)을 그대로 쓰되
+ * **중복은 같은 범위 안에서만** 본다 — 프로젝트 스킬로 내장 `xlsx` 를 덮어쓰는 것은
+ * 막을 일이 아니라 스킬이 쌓이는 방식 그 자체다(프로젝트 > 전역 > 내장).
+ */
+export function skillNameProblem(
+  raw: string,
+  existing: readonly SkillDoc[],
+  scope: "user" | "project",
+): NameProblem | null {
+  const sameScope = existing.filter((skill) => skill.source === scope).map((skill) => skill.name);
+  return entryNameProblem(raw, sameScope);
 }
 
 /** 설정 화면에서 출처를 짧게 보여줄 때 쓰는 라벨 키. */

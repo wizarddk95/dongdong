@@ -80,7 +80,9 @@ database. Conversations live in `.agent_workspace/local.db` inside the project i
 - **Skills, which are not tools.** A skill is a procedure document. Only its name and
   one-line description are loaded each turn; the model pulls the body with `load_skill`
   when it decides it needs it — so a long procedure costs nothing until it's used.
-  Excel / Word / PDF procedures ship built in; add your own globally or per-project.
+  Excel / Word / PDF procedures ship built in; add your own globally or per-project
+  (open a project to get the per-project option) and write the body right in
+  Settings → Skills — the whole file, frontmatter included.
 - **Subagents.** `delegate_task` runs an isolated context and returns only a summary.
   Runs are drawn as lanes branching off the turn that spawned them, with live status,
   elapsed time, and their own token accounting. The summary opens in a popup rendered by

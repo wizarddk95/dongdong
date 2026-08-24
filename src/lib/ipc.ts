@@ -91,6 +91,13 @@ export const createSkillFile = (
   projectPath?: string,
 ) => call<string>("create_skill_file", { name, scope, content, projectPath });
 
+/**
+ * 스킬 문서 본문을 고쳐 쓴다. `writeFile` 을 쓰지 않는 이유는 전역 스킬이
+ * 프로젝트 루트 밖이라 `resolve_within()` 을 못 지나기 때문이다.
+ */
+export const writeSkillFile = (path: string, content: string, projectPath?: string) =>
+  call<void>("write_skill_file", { path, content, projectPath });
+
 /** 스킬 디렉터리 안의 경로만 받는다 (Rust 가 확인한다). */
 export const deleteSkillFile = (path: string, projectPath?: string) =>
   call<boolean>("delete_skill_file", { path, projectPath });

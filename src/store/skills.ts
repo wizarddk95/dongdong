@@ -31,6 +31,12 @@ interface SkillsState {
   /** 그중 켜져 있는 것만 (에이전트에게 실리는 목록) */
   enabled: () => SkillDoc[];
   create: (name: string, scope: "user" | "project") => Promise<string>;
+  /**
+   * 스킬 문서 원문을 통째로 고쳐 쓴다 — frontmatter 를 포함한 **파일 전체**다.
+   * 본문만 받으면 저장할 때마다 머리말을 다시 붙여야 하고, 그 조립이 파싱과 어긋나는 순간
+   * 사람이 적은 description 이 조용히 사라진다.
+   */
+  save: (path: string, content: string) => Promise<void>;
   remove: (skill: SkillDoc) => Promise<void>;
 }
 
@@ -60,6 +66,11 @@ export const useSkills = create<SkillsState>((set, get) => ({
     const path = await ipc.createSkillFile(name, scope, skillTemplate(name.trim()));
     await get().refresh();
     return path;
+  },
+
+  save: async (path, content) => {
+    await ipc.writeSkillFile(path, content);
+    await get().refresh();
   },
 
   remove: async (skill) => {

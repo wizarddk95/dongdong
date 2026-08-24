@@ -46,24 +46,48 @@ pub struct SkillDirs {
 }
 
 /// 파일 이름으로 쓸 수 있는 글자만 남긴다. 경로 구분자·`..` 를 넣어 밖으로 나가지 못하게 한다.
+///
+/// **글자·숫자는 아스키만이 아니다** — 한글로 지은 이름을 전부 `-` 로 갈아 버리면
+/// (placeholder 가 예로 드는 `사내-보고서-양식` 이 정확히 그랬다) 이름이 통째로 비어
+/// "영문·숫자를 넣으세요" 로 튕긴다. 담장은 *글자 종류*가 아니라 **경로가 되는 글자**다:
+/// 구분자·`..`·윈도우 금지 문자·제어문자만 걷어 내면 밖으로 나갈 길이 없다.
 pub fn sanitize_skill_name(name: &str) -> AppResult<String> {
     let cleaned: String = name
         .trim()
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
+            // 윈도우가 못 쓰는 글자 · 경로 구분자 · 제어문자 · 점은 전부 하이픈으로 접는다.
+            let unsafe_char = matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/' | '\\' | '.')
+                || c.is_control()
+                || c.is_whitespace();
+            if unsafe_char { '-' } else { c }
         })
         .collect();
-    let cleaned = cleaned.trim_matches('-').to_string();
+    // 앞뒤의 하이픈은 떼고, 가운데 연속된 하이픈은 하나로 접는다(`../../etc` → `etc`).
+    let mut folded = String::with_capacity(cleaned.len());
+    for c in cleaned.chars() {
+        if c == '-' && folded.ends_with('-') {
+            continue;
+        }
+        folded.push(c);
+    }
+    let cleaned = folded.trim_matches('-').to_string();
     if cleaned.is_empty() {
         return Err(AppError::invalid(
-            "스킬 이름에는 영문·숫자·하이픈을 하나 이상 넣으세요",
+            "스킬 이름에 쓸 수 있는 글자가 없습니다",
         ));
     }
+    // 윈도우 예약 장치 이름은 파일로 만들 수 없다 — 폴더 이름도 피한다.
+    const RESERVED: [&str; 22] = [
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    if RESERVED.contains(&cleaned.to_ascii_lowercase().as_str()) {
+        return Err(AppError::invalid(format!(
+            "윈도우가 예약한 이름입니다: {cleaned}"
+        )));
+    }
+    // 아스키만 낮춘다 — 한글에는 대소문자가 없고, 터키어 `I` 같은 함정을 만들지 않는다.
     Ok(cleaned.to_ascii_lowercase())
 }
 
@@ -209,6 +233,55 @@ pub fn create_skill_file(
     Ok(file.to_string_lossy().replace('\\', "/"))
 }
 
+/// 스킬 문서의 **본문을 고쳐 쓴다**. 설정 화면의 편집기가 부른다.
+///
+/// 만들기가 틀을 깔아 주고 끝나면 사람은 결국 편집기를 따로 열어야 한다 — 그러면
+/// "이름만 만들 수 있고 내용은 못 쓴다" 가 된다. 쓰는 길은 `write_file` 을 쓸 수 없다:
+/// 전역 스킬은 프로젝트 루트 밖이라 `resolve_within()` 이 막는다.
+/// **두 스킬 디렉터리 안의 `.md` 만** 받는다 — 임의 경로 쓰기 통로가 되지 않게.
+#[tauri::command]
+pub fn write_skill_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    content: String,
+    project_path: Option<String>,
+) -> AppResult<()> {
+    let target = crate::paths::absolutize(&path)?;
+    let mut roots = vec![user_skill_dir(&app)?];
+    if let Some(dir) = project_skill_dir(&state, project_path.as_deref())? {
+        roots.push(dir);
+    }
+    if !roots.iter().any(|root| is_inside(root, &target)) {
+        return Err(AppError::PathDenied(format!(
+            "{} (스킬 디렉터리 밖입니다)",
+            target.display()
+        )));
+    }
+    let is_markdown = target
+        .extension()
+        .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("md"))
+        .unwrap_or(false);
+    if !is_markdown {
+        return Err(AppError::invalid("스킬 문서는 .md 파일만 고칠 수 있습니다"));
+    }
+    if content.len() > MAX_SKILL_BYTES {
+        return Err(AppError::invalid(format!(
+            "스킬 문서가 너무 깁니다 (상한 {}KB)",
+            MAX_SKILL_BYTES / 1024
+        )));
+    }
+    // 새로 만드는 길은 create_skill_file 하나다 — 여기서 폴더를 만들지 않는다.
+    if !target.exists() {
+        return Err(AppError::invalid(format!(
+            "없는 스킬 문서입니다: {}",
+            target.display()
+        )));
+    }
+    std::fs::write(&target, content)?;
+    Ok(())
+}
+
 /// 스킬 문서를 지운다. 폴더 형식이면 폴더째 지운다.
 /// **두 스킬 디렉터리 안에 있는 경로만** 받는다 — 임의 경로 삭제 통로가 되지 않게.
 #[tauri::command]
@@ -307,6 +380,25 @@ mod tests {
         assert_eq!(sanitize_skill_name("  Excel Report ").unwrap(), "excel-report");
         assert_eq!(sanitize_skill_name("../../etc").unwrap(), "etc");
         assert!(sanitize_skill_name("///").is_err());
+    }
+
+    #[test]
+    fn keeps_non_ascii_names() {
+        // placeholder 가 예로 드는 이름이 그대로 살아남아야 한다.
+        assert_eq!(
+            sanitize_skill_name("사내-보고서-양식").unwrap(),
+            "사내-보고서-양식"
+        );
+        assert_eq!(sanitize_skill_name("주간 보고").unwrap(), "주간-보고");
+        // 경로가 되는 글자만 접는다.
+        assert_eq!(sanitize_skill_name("보고/서:1").unwrap(), "보고-서-1");
+    }
+
+    #[test]
+    fn rejects_reserved_device_names() {
+        assert!(sanitize_skill_name("con").is_err());
+        assert!(sanitize_skill_name("LPT1").is_err());
+        assert_eq!(sanitize_skill_name("console").unwrap(), "console");
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub fn run() {
             commands::skills::skill_dirs,
             commands::skills::list_skill_files,
             commands::skills::create_skill_file,
+            commands::skills::write_skill_file,
             commands::skills::delete_skill_file,
             // shell
             commands::shell::execute_shell_command,

@@ -8,6 +8,7 @@ import {
   mergeSkills,
   parseSkillDoc,
   skillCatalogBlock,
+  skillNameProblem,
   type SkillDoc,
 } from "@/lib/ai/skills";
 import type { SkillFile } from "@/types/ipc";
@@ -86,8 +87,8 @@ describe("mergeSkills", () => {
 
 describe("enabledSkills", () => {
   const skills: SkillDoc[] = [
-    { name: "a", description: "", body: "본문", source: "builtin" },
-    { name: "b", description: "", body: "본문", source: "user" },
+    { name: "a", description: "", body: "본문", raw: "본문", source: "builtin" },
+    { name: "b", description: "", body: "본문", raw: "본문", source: "user" },
   ];
 
   it("설정에 없는 스킬은 켜진 것으로 본다", () => {
@@ -145,5 +146,29 @@ describe("buildSkillTools", () => {
     };
     expect(result.found).toBe(false);
     expect(result.available).toContain("xlsx");
+  });
+});
+
+describe("skillNameProblem", () => {
+  const existing: SkillDoc[] = [
+    { name: "xlsx", description: "", body: "b", raw: "b", source: "builtin" },
+    { name: "weekly", description: "", body: "b", raw: "b", source: "user" },
+  ];
+
+  it("쓸 수 있는 이름은 통과시킨다 (한글 포함)", () => {
+    expect(skillNameProblem("사내-보고서-양식", existing, "user")).toBeNull();
+    expect(skillNameProblem("report", existing, "user")).toBeNull();
+  });
+
+  it("경로가 되는 글자와 예약 이름을 막는다", () => {
+    expect(skillNameProblem("a/b", existing, "user")).toBe("separator");
+    expect(skillNameProblem("a:b", existing, "user")).toBe("chars");
+    expect(skillNameProblem("con", existing, "user")).toBe("reserved");
+  });
+
+  it("중복은 같은 범위 안에서만 본다 — 프로젝트가 내장을 덮는 길은 막지 않는다", () => {
+    expect(skillNameProblem("weekly", existing, "user")).toBe("duplicate");
+    expect(skillNameProblem("weekly", existing, "project")).toBeNull();
+    expect(skillNameProblem("xlsx", existing, "project")).toBeNull();
   });
 });
